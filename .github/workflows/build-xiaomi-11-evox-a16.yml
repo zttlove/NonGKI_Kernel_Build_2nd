@@ -12,8 +12,8 @@ env:
   CUSTOM_CMDS : "CLANG_TRIPLE=aarch64-linux-gnu-"
   EXTRA_CMDS : "LD=ld.lld"
 
-  KERNEL_SOURCE : "https://github.com/zttlove/xiaomi_ShirokoNeko_Kernel_SM8350_full_manager.git"
-  KERNEL_BRANCH : "master"
+  KERNEL_SOURCE : "https://github.com/zttlove/android_kernel_xiaomi_sm8350-Voyager.git"
+  KERNEL_BRANCH : "miui-t"
 
   CLANG_SOURCE : "https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git"
   CLANG_BRANCH : "lineage-20.0"
