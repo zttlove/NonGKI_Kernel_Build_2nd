@@ -15,7 +15,7 @@ env:
   KERNEL_SOURCE : "https://github.com/LineageOS/android_kernel_nothing_sm7325.git"
   KERNEL_BRANCH : "lineage-23.0"
 
-  CLANG_SOURCE : "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/508ea7dd0d8f681904d0422e98af9613aaabf180/clang-r574158.tar.gz"
+  CLANG_SOURCE : "https://github.com/bachnxuan/aosp_clang_mirror/releases/download/clang-r574158-14475230/clang-r574158.tar.gz"
   CLANG_BRANCH : ""
 
   GCC_GNU : false
@@ -29,11 +29,11 @@ env:
   DEFCONFIG_ORIGIN_IMAGE: ""
   DEFCONFIG_FROM_BOOT: false
 
-  KERNELSU_SOURCE : "https://raw.githubusercontent.com/cyberc3dr/KernelSU/refs/heads/susfs-rksu-master/kernel/setup.sh"
-  KERNELSU_BRANCH : "susfs-rksu-master"
+  KERNELSU_SOURCE : ""
+  KERNELSU_BRANCH : ""
 
-  KERNELSU_AUTO_GET : "false" # if u want easy setting kernelsu, u can true.
-  KERNELSU_AUTO_FORK : "rsuntk" # xxksu, rsuntk, next, resukisu and sukisu
+  KERNELSU_AUTO_GET : "true" # if u want easy setting kernelsu, u can true.
+  KERNELSU_AUTO_FORK : "resukisu" # xxksu, rsuntk, next, resukisu and sukisu
 
   SUSFS_ENABLE : true
   SUSFS_FIXED : false
@@ -52,6 +52,7 @@ env:
   PYTHON_VERSION: "3" # Only 2(Ubuntu 22.04 and Ubuntu 20.04) or 3(Any OS Versions).
 
   PACK_METHOD: "Anykernel3" # Anykernel3 need SOURCE and BRANCH, MKBOOTIMG needn't it.
+  PACK_KMODULES: "false" # if u want pack kernel modules (.ko) into Anykernel3.
 
   KERNELSU_METHOD: "shell" # shell, manual and only.
 
@@ -64,7 +65,6 @@ env:
   REKERNEL_ENABLE: "false" # if u need Re:Kernel.
 
   HOOK_METHOD: "syscall" # Manual hook method -> syscall.
-  HOOK_OLDER: "false" # contain backport older patch and syscall older patch.
 
   KERNEL_PATCH: "false" # If your kernel version is <= 4.9, you have the option of enabling the patch to patch the kernel_write and kernel_read functions.
 
@@ -101,7 +101,7 @@ jobs:
 
     steps:
       - name: ⏰ Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: ⌛️ Compilation environment preparation
         uses: ./.github/workflows/build-env
