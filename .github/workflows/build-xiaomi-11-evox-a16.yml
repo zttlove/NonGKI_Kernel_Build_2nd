@@ -12,8 +12,8 @@ env:
   CUSTOM_CMDS : "CLANG_TRIPLE=aarch64-linux-gnu-"
   EXTRA_CMDS : "LD=ld.lld"
 
-  KERNEL_SOURCE : "https://github.com/zttlove/android_kernel_xiaomi_sm8350-Voyager.git"
-  KERNEL_BRANCH : "miui-t"
+  KERNEL_SOURCE : "https://github.com/zttlove/xiaomi_ShirokoNeko_Kernel_SM8350_full_manager.git"
+  KERNEL_BRANCH : "master"
 
   CLANG_SOURCE : "https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git"
   CLANG_BRANCH : "lineage-20.0"
@@ -25,7 +25,7 @@ env:
   GCC_32_BRANCH : "android12L-release"
 
   DEFCONFIG_SOURCE: ""
-  DEFCONFIG_NAME : "star_defconfig"
+  DEFCONFIG_NAME : "/vendor/lahaina-qgki_defconfig"
   DEFCONFIG_ORIGIN_IMAGE: ""
   DEFCONFIG_FROM_BOOT: false
 
