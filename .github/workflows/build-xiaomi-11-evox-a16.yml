@@ -6,8 +6,8 @@ on:
 
 env:
   # Device env
-  DEVICE_NAME : "xiaomi_11"
-  DEVICE_CODENAME : "venus"
+  DEVICE_NAME : "xiaomi_11U"
+  DEVICE_CODENAME : "star"
 
   CUSTOM_CMDS : "CLANG_TRIPLE=aarch64-linux-gnu-"
   EXTRA_CMDS : "LD=ld.lld"
