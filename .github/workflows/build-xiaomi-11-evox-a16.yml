@@ -18,7 +18,7 @@ env:
   CLANG_SOURCE : "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.3/LLVM-22.1.3-Linux-X64.tar.xz"
   CLANG_BRANCH : ""
 
-  GCC_GNU : true
+  GCC_GNU : false
   GCC_64_SOURCE : "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9.git"
   GCC_64_BRANCH : "android12L-release"
   GCC_32_SOURCE : "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9.git"
@@ -36,7 +36,7 @@ env:
   KERNELSU_AUTO_FORK : "resukisu" # xxksu, rsuntk , next, resukisu and sukisu
 
   SUSFS_ENABLE : true
-  SUSFS_FIXED : false
+  SUSFS_FIXED : true
 
   AK3_SOURCE : "https://github.com/osm0sis/AnyKernel3.git"
   AK3_BRANCH : "master"
@@ -85,7 +85,7 @@ env:
   BUILD_DEBUGGER: "false" # Output build errors.
   SKIP_PATCH: "false" # Ignore errors found in Patch Debugger.
 
-  BUILD_OTHER_CONFIG: "" # Merge config files.
+  BUILD_OTHER_CONFIG: "false" # Merge config files.
   MERGE_CONFIG_FILES: "vendor/venus_QGKI.config,vendor/xiaomi_QGKI.config"
 
   FREE_MORE_SPACE: "false" # if u want get more space, enabled it.
