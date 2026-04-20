@@ -63,7 +63,7 @@ env:
   SUSFS_FOLDER_FIXED: "mi11_evox_a16" # Fill in your patch prefix directory here. Leave it blank if there isn't one. -> your_folder
   SUSFS_PATCH_FIXED: "susfs_fixed" # Fill in your patches here. If there are multiple patches, please separate them with a comma. Leave it blank if there isn't one. -> patch1,patch2
 
-  REKERNEL_ENABLE: "true" # if u need Re:Kernel.
+  REKERNEL_ENABLE: "false" # if u need Re:Kernel.
 
   HOOK_METHOD: "syscall" # Manual hook method ->  syscall.
 
@@ -77,7 +77,7 @@ env:
   BASEBAND_GUARD_ENABLE: "false" #if u want prevent unauthorized writes to critical partitions/device nodes.
   BASEBAND_GUARD_BOOT: "false" #if u want to protect boot partition.
 
-  HIDE_STUFF: "true" # hide some of the features
+  HIDE_STUFF: "false" # hide some of the features
 
   GENERATE_DTB: "false" # if u kernel need DTB , but cannot auto generate it. (Only Anykernel3).
   GENERATE_CHIP: "qcom" # only supported for qcom and mediatek.
