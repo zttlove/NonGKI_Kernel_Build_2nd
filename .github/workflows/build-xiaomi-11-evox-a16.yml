@@ -12,7 +12,7 @@ env:
   CUSTOM_CMDS : "CLANG_TRIPLE=aarch64-linux-gnu-"
   EXTRA_CMDS : "LD=ld.lld LLVM=1 LLVM_IAS=1 -Wno-"
 
-  KERNEL_SOURCE : "https://github.com/jianyi520/android_kernel_xiaomi_sm8350-A16/tree/merge-5.4.295-clo.git"
+  KERNEL_SOURCE : "https://github.com/jianyi520/android_kernel_xiaomi_sm8350-A16.git"
   KERNEL_BRANCH : "merge-5.4.295-clo"
 
   CLANG_SOURCE : "https://github.com/ZyCromerZ/Clang/releases/download/20.0.0git-20241222-release/Clang-20.0.0git-20241222.tar.gz"
