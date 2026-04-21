@@ -232,15 +232,12 @@ runs:
                 cd Python-2.7.18
                 ./configure
                 # 1. 配置固定编译时间（用于覆盖 uts 版本信息）
-export KBUILD_BUILD_TIMESTAMP="Tue Feb 11 03:07:14 2025 +0000"
-
-# 2. 配置固定时间戳（用于覆盖 __DATE__/__TIME__ 等源码宏）
-export SOURCE_DATE_EPOCH=-1739243234
-
-# 3. (可选) 伪装编译主机与用户，建议改为官方默认值
-export KBUILD_BUILD_USER="android-build"
-export KBUILD_BUILD_HOST="localhost"
-
+                 export KBUILD_BUILD_TIMESTAMP="Tue Feb 11 03:07:14 2025 +0000"
+                # 2. 配置固定时间戳（用于覆盖 __DATE__/__TIME__ 等源码宏）
+                 export SOURCE_DATE_EPOCH=-1739243234
+                # 3. (可选) 伪装编译主机与用户，建议改为官方默认值
+                 export KBUILD_BUILD_USER="android-build"
+                  export KBUILD_BUILD_HOST="localhost"
                 make -j$(nproc)
                 sudo make install
                 curl https://bootstrap.pypa.io/pip/2.7/get-pip.py -o get-pip.py
