@@ -15,8 +15,8 @@ env:
   KERNEL_SOURCE : "https://github.com/zttlove/android_kernel_xiaomi_sm8350-Voyager.git"
   KERNEL_BRANCH : "miui-t"
 
-  CLANG_SOURCE : "https://github.com/kdrag0n/proton-clang.git"
-  CLANG_BRANCH : "master"
+  CLANG_SOURCE : "https://github.com/ZyCromerZ/Clang/releases/download/15.0.7-20260208-release/Clang-15.0.7-20260208.tar.gz"
+  CLANG_BRANCH : ""
 
   GCC_GNU : false
   GCC_64_SOURCE : "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9.git"
