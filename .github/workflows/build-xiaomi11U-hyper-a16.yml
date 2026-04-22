@@ -12,8 +12,8 @@ env:
   CUSTOM_CMDS : "CLANG_TRIPLE=aarch64-linux-gnu-"
   EXTRA_CMDS : "LD=ld.lld KCFLAGS=-Wno-return-mismatch"
 
-  KERNEL_SOURCE : "https://github.com/zttlove/android_kernel_xiaomi_sm8350-Voyager.git"
-  KERNEL_BRANCH : "miui-t"
+  KERNEL_SOURCE : "https://github.com/zttlove/xiaomi_ShirokoNeko_Kernel_SM8350_full_manager.git"
+  KERNEL_BRANCH : "master"
 
   CLANG_SOURCE : "https://github.com/ZyCromerZ/Clang/releases/download/20.0.0git-20241222-release/Clang-20.0.0git-20241222.tar.gz"
   CLANG_BRANCH : ""
