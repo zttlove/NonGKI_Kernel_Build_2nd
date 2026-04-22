@@ -10,7 +10,7 @@ env:
   DEVICE_CODENAME : "star"
 
   CUSTOM_CMDS : "CLANG_TRIPLE=aarch64-linux-gnu-"
-  EXTRA_CMDS : "LD=ld.lld KCFLAGS += -Wno-return-mismatch"
+  EXTRA_CMDS : "LD=ld.lld KCFLAGS=-Wno-return-mismatch"
 
   KERNEL_SOURCE : "https://github.com/zttlove/android_kernel_xiaomi_sm8350-Voyager.git"
   KERNEL_BRANCH : "miui-t"
