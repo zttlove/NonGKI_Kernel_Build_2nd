@@ -29,7 +29,7 @@ env:
   DEFCONFIG_ORIGIN_IMAGE: ""
   DEFCONFIG_FROM_BOOT: false
 
-  KERNELSU_SOURCE : "https://github.com/tiann/KernelSU.git"
+  KERNELSU_SOURCE : "https://github.com/zttlove/KernelSU.git"
   KERNELSU_BRANCH : "main"
 
   KERNELSU_AUTO_GET : "false"
