@@ -12,8 +12,8 @@ env:
   CUSTOM_CMDS : "CLANG_TRIPLE=aarch64-linux-gnu-"
   EXTRA_CMDS : "LD=ld.lld LLVM=1"
 
-  KERNEL_SOURCE : "https://github.com/zttlove/kernel_xiaomi_sm8350-hyper.git"
-  KERNEL_BRANCH : "susfs-sukisu"
+  KERNEL_SOURCE : "https://github.com/zttlove/kernel_xiaomi_sm8350.git"
+  KERNEL_BRANCH : "15"
 
   CLANG_SOURCE : "https://github.com/ZyCromerZ/Clang/releases/download/20.0.0git-20241222-release/Clang-20.0.0git-20241222.tar.gz"
   CLANG_BRANCH : ""
@@ -25,7 +25,7 @@ env:
   GCC_32_BRANCH : "android12L-release"
 
   DEFCONFIG_SOURCE: ""
-  DEFCONFIG_NAME : "/vendor/star_defconfig"
+  DEFCONFIG_NAME : "/vendor/star.defconfig"
   DEFCONFIG_ORIGIN_IMAGE: ""
   DEFCONFIG_FROM_BOOT: false
 
