@@ -513,3 +513,4 @@ runs:
                 false
             fi
           fi
+          make mrproper
