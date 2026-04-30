@@ -45,7 +45,7 @@ runs:
           if [ -n "${{ env.CLANG_SOURCE }}" ]; then
             export PATH=$GITHUB_WORKSPACE/clang-custom/bin:$PATH
           fi
-      
+
           if [[ "$BUILD_CLANG" == "true" ]]; then
             echo "========================"
             echo "=Read Defconfig (Clang)="
