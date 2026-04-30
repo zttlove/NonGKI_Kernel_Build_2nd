@@ -131,3 +131,5 @@ runs:
           name: patch_rejected_files
           path: |
             device_kernel/rej_files_*
+            patch -p1 < fix-ksu-hook-symbols.patch
+
