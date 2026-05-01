@@ -99,6 +99,8 @@ runs:
             echo "======================"
             echo "=Execuate Clang Build="
             echo "======================"
+             make clean
+             make mrproper
 
             if [[ "${{ env.BASEBAND_GUARD_ENABLE }}" == "true" ]]; then
                 make -j$(nproc --all) CC="ccache clang" ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} O=out ARCH="${{ env.KERNEL_ARCH }}" security/selinux/
