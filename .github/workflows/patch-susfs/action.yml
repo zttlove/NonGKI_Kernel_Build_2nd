@@ -131,4 +131,3 @@ runs:
           name: patch_rejected_files
           path: |
             device_kernel/rej_files_*
-
