@@ -110,7 +110,8 @@ runs:
             echo "===================="
             echo "=Execuate GCC Build="
             echo "===================="
-
+            make -C fs clean
+            make -C drivers clean
             if [[ "${{ env.BASEBAND_GUARD_ENABLE }}" == "true" ]]; then
                 make -j$(nproc --all) O=out ARCH="${{ env.KERNEL_ARCH }}" security/selinux/
                 echo "[+] Pre-built SELinux done."
