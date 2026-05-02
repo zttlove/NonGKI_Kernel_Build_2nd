@@ -165,14 +165,14 @@ runs:
                 curl -sSL "https://raw.githubusercontent.com/${KERNELSU_AUTHOR}/${KERNELSU_NAME}/refs/heads/${KERNELSU_ORIGIN_BRANCH}/kernel/setup.sh" | bash -s "$KERNELSU_BRANCH"
 
             elif [[ "${{ env.KERNELSU_METHOD }}" == "manual" ]]; then
-                git clone "https://github.com/zttlove/$KERNELSU_AUTHOR/$KERNELSU_NAME.git" -b "$KERNELSU_BRANCH" "$KERNELSU_FOLDER"
+                git clone "https://github.com/$KERNELSU_AUTHOR/$KERNELSU_NAME.git" -b "$KERNELSU_BRANCH" "$KERNELSU_FOLDER"
                 ln -sf "../$KERNELSU_FOLDER/kernel" "drivers/kernelsu"
                 grep -q "kernelsu" "$GITHUB_WORKSPACE/device_kernel/drivers/Makefile" || printf "\nobj-\$(CONFIG_KSU) += kernelsu/\n" >> $GITHUB_WORKSPACE/device_kernel/drivers/Makefile
                 grep -q "source \"drivers/kernelsu/Kconfig\"" "$GITHUB_WORKSPACE/device_kernel/drivers/Kconfig" || sed -i "/endmenu/i\source \"drivers/kernelsu/Kconfig\"" "${GITHUB_WORKSPACE}/device_kernel/drivers/Kconfig"
                 echo "KernelSU Settings done."
 
             elif [[ "${{ env.KERNELSU_METHOD }}" == "only" ]]; then
-                git clone "https://github.com/zttlove/$KERNELSU_AUTHOR/$KERNELSU_NAME.git" -b "$KERNELSU_BRANCH" "$KERNELSU_FOLDER"
+                git clone "https://github.com/$KERNELSU_AUTHOR/$KERNELSU_NAME.git" -b "$KERNELSU_BRANCH" "$KERNELSU_FOLDER"
                 ln -sf "../$KERNELSU_FOLDER/kernel" "drivers/kernelsu"
 
             fi
