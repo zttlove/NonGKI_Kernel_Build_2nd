@@ -1,0 +1,91 @@
+name: Build Xiaomi11U A2 Kernel with SukiSU-Ultra
+on:
+  workflow_dispatch: # 支持手动触发构建
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Install Dependencies
+        run: |
+          sudo apt update && sudo apt install -y build-essential libssl-dev libelf-dev bison flex bc cpio git ccache
+          # 安装最新的 Clang/LLVM 工具链（适配小米11U内核）
+          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r450784d.tar.gz -O clang.tar.gz
+          mkdir -p ~/clang && tar -xf clang.tar.gz -C ~/clang
+          echo "CC=~/clang/bin/clang" >> $GITHUB_ENV
+          echo "PATH=~/clang/bin:${PATH}" >> $GITHUB_ENV
+
+      - name: Apply SukiSU-Ultra Non-GKI Integration
+        run: |
+          # 拉取并执行 SukiSU 集成脚本
+          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s nongki
+          # 打 5.4 内核兼容补丁
+          cat > ksu_5.4_fix.patch << 'EOF'
+diff --git a/drivers/kernelsu/allowlist.c b/drivers/kernelsu/allowlist.c
+index 8a7d65b..3e2c72c 100644
+--- a/drivers/kernelsu/allowlist.c
++++ b/drivers/kernelsu/allowlist.c
+@@ -449,10 +449,13 @@ static void allowlist_task_work(struct callback_head *cb)
+     put_task_struct(tsk);
+ }
+ 
++#include <linux/sched/task.h>
++
+ void persistent_allow_list(void)
+ {
+     struct task_struct *tsk = current;
+     struct callback_head *cb = &tsk_work.cb;
++    int ret;
+ 
+     if (!cb->func) {
+         init_task_work(cb, allowlist_task_work);
+@@ -452,7 +455,10 @@ void persistent_allow_list(void)
+     }
+ 
+     get_task_struct(tsk);
+-    if (task_work_add(tsk, cb, TWA_RESUME)) {
++    // 适配 5.4 内核，TWA_RESUME 用 true 代替
++    ret = task_work_add(tsk, cb, true);
++    if (ret) {
++        pr_err("task_work_add failed, ret=%d\n", ret);
+         put_task_struct(tsk);
+         goto out;
+     }
+EOF
+          # 应用补丁
+          patch -p1 < ksu_5.4_fix.patch
+
+      - name: Configure Kernel (小米11U A2 配置示例)
+        run: |
+          # 复制你的内核配置文件（请替换为你实际的 defconfig 名称）
+          cp arch/arm64/configs/your_defconfig .config
+          # 开启 KSU 必须的配置项
+          scripts/config --enable CONFIG_KPROBES
+          scripts/config --enable CONFIG_HAVE_KPROBES
+          scripts/config --enable CONFIG_KPROBE_EVENTS
+          scripts/config --enable CONFIG_KALLSYMS
+          scripts/config --enable CONFIG_KALLSYMS_ALL
+          # 额外的 5.4 兼容配置（可选，按需添加）
+          make olddefconfig
+
+      - name: Build Kernel
+        run: |
+          make -j$(nproc) \
+            ARCH=arm64 \
+            CC=clang \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            LD=ld.lld
+
+      - name: Upload Kernel Image
+        uses: actions/upload-artifact@v4
+        with:
+          name: Xiaomi11U-Kernel-Image
+          path: arch/arm64/boot/Image.gz-dtb
