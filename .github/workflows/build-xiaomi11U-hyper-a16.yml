@@ -13,7 +13,7 @@ env:
   EXTRA_CMDS : "LD=ld.lld LLVM=1"
 
   KERNEL_SOURCE : "https://github.com/crdroidandroid/android_kernel_xiaomi_sm8350.git"
-  KERNEL_BRANCH : "16"
+  KERNEL_BRANCH : "16.0"
 
   CLANG_SOURCE : "https://github.com/ZyCromerZ/Clang/releases/download/20.0.0git-20241222-release/Clang-20.0.0git-20241222.tar.gz"
   CLANG_BRANCH : ""
