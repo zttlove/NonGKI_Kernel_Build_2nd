@@ -12,8 +12,8 @@ env:
   CUSTOM_CMDS : "CLANG_TRIPLE=aarch64-linux-gnu-"
   EXTRA_CMDS : "LD=ld.lld LLVM=1"
 
-  KERNEL_SOURCE : "https://github.com/zttlove/android_kernel_xiaomi_sm8350-miui.git"
-  KERNEL_BRANCH : "hyper-14"
+  KERNEL_SOURCE : "https://github.com/zttlove/android_kernel_xiaomi_sm8350_venus.git"
+  KERNEL_BRANCH : "main"
 
   CLANG_SOURCE : "https://github.com/ZyCromerZ/Clang/releases/download/20.0.0git-20241222-release/Clang-20.0.0git-20241222.tar.gz"
   CLANG_BRANCH : ""
@@ -33,10 +33,10 @@ env:
   KERNELSU_BRANCH : ""
 
   KERNELSU_AUTO_GET : "true"
-  KERNELSU_AUTO_FORK : "xxksu" # xxksu, rsuntk , next, resukisu and sukisu
+  KERNELSU_AUTO_FORK : "resukisu" # xxksu, rsuntk , next, resukisu and sukisu
 
-  SUSFS_ENABLE : false
-  SUSFS_FIXED : false
+  SUSFS_ENABLE : true
+  SUSFS_FIXED : true
   AK3_SOURCE : "https://github.com/osm0sis/AnyKernel3.git"
   AK3_BRANCH : "master"
 
