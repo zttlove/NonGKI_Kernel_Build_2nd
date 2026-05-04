@@ -15,7 +15,7 @@ env:
   KERNEL_SOURCE : "https://github.com/zttlove/android_kernel_xiaomi_sm8350_venus.git"
   KERNEL_BRANCH : "main"
 
-  CLANG_SOURCE : "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.3/clang+llvm-18.1.3-aarch64-linux-gnu.tar.xz"
+  CLANG_SOURCE : "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-18.04.tar.xz"
   CLANG_BRANCH : ""
 
   GCC_GNU : false
