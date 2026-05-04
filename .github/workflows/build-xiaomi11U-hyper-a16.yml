@@ -12,8 +12,8 @@ env:
   CUSTOM_CMDS : "CLANG_TRIPLE=aarch64-linux-gnu-"
   EXTRA_CMDS : 'LD=ld.lld LLVM=1 KCFLAGS="-g0"'
 
-  KERNEL_SOURCE : "https://github.com/zttlove/android_kernel_xiaomi_sm8350_venus.git"
-  KERNEL_BRANCH : "main"
+  KERNEL_SOURCE : "https://github.com/zttlove/android_kernel_xiaomi_sm8350-miui.git"
+  KERNEL_BRANCH : "hyper-14"
 
   CLANG_SOURCE : "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-18.04.tar.xz"
   CLANG_BRANCH : ""
