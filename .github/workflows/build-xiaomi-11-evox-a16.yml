@@ -97,8 +97,8 @@ jobs:
     # container: archlinux/archlinux:latest # if u need use arch linux -> archlinux/archlinux:latest or ubuntu 20.04 -> ubuntu:focal
     env:
       CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
-      CCACHE_NOHASHDIR: "true"
-      CCACHE_HARDLINK: "true"
+      CCACHE_NOHASHDIR: "false"
+      CCACHE_HARDLINK: "false"
 
     steps:
       - name: ⏰ Checkout repository
