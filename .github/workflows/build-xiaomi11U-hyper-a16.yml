@@ -12,8 +12,8 @@ env:
   CUSTOM_CMDS : "CLANG_TRIPLE=aarch64-linux-gnu-"
   EXTRA_CMDS : "LD=ld.lld LLVM=1"
 
-  KERNEL_SOURCE : "https://github.com/zttlove/android_kernel_xiaomi_sm8350.git"
-  KERNEL_BRANCH : "16.0"
+  KERNEL_SOURCE : "https://github.com/zttlove/android_kernel_xiaomi_sm8350-miui.git"
+  KERNEL_BRANCH : "hyper-14"
 
   CLANG_SOURCE : "https://github.com/ZyCromerZ/Clang/releases/download/15.0.7-20260208-release/Clang-15.0.7-20260208.tar.gz"
   CLANG_BRANCH : ""
