@@ -29,7 +29,7 @@ env:
   DEFCONFIG_ORIGIN_IMAGE: ""
   DEFCONFIG_FROM_BOOT: false
 
-  KERNELSU_SOURCE : "https://raw.githubusercontent.com/zttlove/SukiSU-Ultra/builtin/kernel/setup.sh"
+  KERNELSU_SOURCE : "https://github.com/a460261925/KowSU-build/blob/main/kernel/setup.sh"
   KERNELSU_BRANCH : ""
 
   KERNELSU_AUTO_GET : "false"
