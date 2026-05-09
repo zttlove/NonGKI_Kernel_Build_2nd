@@ -335,5 +335,8 @@ sed -i 's/ksu_seccomp_allow_cache/ksu_seccomp_cache_filter/g' drivers/kernelsu/s
 sed -i "s/TWA_RESUME/0/g" drivers/kernelsu/allowlist.c
 sed -i "1i #include <linux/sched/task.h>" drivers/kernelsu/allowlist.c
 sed -i 's/#include <linux\/pgtable.h>/#include <asm\/pgtable.h>/g' drivers/kernelsu/sucompat.c
-
+# 终极老内核兼容修复（禁用不兼容功能，保留完整ROOT）
+sed -i 's/CONFIG_KSU_PACKAGE_OBSERVER=y/CONFIG_KSU_PACKAGE_OBSERVER=n/g' drivers/kernelsu/Kconfig
+sed -i 's/TWA_RESUME/0/g' drivers/kernelsu/setuid_hook.c
+sed -i '/ksu_seccomp/d' drivers/kernelsu/setuid_hook.c
 
