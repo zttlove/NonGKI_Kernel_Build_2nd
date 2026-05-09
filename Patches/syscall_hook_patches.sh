@@ -332,4 +332,7 @@ sed -i 's/TWA_RESUME/0/g' drivers/kernelsu/setuid_hook.c
 
 # 3. 修复 setuid_hook.c 未定义函数 ksu_seccomp_allow_cache
 sed -i 's/ksu_seccomp_allow_cache/ksu_seccomp_cache_filter/g' drivers/kernelsu/setuid_hook.c
+sed -i "s/TWA_RESUME/0/g" drivers/kernelsu/allowlist.c
+sed -i "1i #include <linux/sched/task.h>" drivers/kernelsu/allowlist.c
+
 
