@@ -320,11 +320,3 @@ extern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void 
     esac
 
 done
-# KernelSU 老内核 100% 兼容修复
-rm -f drivers/kernelsu/pkg_observer.c
-sed -i '/pkg_observer.o/d' drivers/kernelsu/Makefile
-sed -i 's/TWA_RESUME/0/g' drivers/kernelsu/allowlist.c
-sed -i '1i #include <linux/sched/task.h>' drivers/kernelsu/allowlist.c
-sed -i 's/#include <linux\/pgtable.h>/#include <asm\/pgtable.h>/g' drivers/kernelsu/sucompat.c
-sed -i 's/TWA_RESUME/0/g' drivers/kernelsu/setuid_hook.c
-sed -i '/ksu_seccomp/d' drivers/kernelsu/setuid_hook.c
