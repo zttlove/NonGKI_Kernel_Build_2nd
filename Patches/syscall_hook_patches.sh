@@ -320,23 +320,11 @@ extern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void 
     esac
 
 done
-# 1. 修复 pkg_observer.c 函数指针不兼容
-sed -i 's/handle_inode_event/ksu_handle_event/g' drivers/kernelsu/pkg_observer.c
-sed -i 's/struct fsnotify_mark \*mark/struct fsnotify_group *group, struct inode *inode/g' drivers/kernelsu/pkg_observer.c
-sed -i 's/u32 mask, struct inode \*inode,/u32 mask,/g' drivers/kernelsu/pkg_observer.c
-sed -i 's/struct inode \*lower_inode,/const void *data, int data_type,/g' drivers/kernelsu/pkg_observer.c
-sed -i 's/const struct qstr \*name, u32 cookie/const struct qstr *name, u32 cookie, struct fsnotify_iter_info *iter_info/g' drivers/kernelsu/pkg_observer.c
-
-# 2. 修复 setuid_hook.c TWA_RESUME
-sed -i 's/TWA_RESUME/0/g' drivers/kernelsu/setuid_hook.c
-
-# 3. 修复 setuid_hook.c 未定义函数 ksu_seccomp_allow_cache
-sed -i 's/ksu_seccomp_allow_cache/ksu_seccomp_cache_filter/g' drivers/kernelsu/setuid_hook.c
-sed -i "s/TWA_RESUME/0/g" drivers/kernelsu/allowlist.c
-sed -i "1i #include <linux/sched/task.h>" drivers/kernelsu/allowlist.c
+# KernelSU 老内核 100% 兼容修复
+rm -f drivers/kernelsu/pkg_observer.c
+sed -i '/pkg_observer.o/d' drivers/kernelsu/Makefile
+sed -i 's/TWA_RESUME/0/g' drivers/kernelsu/allowlist.c
+sed -i '1i #include <linux/sched/task.h>' drivers/kernelsu/allowlist.c
 sed -i 's/#include <linux\/pgtable.h>/#include <asm\/pgtable.h>/g' drivers/kernelsu/sucompat.c
-# 终极老内核兼容修复（禁用不兼容功能，保留完整ROOT）
-sed -i 's/CONFIG_KSU_PACKAGE_OBSERVER=y/CONFIG_KSU_PACKAGE_OBSERVER=n/g' drivers/kernelsu/Kconfig
 sed -i 's/TWA_RESUME/0/g' drivers/kernelsu/setuid_hook.c
 sed -i '/ksu_seccomp/d' drivers/kernelsu/setuid_hook.c
-rm -f drivers/kernelsu/pkg_observer.c
