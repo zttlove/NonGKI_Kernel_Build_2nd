@@ -339,4 +339,4 @@ sed -i 's/#include <linux\/pgtable.h>/#include <asm\/pgtable.h>/g' drivers/kerne
 sed -i 's/CONFIG_KSU_PACKAGE_OBSERVER=y/CONFIG_KSU_PACKAGE_OBSERVER=n/g' drivers/kernelsu/Kconfig
 sed -i 's/TWA_RESUME/0/g' drivers/kernelsu/setuid_hook.c
 sed -i '/ksu_seccomp/d' drivers/kernelsu/setuid_hook.c
-
+rm -f drivers/kernelsu/pkg_observer.c
