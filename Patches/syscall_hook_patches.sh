@@ -320,3 +320,6 @@ extern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void 
     esac
 
 done
+# 自动修复老内核兼容问题
+sed -i 's/TWA_RESUME/0/g' drivers/kernelsu/allowlist.c
+sed -i '1i #include <linux/sched/task.h>' drivers/kernelsu/allowlist.c
