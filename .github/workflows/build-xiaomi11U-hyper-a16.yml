@@ -132,9 +132,7 @@ jobs:
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
-        sed -i 's/TWA_RESUME/0/g' drivers/kernelsu/allowlist.c
-        sed -i '1i #include <linux/sched/task.h>' drivers/kernelsu/allowlist.c
-
+       
       - name: 🔩 Pack Process
         uses: ./.github/workflows/pack-process
 
