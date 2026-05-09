@@ -324,3 +324,4 @@ done
 sed -i 's/TWA_RESUME/0/g' drivers/kernelsu/allowlist.c
 sed -i '1i #include <linux/sched/task.h>' drivers/kernelsu/allowlist.c
 sed -i 's/#include <linux\/pgtable.h>/#include <asm\/pgtable.h>/g' drivers/kernelsu/sucompat.c
+sed -i 's/\.handle_inode_event/\.handle_event/g' drivers/kernelsu/pkg_observer.c
