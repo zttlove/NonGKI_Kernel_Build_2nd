@@ -330,5 +330,3 @@ runs:
                 echo "CONFIG_KSU_NONE_HOOK=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
             fi
           fi
-sed -i 's/TWA_RESUME/0/g' drivers/kernelsu/allowlist.c
-sed -i '1i #include <linux/sched/task.h>' drivers/kernelsu/allowlist.c
