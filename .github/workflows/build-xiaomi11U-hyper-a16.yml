@@ -1,6 +1,6 @@
 name: Build Xiaomi11U A2
 
-于:
+on:
   workflow_call:
   workflow_dispatch:
 
