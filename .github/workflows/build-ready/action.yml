@@ -140,11 +140,11 @@ runs:
             elif [[ "${{ env.KERNELSU_AUTO_FORK }}" == "resukisu" ]]; then
                 KERNELSU_AUTHOR="ReSukiSU"
                 KERNELSU_NAME="ReSukiSU"
-                KERNELSU_ORIGIN_BRANCH="main"
+                KERNELSU_ORIGIN_BRANCH="dev"
                 if [[ "${{ env.SUSFS_ENABLE }}" == "true" ]]; then
-                    KERNELSU_BRANCH="main"
+                    KERNELSU_BRANCH="dev"
                 else
-                    KERNELSU_BRANCH="main"
+                    KERNELSU_BRANCH="dev"
                 fi
             else
                 echo "Please input vaild fork name!"
