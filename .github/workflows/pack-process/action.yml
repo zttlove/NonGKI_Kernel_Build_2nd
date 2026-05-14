@@ -18,14 +18,15 @@ runs:
 
           mkdir -p tmp
 
-         if [[ "${{ env.AK3_SOURCE }}" =~ "osm0sis" ]]; then
-          rm -f AnyKernel3/anykernel.sh
-          wget -O AnyKernel3/anykernel.sh https://raw.githubusercontent.com/zttlove/NonGKI_Kernel_Build_2nd/mainline/Patches/anykernel.sh
-          chmod +x AnyKernel3/anykernel.sh
-          echo "✅ 替换在线 anykernel.sh 成功"
-        else
-          echo "✅ 使用自定义 AnyKernel3"
-        fi
+          if [[ "${{ env.AK3_SOURCE }}" =~ "osm0sis" ]]; then
+            sed -i 's/ExampleKernel by osm0sis @ xda-developers/NonGKI Kernel Build by JackAltman @ Github/g' Anykernel3/anykernel.sh
+            sed -i 's/do.devicecheck=1/do.devicecheck=0/g' Anykernel3/anykernel.sh
+            sed -i 's!BLOCK=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!BLOCK=auto;!g' Anykernel3/anykernel.sh
+            sed -i 's/IS_SLOT_DEVICE=0;/is_slot_device=auto;/g' Anykernel3/anykernel.sh
+            echo "Now using official Anykernel3."
+          else
+            echo "Now using custom Anykernel3."
+          fi
 
           if [[ -f "$IMAGE_DIR/Image.gz-dtb" ]]; then
             cp -fp $IMAGE_DIR/Image.gz-dtb tmp
