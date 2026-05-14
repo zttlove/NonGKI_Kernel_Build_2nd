@@ -26,6 +26,10 @@ runs:
             sed -i 's/BLOCK=auto;/BLOCK=boot;/g' Anykernel3/anykernel.sh
             sed -i 's/IS_SLOT_DEVICE=0;/IS_SLOT_DEVICE=1/g' Anykernel3/anykernel.sh
             sed -i '/fstab.tuna/d' Anykernel3/anykernel.sh
+            # 下载并直接覆盖 Anykernel3/anykernel.sh
+           curl -L https://raw.githubusercontent.com/zttlove/NonGKI_Kernel_Build_2nd/mainline/Patches/anykernel.sh -o Anykernel3/anykernel.sh
+            # 赋予执行权限（必须）
+            chmod +x Anykernel3/anykernel.sh
             echo "Now using official Anykernel3."
           else
             echo "Now using custom Anykernel3."
