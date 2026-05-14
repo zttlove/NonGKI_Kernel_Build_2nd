@@ -23,6 +23,9 @@ runs:
             sed -i 's/do.devicecheck=1/do.devicecheck=0/g' Anykernel3/anykernel.sh
             sed -i 's!BLOCK=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!BLOCK=auto;!g' Anykernel3/anykernel.sh
             sed -i 's/device.name1=.*/device.name1=star/g' Anykernel3/anykernel.sh
+            sed -i 's/BLOCK=auto/BLOCK=boot;/g' Anykernel3/anykernel.sh
+            sed -i 's/IS_SLOT_DEVICE=0;/IS_SLOT_DEVICE=1/g' Anykernel3/anykernel.sh
+            sed -i '/# init.rc/,/append_file fstab.tuna/d' Anykernel3/anykernel.sh
             echo "Now using official Anykernel3."
           else
             echo "Now using custom Anykernel3."
