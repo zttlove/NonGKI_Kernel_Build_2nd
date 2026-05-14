@@ -19,6 +19,7 @@ runs:
           mkdir -p tmp
 
           if [[ "${{ env.AK3_SOURCE }}" =~ "osm0sis" ]]; then
+            mkdir -p AnyKernel3
             wget -O AnyKernel3/anykernel.sh https://raw.githubusercontent.com/zttlove/NonGKI_Kernel_Build_2nd/mainline/Patches/anykernel.sh
             chmod +x AnyKernel3/anykernel.sh
             echo "Now using official Anykernel3."
