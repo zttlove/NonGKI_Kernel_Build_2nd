@@ -10,7 +10,7 @@ env:
   DEVICE_CODENAME : "star"
 
   CUSTOM_CMDS : "CLANG_TRIPLE=aarch64-linux-gnu-"
-  EXTRA_CMDS : 'LD=ld.lld LLVM=1 LLVM_IAS=1 EXTRA_CFLAGS="-Wno-unused-function -Wno-frame-larger-than"'
+  EXTRA_CMDS : 'LD=ld.lld LLVM=1 LLVM_IAS=1 CONFIG_SUKISU_FORCE_LEGACY=y CONFIG_SUKISU_NONGKI=y EXTRA_CFLAGS="-Wno-unused-function -Wno-frame-larger-than"'
 
   KERNEL_SOURCE : "https://github.com/zttlove/android_kernel_xiaomi_sm8350-miui.git"
   KERNEL_BRANCH : "hyper-14"
