@@ -320,3 +320,5 @@ extern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void 
     esac
 
 done
+export SUKISU_FORCE_LEGACY=1
+export SUKISU_SKIP_GKI_DETECT=1
