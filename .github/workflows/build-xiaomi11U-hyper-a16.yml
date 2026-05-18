@@ -6,6 +6,7 @@ on:
 
 env:
   # Device env
+  TZ: Asia/Shanghai
   DEVICE_NAME : "xiaomi_11U"
   DEVICE_CODENAME : "star"
 
