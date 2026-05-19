@@ -30,7 +30,7 @@ env:
   DEFCONFIG_ORIGIN_IMAGE: ""
   DEFCONFIG_FROM_BOOT: false
 
-  KERNELSU_SOURCE : "https://raw.githubusercontent.com/rsuntk/KernelSU/susfs-rksu-master/kernel/setup.sh"
+  KERNELSU_SOURCE : "https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh"
   KERNELSU_BRANCH : ""
 
   KERNELSU_AUTO_GET : "false"
