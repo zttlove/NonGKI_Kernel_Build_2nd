@@ -30,8 +30,8 @@ env:
   DEFCONFIG_ORIGIN_IMAGE: ""
   DEFCONFIG_FROM_BOOT: false
 
-  KERNELSU_SOURCE : "https://github.com/tiann/KernelSU.git"
-  KERNELSU_BRANCH : "main"
+  KERNELSU_SOURCE : "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh"
+  KERNELSU_BRANCH : ""
 
   KERNELSU_AUTO_GET : "false"
   KERNELSU_AUTO_FORK : "" # xxksu, rsuntk , next, resukisu and sukisu
