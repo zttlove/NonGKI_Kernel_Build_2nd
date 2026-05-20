@@ -8,7 +8,7 @@ runs:
         shell: bash
         run: |
           TIME=$(date +"%Y%m%d")
-
+          TZ: Asia/Shanghai
           cd $GITHUB_WORKSPACE/device_kernel/
           if [[ -d "arch/arm64/configs" ]]; then
             IMAGE_DIR="$GITHUB_WORKSPACE/device_kernel/out/arch/arm64/boot"
