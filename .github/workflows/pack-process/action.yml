@@ -97,17 +97,19 @@ runs:
             fi
           fi
 
-                    cp -rp ./Anykernel3/* tmp
+          # 先清空，防止旧文件干扰
+          rm -rf tmp
+          mkdir -p tmp
+
+          cp -rp ./Anykernel3/* tmp
           cd tmp
-          
-          # 关键修复：输出到上一级目录，不要把自己打包进去！
-          7za a -mx9 ../tmp.zip *
-          
+          7za a -mx9 ../${{ env.PACK_NAME }} *
           cd ..
-          cp -fp tmp.zip ${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-$TIME-${{ env.PACK_METHOD }}.zip
+
           rm -rf tmp tmp.zip
 
           echo "PACK_NAME=${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-$TIME-${{ env.PACK_METHOD }}.zip" >> $GITHUB_ENV
+
 
       - name: Make Latest Boot Image
         if: env.PACK_METHOD == 'MKBOOTIMG'
