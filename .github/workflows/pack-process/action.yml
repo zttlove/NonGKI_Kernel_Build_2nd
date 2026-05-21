@@ -7,8 +7,8 @@ runs:
         if: env.PACK_METHOD == 'Anykernel3'
         shell: bash
         run: |
-          TIME=$(date +"%Y%m%d")
-          sudo timedatectl set-timezone 'Asia/Shanghai'  # 设置时区为北京时间
+          # 生成 北京时间（UTC+8）的时间戳，例如 20250520-1314
+          TIME=$(TZ=Asia/Shanghai date +%Y%m%d-%H%M%S)
           cd $GITHUB_WORKSPACE/device_kernel/
           if [[ -d "arch/arm64/configs" ]]; then
             IMAGE_DIR="$GITHUB_WORKSPACE/device_kernel/out/arch/arm64/boot"
