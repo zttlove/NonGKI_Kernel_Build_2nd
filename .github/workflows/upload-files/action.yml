@@ -9,7 +9,7 @@ runs:
         with:
           name: Kernel-${{ env.PACK_NAME }}
           path: |
-            ${{ env.PACK_NAME }}
+            ${{ github.workspace }}/${{ env.PACK_NAME }}
 
       - name: Upload Build Artifacts For Boot Image
         if: env.PACK_METHOD == 'MKBOOTIMG'
