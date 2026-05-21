@@ -97,18 +97,23 @@ runs:
             fi
           fi
 
-          # 先清空，防止旧文件干扰
-          rm -rf tmp
-          mkdir -p tmp
-
-          cp -rp ./Anykernel3/* tmp
-          cd tmp
-          7za a -mx9 ../${{ env.PACK_NAME }} *
-          cd ..
-
-          rm -rf tmp tmp.zip
-
-          echo "PACK_NAME=${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-$TIME-${{ env.PACK_METHOD }}.zip" >> $GITHUB_ENV
+           # 清空、重建目录
+    rm -rf tmp
+    mkdir -p tmp
+    
+    # 复制文件
+    cp -rp ./Anykernel3/* tmp/
+    
+    # 直接打包到 GitHub 工作区根目录
+    cd tmp
+    7za a -mx9 ${{ github.workspace }}/${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-$TIME-${{ env.PACK_METHOD }}.zip *
+    cd ..
+    
+    # 删除临时文件
+    rm -rf tmp
+    
+    # 导出最终文件名
+    echo "PACK_NAME=${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-$TIME-${{ env.PACK_METHOD }}.zip" >> $GITHUB_ENV
 
 
       - name: Make Latest Boot Image
