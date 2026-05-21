@@ -96,17 +96,16 @@ runs:
               rm -rf tmp/modules
             fi
           fi
-
-            cp -rp ./Anykernel3/* tmp
+          
+          mkdir -p tmp
+          cp -rp ./Anykernel3/* tmp/
           cd tmp
-          7za a -mx9 tmp.zip *
+          # 直接打包成最终名字，不生成中间 tmp.zip
+          FINAL_ZIP="${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-$TIME-${{ env.PACK_METHOD }}.zip"
+          7za a -mx9 "../${FINAL_ZIP}" ./*
           cd ..
-          cp -fp tmp/tmp.zip ${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-$TIME-${{ env.PACK_METHOD }}.zip
           rm -rf tmp
-
-          echo "PACK_NAME=${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-$TIME-${{ env.PACK_METHOD }}.zip" >> $GITHUB_ENV
-
-
+          echo "PACK_NAME=${FINAL_ZIP}" >> $GITHUB_ENV
 
       - name: Make Latest Boot Image
         if: env.PACK_METHOD == 'MKBOOTIMG'
