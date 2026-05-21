@@ -7,9 +7,8 @@ runs:
         if: env.PACK_METHOD == 'Anykernel3'
         uses: actions/upload-artifact@v7
         with:
-          name: Kernel-${{ env.PACK_NAME }}
-          path: |
-            ${{ github.workspace }}/${{ env.PACK_NAME }}
+          name: Kernel-Package
+          path: ${{ github.workspace }}/*.zip
 
       - name: Upload Build Artifacts For Boot Image
         if: env.PACK_METHOD == 'MKBOOTIMG'
