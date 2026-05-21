@@ -99,11 +99,9 @@ runs:
           
           mkdir -p tmp
           cp -rp ./Anykernel3/* tmp/
-          cd tmp
-          # 直接打包成最终名字，不生成中间 tmp.zip
           FINAL_ZIP="${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-$TIME-${{ env.PACK_METHOD }}.zip"
-          7za a -mx9 "../${FINAL_ZIP}" ./*
-          cd ..
+          # 使用 -w 参数指定工作目录为 tmp，这样打包进去的就只有文件，没有 tmp 文件夹本身
+          7za a -mx9 -w./tmp "${FINAL_ZIP}" ./tmp/*
           rm -rf tmp
           echo "PACK_NAME=${FINAL_ZIP}" >> $GITHUB_ENV
 
