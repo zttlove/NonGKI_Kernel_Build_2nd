@@ -30,26 +30,32 @@ jobs:
           git clone --depth=1 -b android12L-release https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 gcc64
           git clone --depth=1 -b android12L-release https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 gcc32
 
-      # 1. 注释 KernelSU 引用
+      # 修复KernelSU引用
       - name: Fix KernelSU
         run: |
           cd kernel
           sed -i 's/^source "drivers\/kernelsu\/Kconfig"/# &/' drivers/Kconfig
           sed -i 's/^obj-\$(CONFIG_KERNELSU) += kernelsu\//# &/' drivers/Makefile
 
-      # 2. 修复 mm/memory.c const 报错
+      # 修复vmf const报错
       - name: Fix vmf const error
         run: |
           cd kernel
           sed -i 's/static int __handle_speculative_fault(const struct vm_fault \*vmf)/static int __handle_speculative_fault(struct vm_fault \*vmf)/' mm/memory.c
 
-      # 3. 【核心】注释 Kconfig 编译器检测，彻底解决 not found
-      - name: Disable compiler check in Kconfig
+      # 注释Kconfig编译器检测
+      - name: Disable compiler check
         run: |
           cd kernel
           sed -i '39 s/^/#/' scripts/Kconfig.include
 
-      # 全量环境变量 + PATH 一次性注入
+      # 修复binder_prio头文件尖括号错误
+      - name: Fix binder_prio include error
+        run: |
+          cd kernel
+          sed -i 's/#include <..\/..\/android\/binder_internal.h>/#include "../../android/binder_internal.h"/' drivers/staging/binder_prio/binder_prio.c
+
+      # 编译
       - name: Build
         run: |
           export PATH="$GITHUB_WORKSPACE/clang/bin:$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
