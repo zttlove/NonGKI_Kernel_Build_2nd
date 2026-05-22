@@ -49,6 +49,7 @@ jobs:
       - name: Fix binder_prio include error
         run: |
           cd kernel
+          sed -i 's#<../../android/binder_internal.h>#"../../android/binder_internal.h"#' drivers/staging/mi-log/mi_log.c
           sed -i 's#<../../android/binder_internal.h>#"../../android/binder_internal.h"#' drivers/staging/binder_prio/binder_prio.c
 
       - name: Full build kernel + msm_drm
