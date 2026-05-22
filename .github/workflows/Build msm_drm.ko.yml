@@ -16,13 +16,22 @@ jobs:
           sudo apt install -y build-essential bc bison flex libelf-dev libssl-dev dwarves git lz4 zip
 
       # ==========================
-      # 你指定的 GCC 配置
+      # 你指定的 Clang
       # ==========================
-      - name: 下载 GCC 64-bit (android12L-release)
+      - name: 下载 Clang
+        run: |
+          mkdir -p clang
+          wget -q -O clang.tar.gz https://github.com/ZyCromerZ/Clang/releases/download/20.0.0git-20241222-release/Clang-20.0.0git-20241222.tar.gz
+          tar -xf clang.tar.gz -C clang/
+
+      # ==========================
+      # 你指定的 GCC
+      # ==========================
+      - name: 下载 GCC 64-bit
         run: |
           git clone --depth=1 -b android12L-release https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 gcc64
 
-      - name: 下载 GCC 32-bit (android12L-release)
+      - name: 下载 GCC 32-bit
         run: |
           git clone --depth=1 -b android12L-release https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 gcc32
 
@@ -30,37 +39,36 @@ jobs:
         run: |
           git clone --depth=1 -b hyper-14 https://github.com/zttlove/android_kernel_xiaomi_sm8350-miui.git kernel
 
+      # ==========================
+      # 你指定的 KernelSU
+      # ==========================
       - name: 集成 KernelSU rsuntk
         run: |
           cd kernel
           rm -rf KernelSU drivers/kernelsu
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s rsuntk
 
-      - name: 启用 CONFIG_KERNELSU
+      - name: 启用 KernelSU
         run: |
           cd kernel
           echo "CONFIG_KERNELSU=y" >> arch/arm64/configs/vendor/star_defconfig
 
-      - name: 修复所有编译错误（5.4 专用）
+      # ==========================
+      # 5.4 内核必须的修复（无多余修改）
+      # ==========================
+      - name: 修复编译错误
         run: |
           cd kernel
-          
-          # 修复 vmf const 错误
           sed -i 's/static int __handle_speculative_fault(const struct vm_fault \*vmf)/static int __handle_speculative_fault(struct vm_fault \*vmf)/' mm/memory.c
-          
-          # 修复头文件格式
           sed -i 's#<../../android/binder_internal.h>#"../../android/binder_internal.h"#' drivers/staging/mi-log/mi_log.c
           sed -i 's#<../../android/binder_internal.h>#"../../android/binder_internal.h"#' drivers/staging/binder_prio/binder_prio.c
-          
-          # 关闭 Kconfig 编译器检查
           sed -i '39 s/^/#/' scripts/Kconfig.include
-          
-          # 修复 5.4 没有 linux/pgtable.h
           sed -i 's|#include <linux/pgtable.h>|#include <asm/pgtable.h>|' drivers/kernelsu/feature/sucompat.c
-          
-          # 修复 5.4 没有 strncpy_from_user_nofault
           sed -i 's/strncpy_from_user_nofault/strncpy_from_user/g' drivers/kernelsu/feature/sucompat.c
 
+      # ==========================
+      # 编译（完全按你要求）
+      # ==========================
       - name: 编译完整内核
         run: |
           export PATH="$GITHUB_WORKSPACE/clang/bin:$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
@@ -86,7 +94,7 @@ jobs:
           cd AnyKernel3
           zip -q -r -9 boot_sm8350_ksu.zip ./*
 
-      - name: 上传可刷入固件
+      - name: 上传最终固件
         uses: actions/upload-artifact@v4
         with:
           name: SM8350_boot_KernelSU_rsuntk
