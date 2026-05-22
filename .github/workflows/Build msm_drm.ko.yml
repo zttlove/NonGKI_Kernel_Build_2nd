@@ -16,8 +16,7 @@ jobs:
           export ARCH=arm64
       - name: Build msm_drm
         run: |
-          make defconfig
-          make olddefconfig
+          make vendor/star_defconfig
           make -j$(nproc) modules SUBDIRS=drivers/gpu/drm/msm
       - name: Upload artifact
         uses: actions/upload-artifact@v4
