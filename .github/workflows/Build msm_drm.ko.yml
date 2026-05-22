@@ -66,4 +66,36 @@ jobs:
         with:
           name: msm_drm_clang20
           path: kernel/drivers/gpu/drm/msm/msm_drm.ko
+          if-no-files-found: error          sed -i 's/^obj-\$(CONFIG_KERNELSU) += kernelsu\//# &/' drivers/Makefile
+
+      # 核心修复：修改 mm/memory.c，去掉 const 限定
+      - name: Fix const vmf compile error
+        run: |
+          cd kernel
+          sed -i 's/static int __handle_speculative_fault(const struct vm_fault *vmf)/static int __handle_speculative_fault(struct vm_fault *vmf)/' mm/memory.c
+
+      - name: Add toolchain to PATH
+        run: |
+          echo "$GITHUB_WORKSPACE/clang/bin" >> $GITHUB_PATH
+          echo "$GITHUB_WORKSPACE/gcc64/bin" >> $GITHUB_PATH
+          echo "$GITHUB_WORKSPACE/gcc32/bin" >> $GITHUB_PATH
+
+      - name: Set env
+        run: |
+          echo "ARCH=arm64" >> $GITHUB_ENV
+          echo "CROSS_COMPILE=aarch64-linux-android-" >> $GITHUB_ENV
+          echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> $GITHUB_ENV
+
+      - name: Build kernel & module
+        run: |
+          cd kernel
+          make vendor/star_defconfig
+          make -j$(nproc) CC=clang
+          make -j$(nproc) CC=clang M=drivers/gpu/drm/msm modules
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: msm_drm_clang20
+          path: kernel/drivers/gpu/drm/msm/msm_drm.ko
           if-no-files-found: error
