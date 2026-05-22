@@ -1,4 +1,4 @@
-name: Build msm_drm.ko
+name: Build msm_drm.ko (Clang20 + Android GCC4.9)
 on:
   push:
   pull_request:
@@ -10,15 +10,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install full toolchain
+      - name: Install base deps
         run: |
           sudo apt update
-          sudo apt install -y build-essential bc bison flex libelf-dev libssl-dev dwarves git \
-          gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          sudo apt install -y build-essential bc bison flex libelf-dev libssl-dev dwarves git lz4
 
       - name: Clone kernel
         run: |
           git clone --depth=1 -b hyper-14 https://github.com/zttlove/android_kernel_xiaomi_sm8350-miui.git kernel
+
+      - name: Download Clang 20
+        run: |
+          mkdir -p clang
+          wget -q https://github.com/ZyCromerZ/Clang/releases/download/20.0.0git-20241222-release/Clang-20.0.0git-20241222.tar.gz
+          tar -xf Clang-20.0.0git-20241222.tar.gz -C clang
+
+      - name: Download Android GCC 4.9
+        run: |
+          git clone --depth=1 -b android12L-release https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 gcc64
+          git clone --depth=1 -b android12L-release https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 gcc32
 
       - name: Fix KernelSU
         run: |
@@ -26,21 +36,34 @@ jobs:
           sed -i 's/^source "drivers\/kernelsu\/Kconfig"/# &/' drivers/Kconfig
           sed -i 's/^obj-\$(CONFIG_KERNELSU) += kernelsu\//# &/' drivers/Makefile
 
+      # 核心修复：修改 mm/memory.c，去掉 const 限定
+      - name: Fix const vmf compile error
+        run: |
+          cd kernel
+          sed -i 's/static int __handle_speculative_fault(const struct vm_fault *vmf)/static int __handle_speculative_fault(struct vm_fault *vmf)/' mm/memory.c
+
+      - name: Add toolchain to PATH
+        run: |
+          echo "$GITHUB_WORKSPACE/clang/bin" >> $GITHUB_PATH
+          echo "$GITHUB_WORKSPACE/gcc64/bin" >> $GITHUB_PATH
+          echo "$GITHUB_WORKSPACE/gcc32/bin" >> $GITHUB_PATH
+
       - name: Set env
         run: |
           echo "ARCH=arm64" >> $GITHUB_ENV
-          echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
+          echo "CROSS_COMPILE=aarch64-linux-android-" >> $GITHUB_ENV
+          echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> $GITHUB_ENV
 
-      - name: Build
+      - name: Build kernel & module
         run: |
           cd kernel
           make vendor/star_defconfig
-          make -j$(nproc)
-          make -j$(nproc) M=drivers/gpu/drm/msm modules
+          make -j$(nproc) CC=clang
+          make -j$(nproc) CC=clang M=drivers/gpu/drm/msm modules
 
-      - name: Upload
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: msm_drm_sm8350
+          name: msm_drm_clang20
           path: kernel/drivers/gpu/drm/msm/msm_drm.ko
           if-no-files-found: error
