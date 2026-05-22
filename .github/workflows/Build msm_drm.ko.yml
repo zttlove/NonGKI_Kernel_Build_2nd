@@ -1,4 +1,4 @@
-name: 编译 SM8350 内核 boot.img
+name: 编译 SM8350 内核 boot.img + KernelSU (rsuntk)
 on:
   push:
   pull_request:
@@ -10,11 +10,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: 安装编译依赖
+      - name: 安装依赖
         run: |
           sudo apt update
-          sudo apt install -y build-essential bc bison flex libelf-dev libssl-dev \
-          dwarves git lz4 ccache zip libtfm-dev libdevmapper-dev
+          sudo apt install -y build-essential bc bison flex libelf-dev libssl-dev dwarves git lz4 zip ccache
 
       - name: 下载 Clang 20
         run: |
@@ -22,41 +21,45 @@ jobs:
           wget -q https://github.com/ZyCromerZ/Clang/releases/download/20.0.0git-20241222-release/Clang-20.0.0git-20241222.tar.gz
           tar -xf Clang-20.0.0git-20241222.tar.gz -C clang
 
-      - name: 下载 GCC64
+      - name: 下载 GCC
         run: |
           git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 gcc64
           git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 gcc32
 
-      - name: 克隆内核源码
+      - name: 克隆内核
         run: |
           git clone --depth=1 -b hyper-14 https://github.com/zttlove/android_kernel_xiaomi_sm8350-miui.git kernel
 
-      - name: 应用所有必需补丁（你之前的全部错误修复）
+      # ==============================================
+      # 【自动集成 KernelSU rsuntk 版本】
+      # ==============================================
+      - name: Auto integrate KernelSU (rsuntk)
         run: |
           cd kernel
-          
-          # 修复 KernelSU 缺失
-          sed -i 's/^source "drivers\/kernelsu\/Kconfig"/# &/' drivers/Kconfig
-          sed -i 's/^obj-\$(CONFIG_KERNELSU) += kernelsu\//# &/' drivers/Makefile
-          
-          # 修复 vmf const 错误
+          rm -rf KernelSU drivers/kernelsu
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s rsuntk
+
+      - name: 自动启用 KernelSU 配置
+        run: |
+          cd kernel
+          echo "CONFIG_KERNELSU=y" >> arch/arm64/configs/vendor/star_defconfig
+
+      - name: 修复所有编译错误
+        run: |
+          cd kernel
           sed -i 's/static int __handle_speculative_fault(const struct vm_fault \*vmf)/static int __handle_speculative_fault(struct vm_fault \*vmf)/' mm/memory.c
-          
-          # 修复 binder 头文件
           sed -i 's#<../../android/binder_internal.h>#"../../android/binder_internal.h"#' drivers/staging/mi-log/mi_log.c
           sed -i 's#<../../android/binder_internal.h>#"../../android/binder_internal.h"#' drivers/staging/binder_prio/binder_prio.c
-          
-          # 关闭 Kconfig 编译器检查
           sed -i '39 s/^/#/' scripts/Kconfig.include
 
-      - name: 编译内核（完整编译，内置 DRM）
+      - name: 编译完整内核
         run: |
           export PATH="$GITHUB_WORKSPACE/clang/bin:$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-android-
           export CROSS_COMPILE_ARM32=arm-linux-androideabi-
-          export CC="clang"
-          export CXX="clang++"
+          export CC=clang
+          export CXX=clang++
           export LLVM=1
           export LLVM_IAS=1
           export LD=ld.lld
@@ -67,15 +70,15 @@ jobs:
           make vendor/star_defconfig
           make -j$(nproc)
 
-      - name: 下载 AnyKernel3 打包 boot.img
+      - name: 打包 boot.img
         run: |
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git
           cp kernel/arch/arm64/boot/Image.gz AnyKernel3/
           cd AnyKernel3
-          zip -r -9 boot.zip *
+          zip -q -r -9 boot_sm8350_ksu_rsuntk.zip ./*
 
-      - name: 上传最终可刷入 boot.img
+      - name: 上传可刷入 boot
         uses: actions/upload-artifact@v4
         with:
-          name: SM8350_boot_img
-          path: AnyKernel3/boot.zip
+          name: SM8350_boot_KernelSU_rsuntk
+          path: AnyKernel3/boot_sm8350_ksu_rsuntk.zip
