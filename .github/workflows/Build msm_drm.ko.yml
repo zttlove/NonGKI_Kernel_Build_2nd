@@ -70,6 +70,8 @@ jobs:
           export LLVM_IAS=1
           export LD=ld.lld
           export STRIP=llvm-strip
+          # ✅ 你要的编译参数，已加入
+          export EXTRA_CFLAGS="-Wno-unused-function -Wno-frame-larger-than"
 
           cd kernel
           make vendor/star_defconfig
