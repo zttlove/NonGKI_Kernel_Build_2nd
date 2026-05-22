@@ -2,7 +2,7 @@ name: Build msm_drm.ko (Clang20 + Android GCC4.9)
 on:
   push:
   pull_request:
-  workflow_dispatch
+     workflow_dispatch
 
 jobs:
   build:
