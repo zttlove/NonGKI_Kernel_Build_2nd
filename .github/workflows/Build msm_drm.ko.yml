@@ -15,21 +15,21 @@ jobs:
           sudo apt update
           sudo apt install -y build-essential bc bison flex libelf-dev libssl-dev dwarves git lz4 zip
 
-      - name: 下载 Clang
+      - name: 下载指定 Clang
         run: |
           mkdir -p clang
           wget -q -O clang.tar.gz https://github.com/ZyCromerZ/Clang/releases/download/20.0.0git-20241222-release/Clang-20.0.0git-20241222.tar.gz
           tar -xf clang.tar.gz -C clang/
 
-      - name: 下载 GCC 64-bit
+      - name: 下载 GCC 64
         run: |
           git clone --depth=1 -b android12L-release https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 gcc64
 
-      - name: 下载 GCC 32-bit
+      - name: 下载 GCC 32
         run: |
           git clone --depth=1 -b android12L-release https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 gcc32
 
-      - name: 克隆内核源码
+      - name: 克隆内核
         run: |
           git clone --depth=1 -b hyper-14 https://github.com/zttlove/android_kernel_xiaomi_sm8350-miui.git kernel
 
@@ -39,30 +39,28 @@ jobs:
           rm -rf KernelSU drivers/kernelsu
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s rsuntk
 
-      - name: 启用 KernelSU
+      - name: 开启 KernelSU 配置
         run: |
           cd kernel
           echo "CONFIG_KERNELSU=y" >> arch/arm64/configs/vendor/star_defconfig
 
-      # ==========================
-      # 🔥 无错误 极简修复
-      # ==========================
-      - name: 修复 KernelSU 5.4 兼容
+      - name: 全局兼容修复(5.4内核专用)
         run: |
           cd kernel
-          sed -i 's/#include <linux\/pgtable.h>/#include <asm\/pgtable.h>/' drivers/kernelsu/feature/sucompat.c
+          # 修复 pgtable.h
+          sed -i 's/linux\/pgtable.h/asm\/pgtable.h/' drivers/kernelsu/feature/sucompat.c
+          # 修复 nofault 系列函数
           sed -i 's/strncpy_from_user_nofault/strncpy_from_user/' drivers/kernelsu/feature/sucompat.c
           sed -i 's/copy_to_kernel_nofault/memcpy/' drivers/kernelsu/hook/arm64/patch_memory.c
-
-      - name: 修复内核其他错误
-        run: |
-          cd kernel
+          # 修复 seccomp 未定义宏 (arm64 系统调用号上限)
+          sed -i '1i #define SECCOMP_ARCH_NATIVE_NR 1024' drivers/kernelsu/infra/seccomp_cache.c
+          # 原有内核编译报错修复
           sed -i '39 s/^/#/' scripts/Kconfig.include
-          sed -i 's/static int __handle_speculative_fault/static int __handle_speculative_fault_fix/' mm/memory.c
           sed -i 's#<../../android/binder_internal.h>#"../../android/binder_internal.h"#' drivers/staging/mi-log/mi_log.c
           sed -i 's#<../../android/binder_internal.h>#"../../android/binder_internal.h"#' drivers/staging/binder_prio/binder_prio.c
+          sed -i 's/const struct vm_fault/struct vm_fault/' mm/memory.c
 
-      - name: 编译内核
+      - name: 编译完整内核
         run: |
           export PATH="$GITHUB_WORKSPACE/clang/bin:$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
           export ARCH=arm64
@@ -80,15 +78,15 @@ jobs:
           make vendor/star_defconfig
           make -j$(nproc)
 
-      - name: 打包 boot.img
+      - name: 打包 AnyKernel3
         run: |
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git
           cp kernel/arch/arm64/boot/Image.gz AnyKernel3/
           cd AnyKernel3
-          zip -q -r boot_final.zip ./*
+          zip -q -r boot_sm8350_ksu.zip ./*
 
-      - name: 上传固件
+      - name: 上传成品
         uses: actions/upload-artifact@v4
         with:
-          name: SM8350_boot_FINAL
-          path: AnyKernel3/boot_final.zip
+          name: SM8350_5.4_KSU_rsuntk
+          path: AnyKernel3/boot_sm8350_ksu.zip
