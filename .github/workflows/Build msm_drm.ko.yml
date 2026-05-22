@@ -1,4 +1,4 @@
-name: Build msm_drm.ko (Clang 20 + SM8350)
+name: Build msm_drm.ko
 on:
   push:
   pull_request:
@@ -10,40 +10,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Install full build deps
         run: |
-          sudo apt update
-          sudo apt install -y build-essential bc bison flex libelf-dev libssl-dev dwarves git lz4
+          sudo apt update && sudo apt upgrade -y
+          sudo apt install -y \
+            build-essential bc bison flex libelf-dev libssl-dev dwarves git \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu gcc-arm-linux-gnueabi g++-arm-linux-gnueabi
 
-      # 克隆内核
-      - name: Clone kernel
+      - name: Clone kernel source
         run: |
           git clone --depth=1 -b hyper-14 https://github.com/zttlove/android_kernel_xiaomi_sm8350-miui.git kernel
 
-      # 修复 KernelSU 报错
-      - name: Fix KernelSU config
+      - name: Fix missing KernelSU
         run: |
           cd kernel
           sed -i 's/^source "drivers\/kernelsu\/Kconfig"/# &/' drivers/Kconfig
           sed -i 's/^obj-\$(CONFIG_KERNELSU) += kernelsu\//# &/' drivers/Makefile
 
-      # ==============================================
-      # 【终极方案】直接用系统自带工具链，最简单、最稳定
-      # ==============================================
-      - name: Set env (system gcc)
+      - name: Set compile env
         run: |
           echo "ARCH=arm64" >> $GITHUB_ENV
           echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
 
-      # 直接编译！不再折腾自定义 Clang/GCC，彻底告别报错
-      - name: Build msm_drm.ko
+      - name: Build
         run: |
           cd kernel
           make vendor/star_defconfig
           make -j$(nproc)
           make -j$(nproc) M=drivers/gpu/drm/msm modules
 
-      - name: Upload artifact
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: msm_drm_sm8350
