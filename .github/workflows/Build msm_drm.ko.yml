@@ -15,18 +15,12 @@ jobs:
           sudo apt update
           sudo apt install -y build-essential bc bison flex libelf-dev libssl-dev dwarves git lz4 zip
 
-      # ==========================
-      # 你指定的 Clang
-      # ==========================
       - name: 下载 Clang
         run: |
           mkdir -p clang
           wget -q -O clang.tar.gz https://github.com/ZyCromerZ/Clang/releases/download/20.0.0git-20241222-release/Clang-20.0.0git-20241222.tar.gz
           tar -xf clang.tar.gz -C clang/
 
-      # ==========================
-      # 你指定的 GCC
-      # ==========================
       - name: 下载 GCC 64-bit
         run: |
           git clone --depth=1 -b android12L-release https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 gcc64
@@ -39,9 +33,6 @@ jobs:
         run: |
           git clone --depth=1 -b hyper-14 https://github.com/zttlove/android_kernel_xiaomi_sm8350-miui.git kernel
 
-      # ==========================
-      # 你指定的 KernelSU
-      # ==========================
       - name: 集成 KernelSU rsuntk
         run: |
           cd kernel
@@ -54,9 +45,9 @@ jobs:
           echo "CONFIG_KERNELSU=y" >> arch/arm64/configs/vendor/star_defconfig
 
       # ==========================
-      # 5.4 内核必须的修复（无多余修改）
+      # 🔥 无错误 极简修复
       # ==========================
-     - name: 修复 KernelSU 5.4 兼容
+      - name: 修复 KernelSU 5.4 兼容
         run: |
           cd kernel
           sed -i 's/#include <linux\/pgtable.h>/#include <asm\/pgtable.h>/' drivers/kernelsu/feature/sucompat.c
@@ -70,8 +61,8 @@ jobs:
           sed -i 's/static int __handle_speculative_fault/static int __handle_speculative_fault_fix/' mm/memory.c
           sed -i 's#<../../android/binder_internal.h>#"../../android/binder_internal.h"#' drivers/staging/mi-log/mi_log.c
           sed -i 's#<../../android/binder_internal.h>#"../../android/binder_internal.h"#' drivers/staging/binder_prio/binder_prio.c
-      
-      - name: 编译完整内核
+
+      - name: 编译内核
         run: |
           export PATH="$GITHUB_WORKSPACE/clang/bin:$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
           export ARCH=arm64
@@ -94,10 +85,10 @@ jobs:
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git
           cp kernel/arch/arm64/boot/Image.gz AnyKernel3/
           cd AnyKernel3
-          zip -q -r -9 boot_sm8350_ksu.zip ./*
+          zip -q -r boot_final.zip ./*
 
-      - name: 上传最终固件
+      - name: 上传固件
         uses: actions/upload-artifact@v4
         with:
-          name: SM8350_boot_KernelSU_rsuntk
-          path: AnyKernel3/boot_sm8350_ksu.zip
+          name: SM8350_boot_FINAL
+          path: AnyKernel3/boot_final.zip
