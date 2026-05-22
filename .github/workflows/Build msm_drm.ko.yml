@@ -59,13 +59,13 @@ jobs:
       - name: 修复编译错误
         run: |
           cd kernel
-          sed -i 's/static int __handle_speculative_fault(const struct vm_fault \*vmf)/static int __handle_speculative_fault(struct vm_fault \*vmf)/' mm/memory.c
+          sed -i 's#static int __handle_speculative_fault(const struct vm_fault \*vmf)/static int __handle_speculative_fault(struct vm_fault \*vmf)/' mm/memory.c
           sed -i 's#<../../android/binder_internal.h>#"../../android/binder_internal.h"#' drivers/staging/mi-log/mi_log.c
           sed -i 's#<../../android/binder_internal.h>#"../../android/binder_internal.h"#' drivers/staging/binder_prio/binder_prio.c
           sed -i '39 s/^/#/' scripts/Kconfig.include
           sed -i 's|#include <linux/pgtable.h>|#include <asm/pgtable.h>|' drivers/kernelsu/feature/sucompat.c
-          sed -i 's/strncpy_from_user_nofault/strncpy_from_user/g' drivers/kernelsu/feature/sucompat.c
-          sed -i 's/copy_to_kernel_nofault memcpy/g' drivers/kernelsu/hook/arm64/patch_memory.c
+          sed -i 's#strncpy_from_user_nofault/strncpy_from_user/g' drivers/kernelsu/feature/sucompat.c
+          sed -i 's#copy_to_kernel_nofault memcpy/g' drivers/kernelsu/hook/arm64/patch_memory.c
 
       # ==========================
       # 编译（完全按你要求）
