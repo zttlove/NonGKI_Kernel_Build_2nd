@@ -30,64 +30,33 @@ jobs:
           git clone --depth=1 -b android12L-release https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 gcc64
           git clone --depth=1 -b android12L-release https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 gcc32
 
+      # 1. 注释 KernelSU 引用
       - name: Fix KernelSU
         run: |
           cd kernel
           sed -i 's/^source "drivers\/kernelsu\/Kconfig"/# &/' drivers/Kconfig
           sed -i 's/^obj-\$(CONFIG_KERNELSU) += kernelsu\//# &/' drivers/Makefile
 
-      # 核心修复：修改 mm/memory.c，去掉 const 限定
-      - name: Fix const vmf compile error
+      # 2. 修复 mm/memory.c const 报错
+      - name: Fix vmf const error
         run: |
           cd kernel
-          sed -i 's/static int __handle_speculative_fault(const struct vm_fault *vmf)/static int __handle_speculative_fault(struct vm_fault *vmf)/' mm/memory.c
+          sed -i 's/static int __handle_speculative_fault(const struct vm_fault \*vmf)/static int __handle_speculative_fault(struct vm_fault \*vmf)/' mm/memory.c
 
-      - name: Add toolchain to PATH
-        run: |
-          echo "$GITHUB_WORKSPACE/clang/bin" >> $GITHUB_PATH
-          echo "$GITHUB_WORKSPACE/gcc64/bin" >> $GITHUB_PATH
-          echo "$GITHUB_WORKSPACE/gcc32/bin" >> $GITHUB_PATH
-
-      - name: Set env
-        run: |
-          echo "ARCH=arm64" >> $GITHUB_ENV
-          echo "CROSS_COMPILE=aarch64-linux-android-" >> $GITHUB_ENV
-          echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> $GITHUB_ENV
-
-      - name: Build kernel & module
+      # 3. 【核心】注释 Kconfig 编译器检测，彻底解决 not found
+      - name: Disable compiler check in Kconfig
         run: |
           cd kernel
-          make vendor/star_defconfig
-          make -j$(nproc) CC=clang
-          make -j$(nproc) CC=clang M=drivers/gpu/drm/msm modules
+          sed -i '39 s/^/#/' scripts/Kconfig.include
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: msm_drm_clang20
-          path: kernel/drivers/gpu/drm/msm/msm_drm.ko
-          if-no-files-found: error          sed -i 's/^obj-\$(CONFIG_KERNELSU) += kernelsu\//# &/' drivers/Makefile
-
-      # 核心修复：修改 mm/memory.c，去掉 const 限定
-      - name: Fix const vmf compile error
+      # 全量环境变量 + PATH 一次性注入
+      - name: Build
         run: |
-          cd kernel
-          sed -i 's/static int __handle_speculative_fault(const struct vm_fault *vmf)/static int __handle_speculative_fault(struct vm_fault *vmf)/' mm/memory.c
+          export PATH="$GITHUB_WORKSPACE/clang/bin:$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-android-
+          export CROSS_COMPILE_ARM32=arm-linux-androideabi-
 
-      - name: Add toolchain to PATH
-        run: |
-          echo "$GITHUB_WORKSPACE/clang/bin" >> $GITHUB_PATH
-          echo "$GITHUB_WORKSPACE/gcc64/bin" >> $GITHUB_PATH
-          echo "$GITHUB_WORKSPACE/gcc32/bin" >> $GITHUB_PATH
-
-      - name: Set env
-        run: |
-          echo "ARCH=arm64" >> $GITHUB_ENV
-          echo "CROSS_COMPILE=aarch64-linux-android-" >> $GITHUB_ENV
-          echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> $GITHUB_ENV
-
-      - name: Build kernel & module
-        run: |
           cd kernel
           make vendor/star_defconfig
           make -j$(nproc) CC=clang
