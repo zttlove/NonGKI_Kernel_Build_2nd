@@ -23,7 +23,7 @@ jobs:
 
       - name: 下载 GCC
         run: |
-          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 gcc64
+          git clone --depth=1 https://android.googource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 gcc64
           git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 gcc32
 
       - name: 克隆内核
@@ -41,22 +41,25 @@ jobs:
           cd kernel
           echo "CONFIG_KERNELSU=y" >> arch/arm64/configs/vendor/star_defconfig
 
-      - name: 修复所有编译错误（5.4 专用）
+      - name: 修复所有编译错误（5.4 专用终极版）
         run: |
           cd kernel
           
-          # 修复 vmf const
+          # 1. 修复 vmf const
           sed -i 's/static int __handle_speculative_fault(const struct vm_fault \*vmf)/static int __handle_speculative_fault(struct vm_fault \*vmf)/' mm/memory.c
           
-          # 修复头文件
+          # 2. 修复头文件
           sed -i 's#<../../android/binder_internal.h>#"../../android/binder_internal.h"#' drivers/staging/mi-log/mi_log.c
           sed -i 's#<../../android/binder_internal.h>#"../../android/binder_internal.h"#' drivers/staging/binder_prio/binder_prio.c
           
-          # 关闭编译器检查
+          # 3. 关闭 Kconfig 编译器检查
           sed -i '39 s/^/#/' scripts/Kconfig.include
           
-          # 5.4 内核专用修复 strncpy_from_user_nofault
-          sed -i 's/strncpy_from_user_nofault/strncpy_from_user/' drivers/kernelsu/feature/sucompat.c
+          # 🔥 4. 5.4 内核专用：修复 pgtable.h 找不到
+          sed -i 's|#include <linux/pgtable.h>|#include <asm/pgtable.h>|' drivers/kernelsu/feature/sucompat.c
+          
+          # 🔥 5. 5.4 内核专用：修复 strncpy_from_user_nofault 不存在
+          sed -i 's/strncpy_from_user_nofault/strncpy_from_user/g' drivers/kernelsu/feature/sucompat.c
 
       - name: 编译完整内核
         run: |
