@@ -1,0 +1,26 @@
+name: Build msm_drm.ko
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: sudo apt update && sudo apt install -y build-essential bc bison flex libelf-dev
+      - name: Setup toolchain
+        run: |
+          export PATH=$(pwd)/prebuilts/clang/host/linux-x86/clang-r383902b/bin:$PATH
+          export CC=clang
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export ARCH=arm64
+      - name: Build msm_drm
+        run: |
+          make defconfig
+          make olddefconfig
+          make -j$(nproc) modules SUBDIRS=drivers/gpu/drm/msm
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: msm_drm-ko
+          path: drivers/gpu/drm/msm/msm_drm.ko
