@@ -10,87 +10,66 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 安装依赖
       - name: Install dependencies
         run: |
           sudo apt update
           sudo apt install -y build-essential bc bison flex libelf-dev libssl-dev dwarves git lz4
 
-      # 1. 克隆内核
+      # 克隆内核
       - name: Clone kernel
         run: |
           git clone --depth=1 -b hyper-14 \
-            https://github.com/zttlove/android_kernel_xiaomi_sm8350-miui.git \
-            kernel
+            https://github.com/zttlove/android_kernel_xiaomi_sm8350-miui.git kernel
 
-      # 2. 下载你指定的 Clang 20
+      # 下载 Clang
       - name: Download Clang 20
         run: |
           mkdir -p clang
           wget -O clang.tar.gz "https://github.com/ZyCromerZ/Clang/releases/download/20.0.0git-20241222-release/Clang-20.0.0git-20241222.tar.gz"
           tar -zxf clang.tar.gz -C clang
 
-      # 3. 下载 GCC 64/32 工具链（安卓内核必须）
+      # 下载 GCC 工具链
       - name: Download GCC aarch64 & arm
         run: |
           git clone --depth=1 -b android12L-release \
-            https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 \
-            gcc64
+            https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 gcc64
           git clone --depth=1 -b android12L-release \
-            https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 \
-            gcc32
+            https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 gcc32
 
-      # 4. 修复缺失 kernelsu 报错
+      # 修复 KernelSU 报错
       - name: Fix KernelSU config
         run: |
           cd kernel
           sed -i 's/^source "drivers\/kernelsu\/Kconfig"/# &/' drivers/Kconfig
           sed -i 's/^obj-\$(CONFIG_KERNELSU) += kernelsu\//# &/' drivers/Makefile
 
-      # 5. 设置 Clang 编译环境
-      - name: Set build environment
+      # 【核心修复】提前把编译器路径写入系统环境，defconfig 就能找到
+      - name: Export full toolchain PATH
         run: |
-          # 路径
-          CLANG_PATH="$GITHUB_WORKSPACE/clang/bin"
-          GCC64_PATH="$GITHUB_WORKSPACE/gcc64"
-          GCC32_PATH="$GITHUB_WORKSPACE/gcc32"
+          echo "${GITHUB_WORKSPACE}/clang/bin" >> $GITHUB_PATH
+          echo "${GITHUB_WORKSPACE}/gcc64/bin" >> $GITHUB_PATH
+          echo "${GITHUB_WORKSPACE}/gcc32/bin" >> $GITHUB_PATH
 
-          # 导出环境变量
+      # 设置编译变量
+      - name: Set build env
+        run: |
           echo "ARCH=arm64" >> $GITHUB_ENV
           echo "CROSS_COMPILE=aarch64-linux-android-" >> $GITHUB_ENV
           echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> $GITHUB_ENV
-          echo "CLANG_TOOLCHAIN=$CLANG_PATH" >> $GITHUB_ENV
-          echo "PATH=$CLANG_PATH:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH" >> $GITHUB_ENV
+          echo "CC=clang" >> $GITHUB_ENV
 
-      # 6. 编译内核 + msm_drm.ko
-      - name: Build msm_drm
+      # 开始编译
+      - name: Build msm_drm.ko
         run: |
           cd kernel
           make vendor/star_defconfig
+          make -j$(nproc)
+          make -j$(nproc) M=drivers/gpu/drm/msm modules
 
-          # Clang 编译命令（安卓内核标准用法）
-          make -j$(nproc) \
-            CC=clang \
-            AR=llvm-ar \
-            NM=llvm-nm \
-            OBJCOPY=llvm-objcopy \
-            OBJDUMP=llvm-objdump \
-            STRIP=llvm-strip
-
-          # 单独编译 DRM 模块
-          make -j$(nproc) \
-            CC=clang \
-            AR=llvm-ar \
-            NM=llvm-nm \
-            OBJCOPY=llvm-objcopy \
-            OBJDUMP=llvm-objdump \
-            STRIP=llvm-strip \
-            M=drivers/gpu/drm/msm modules
-
-      # 7. 上传成品
-      - name: Upload msm_drm.ko
+      # 上传
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: msm_drm_sm8350_clang20
+          name: msm_drm_sm8350_final
           path: kernel/drivers/gpu/drm/msm/msm_drm.ko
           if-no-files-found: error
