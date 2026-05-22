@@ -1,4 +1,4 @@
-name: 编译 SM8350 内核 boot.img + KernelSU (rsuntk)
+name: 编译 SM8350 内核 boot.img + KernelSU
 on:
   push:
   pull_request:
@@ -31,13 +31,13 @@ jobs:
           git clone --depth=1 -b hyper-14 https://github.com/zttlove/android_kernel_xiaomi_sm8350-miui.git kernel
 
       # ==============================================
-      # 【自动集成 KernelSU rsuntk 版本】
+      # 【修复】使用 4.19 内核兼容的 KernelSU 分支
       # ==============================================
-      - name: Auto integrate KernelSU (rsuntk)
+      - name: Auto integrate KernelSU (稳定兼容 4.19)
         run: |
           cd kernel
           rm -rf KernelSU drivers/kernelsu
-          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s rsuntk
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
 
       - name: 自动启用 KernelSU 配置
         run: |
@@ -47,10 +47,16 @@ jobs:
       - name: 修复所有编译错误
         run: |
           cd kernel
+          # 修复 vmf const
           sed -i 's/static int __handle_speculative_fault(const struct vm_fault \*vmf)/static int __handle_speculative_fault(struct vm_fault \*vmf)/' mm/memory.c
+          # 修复头文件
           sed -i 's#<../../android/binder_internal.h>#"../../android/binder_internal.h"#' drivers/staging/mi-log/mi_log.c
           sed -i 's#<../../android/binder_internal.h>#"../../android/binder_internal.h"#' drivers/staging/binder_prio/binder_prio.c
+          # 关闭编译器检查
           sed -i '39 s/^/#/' scripts/Kconfig.include
+
+          # 🔥【终极修复】解决 KernelSU pgtable.h 找不到
+          sed -i 's/#include <linux\/pgtable.h>/#include <asm\/pgtable.h>/' drivers/kernelsu/feature/sucompat.c
 
       - name: 编译完整内核
         run: |
@@ -75,10 +81,8 @@ jobs:
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git
           cp kernel/arch/arm64/boot/Image.gz AnyKernel3/
           cd AnyKernel3
-          zip -q -r -9 boot_sm8350_ksu_rsuntk.zip ./*
+          zip -q -r -9 boot_sm8350_ksu.zip ./*
 
       - name: 上传可刷入 boot
         uses: actions/upload-artifact@v4
-        with:
-          name: SM8350_boot_KernelSU_rsuntk
-          path: AnyKernel3/boot_sm8350_ksu_rsuntk.zip
+       
