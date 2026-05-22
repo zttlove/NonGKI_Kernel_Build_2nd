@@ -1,4 +1,4 @@
-name: Build msm_drm.ko (Clang20 + SM8350)
+name: Build msm_drm.ko (FAST VERSION)
 on:
   push:
   pull_request:
@@ -42,23 +42,31 @@ jobs:
           sed -i 's/^source "drivers\/kernelsu\/Kconfig"/# &/' drivers/Kconfig
           sed -i 's/^obj-\$(CONFIG_KERNELSU) += kernelsu\//# &/' drivers/Makefile
 
-      - name: Fix vmf const compile error
-        run: |
-          cd kernel
-          sed -i 's/static int __handle_speculative_fault(const struct vm_fault *vmf)/static int __handle_speculative_fault(struct vm_fault *vmf)/' mm/memory.c
-
-      - name: Disable Kconfig mandatory compiler check
+      - name: Disable Kconfig compiler check
         run: |
           cd kernel
           sed -i '39 s/^/#/' scripts/Kconfig.include
 
-      - name: Fix binder include errors
+      - name: Fix binder includes
         run: |
           cd kernel
           sed -i 's#<../../android/binder_internal.h>#"../../android/binder_internal.h"#' drivers/staging/mi-log/mi_log.c
           sed -i 's#<../../android/binder_internal.h>#"../../android/binder_internal.h"#' drivers/staging/binder_prio/binder_prio.c
 
-      - name: Full build kernel + msm_drm
+      - name: Fix vmf const error
+        run: |
+          cd kernel
+          sed -i 's/static int __handle_speculative_fault(const struct vm_fault *vmf)/static int __handle_speculative_fault(struct vm_fault *vmf)/' mm/memory.c
+
+      # ✅【关键修复】强制把 msm_drm 编译成模块 .ko
+      - name: Force msm_drm =m
+        run: |
+          cd kernel
+          sed -i 's/CONFIG_DRM_MSM=y/CONFIG_DRM_MSM=m/' .config 2>/dev/null || true
+          sed -i 's/CONFIG_DRM_MSM=y/CONFIG_DRM_MSM=m/' arch/arm64/configs/vendor/star_defconfig
+
+      # 🚀 极速编译
+      - name: Build msm_drm.ko
         run: |
           export PATH="$GITHUB_WORKSPACE/clang/bin:$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
           export ARCH=arm64
@@ -70,17 +78,16 @@ jobs:
           export LLVM_IAS=1
           export LD=ld.lld
           export STRIP=llvm-strip
-          # ✅ 你要的编译参数，已加入
           export EXTRA_CFLAGS="-Wno-unused-function -Wno-frame-larger-than"
 
           cd kernel
           make vendor/star_defconfig
-          make -j$(nproc)
-          make -j$(nproc) M=drivers/gpu/drm/msm modules
+          make modules_prepare
+          make M=drivers/gpu/drm/msm modules
 
-      - name: Upload compiled module
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: msm_drm_sm8350成品
+          name: msm_drm_sm8350
           path: kernel/drivers/gpu/drm/msm/msm_drm.ko
           if-no-files-found: error
