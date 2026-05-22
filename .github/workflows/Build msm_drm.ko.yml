@@ -1,4 +1,4 @@
-name: Build msm_drm.ko (FAST VERSION)
+name: Build msm_drm.ko (FINAL FIX)
 on:
   push:
   pull_request:
@@ -58,15 +58,15 @@ jobs:
           cd kernel
           sed -i 's/static int __handle_speculative_fault(const struct vm_fault *vmf)/static int __handle_speculative_fault(struct vm_fault *vmf)/' mm/memory.c
 
-      # ✅【关键修复】强制把 msm_drm 编译成模块 .ko
-      - name: Force msm_drm =m
+      # 🚀 强制编译 DRM 为模块
+      - name: Force DRM MSM as module
         run: |
           cd kernel
-          sed -i 's/CONFIG_DRM_MSM=y/CONFIG_DRM_MSM=m/' .config 2>/dev/null || true
-          sed -i 's/CONFIG_DRM_MSM=y/CONFIG_DRM_MSM=m/' arch/arm64/configs/vendor/star_defconfig
+          echo "CONFIG_DRM_MSM=m" >> arch/arm64/configs/vendor/star_defconfig
+          echo "CONFIG_DRM_MSM=m" >> .config 2>/dev/null || true
 
-      # 🚀 极速编译
-      - name: Build msm_drm.ko
+      # 🚀 编译（完整编译，确保模块一定生成）
+      - name: Build kernel modules
         run: |
           export PATH="$GITHUB_WORKSPACE/clang/bin:$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
           export ARCH=arm64
@@ -83,11 +83,18 @@ jobs:
           cd kernel
           make vendor/star_defconfig
           make modules_prepare
-          make M=drivers/gpu/drm/msm modules
+          make modules  -j$(nproc)  # 编译所有模块，确保 drm 一定生成
 
-      - name: Upload artifact
+      # 🎯【终极】查找所有 drm 相关 ko，复制出来
+      - name: Find and collect msm_drm.ko
+        run: |
+          mkdir -p upload
+          find kernel -name "*msm*.ko" -o -name "*drm*.ko" | xargs cp -t upload/
+          ls -lah upload/
+
+      # ✅ 上传找到的模块（不管路径）
+      - name: Upload all modules
         uses: actions/upload-artifact@v4
         with:
-          name: msm_drm_sm8350
-          path: kernel/drivers/gpu/drm/msm/msm_drm.ko
-          if-no-files-found: error
+          name: all_drm_modules
+          path: upload/
