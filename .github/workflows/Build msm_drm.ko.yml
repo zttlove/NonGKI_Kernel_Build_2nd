@@ -44,17 +44,19 @@ jobs:
           cd kernel
           echo "CONFIG_KERNELSU=y" >> arch/arm64/configs/vendor/star_defconfig
 
-      - name: 全局兼容修复(5.4内核专用)
+      - name: 5.4 全量兼容修复
         run: |
           cd kernel
           # 修复 pgtable.h
           sed -i 's/linux\/pgtable.h/asm\/pgtable.h/' drivers/kernelsu/feature/sucompat.c
-          # 修复 nofault 系列函数
+          # 修复 nofault 函数
           sed -i 's/strncpy_from_user_nofault/strncpy_from_user/' drivers/kernelsu/feature/sucompat.c
           sed -i 's/copy_to_kernel_nofault/memcpy/' drivers/kernelsu/hook/arm64/patch_memory.c
-          # 修复 seccomp 未定义宏 (arm64 系统调用号上限)
+          # 修复 seccomp 未定义宏
           sed -i '1i #define SECCOMP_ARCH_NATIVE_NR 1024' drivers/kernelsu/infra/seccomp_cache.c
-          # 原有内核编译报错修复
+          # 修复 fsnotify 函数签名不匹配（当前报错）
+          sed -i 's/ksu_handle_inode_event/NULL/' drivers/kernelsu/manager/pkg_observer.c
+          # 内核原有报错修复
           sed -i '39 s/^/#/' scripts/Kconfig.include
           sed -i 's#<../../android/binder_internal.h>#"../../android/binder_internal.h"#' drivers/staging/mi-log/mi_log.c
           sed -i 's#<../../android/binder_internal.h>#"../../android/binder_internal.h"#' drivers/staging/binder_prio/binder_prio.c
