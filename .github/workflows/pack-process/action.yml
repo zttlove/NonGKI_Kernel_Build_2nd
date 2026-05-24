@@ -99,8 +99,13 @@ runs:
           
           mkdir -p tmp
           cp -rp ./Anykernel3/* tmp/
-          # 从源码提取官方原生构建号
-          BUILD_NUMBER=$(grep -oP '(?<=BUILD_NUMBER )\d+' drivers/sukisu/version.h)
+          API_URL="https://api.github.com/repos/cctv18/ReSukiSU_CI/releases/latest"
+           
+           # 抓最新 tag（形如 v34904）
+           TAG=$(curl -sL "$API_URL" | jq -r .name)
+           
+           # 提取纯数字
+           BUILD_NUM=$(echo "$TAG" | grep -oE '[0-9]+')
           FINAL_ZIP="AK3-5.4.247-ReSukiSU-${BUILD_NUMBER}-star(KPM).zip"
 
           echo "FINAL_ZIP=$FINAL_ZIP" >> $GITHUB_ENV
