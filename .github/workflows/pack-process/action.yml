@@ -102,7 +102,7 @@ runs:
           API_URL="https://api.github.com/repos/cctv18/ReSukiSU_CI/releases/latest"
            
            # 抓最新 tag（形如 v34904）
-           TAG=$(curl -sL "$API_URL" | jq -r ´.name´)
+           TAG=$(curl -sL "$API_URL" | jq -r '.name')
            
            # 提取首个数字串
           BUILD_NUM=$(echo "$TAG" | grep -oE '[0-9]+' | head -n1)
