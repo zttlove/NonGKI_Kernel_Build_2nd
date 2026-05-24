@@ -99,8 +99,10 @@ runs:
           
           mkdir -p tmp
           cp -rp ./Anykernel3/* tmp/
-          TIME=${{ github.run_id }}
-          FINAL_ZIP="AK3-${{ env.ROM_TEXT }}-$TIME-${{ env.PACK_METHOD }}.zip"
+          # 从源码提取官方原生构建号
+          BUILD_NUMBER=$(grep -oP '(?<=BUILD_NUMBER )\d+' drivers/sukisu/version.h)
+          FINAL_ZIP="AK3-5.4.247-ReSukiSU-${BUILD_NUMBER}-star(KPM).zip"
+
           echo "FINAL_ZIP=$FINAL_ZIP" >> $GITHUB_ENV
           7za a -mx9 -w./tmp "${FINAL_ZIP}" ./tmp/*
           rm -rf tmp
