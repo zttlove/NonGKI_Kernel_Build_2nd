@@ -106,7 +106,7 @@ runs:
            
            # 提取首个数字串
           BUILD_NUM=$(echo "$TAG" | grep -oE '[0-9]+' | head -n1)
-          FINAL_ZIP="AK3-5.4.247-ReSukiSU-${BUILD_NUMBER}-star(KPM).zip"
+          FINAL_ZIP="AK3-5.4.247-ReSukiSU-${BUILD_NUM}-star(KPM).zip"
 
           echo "FINAL_ZIP=$FINAL_ZIP" >> $GITHUB_ENV
           7za a -mx9 -w./tmp "${FINAL_ZIP}" ./tmp/*
