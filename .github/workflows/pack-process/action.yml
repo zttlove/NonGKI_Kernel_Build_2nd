@@ -97,21 +97,22 @@ runs:
             fi
           fi
           
-          mkdir -p device_kernel
-          cp -rp ./Anykernel3/* device_kernel/
-          API_URL="https://api.github.com/repos/cctv18/ReSukiSU_CI/releases/latest"
-          TAG=$(curl -sL "$API_URL" | jq -r '.name')
-          BUILD_NUM=$(echo "$TAG" | grep -oE '[0-9]+' | head -n1)
-          FINAL_ZIP="AK3-5.4.247-ReSukiSU-${BUILD_NUM}-star(KPM).zip"
-          cd device_kernel
-          7za a -mx9 "../${FINAL_ZIP}" ./*
-          cd ..
-          rm -rf device_kernel
-          echo "PACK_NAME=${FINAL_ZIP}" >> $GITHUB_ENV
-          # 直接在同一步上传，不会丢文件
-          echo "上传文件：${PACK_NAME}"
-          - name: Upload Build Artifacts
-          uses: actions/upload-artifact@v7
-          with:
+           mkdir -p device_kernel
+           cp -rp ./Anykernel3/* device_kernel/
+           API_URL="https://api.github.com/repos/cctv18/ReSukiSU_CI/releases/latest"
+           TAG=$(curl -sL "$API_URL" | jq -r '.name')
+           BUILD_NUM=$(echo "$TAG" | grep -oE '[0-9]+' | head -n1)
+           FINAL_ZIP="AK3-5.4.247-ReSukiSU-${BUILD_NUM}-star(KPM).zip"
+           cd device_kernel
+           7za a -mx9 "../${FINAL_ZIP}" ./*
+           cd ..
+           rm -rf device_kernel
+           echo "PACK_NAME=${FINAL_ZIP}" >> $GITHUB_ENV
+          
+           # 直接在同一步上传，不会丢文件
+           echo "上传文件：${PACK_NAME}"
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v7
+        with:
           name: Kernel-${{ env.PACK_NAME }}
           path: ${{ env.PACK_NAME }}
