@@ -5,6 +5,9 @@ on:
   workflow_dispatch:
 
 env:
+  # 全局强制所有Action使用Node24，永久消除Node20废弃警告
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
   # Device env
   DEVICE_NAME : "xiaomi_11U"
   DEVICE_CODENAME : "star"
