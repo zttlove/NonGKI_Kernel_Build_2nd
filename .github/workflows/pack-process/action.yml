@@ -97,26 +97,27 @@ runs:
             fi
           fi
           
-          mkdir -p tmp
-          cp -rp ./Anykernel3/* tmp/
-          API_URL="https://api.github.com/repos/cctv18/ReSukiSU_CI/releases/latest"
+        mkdir -p device_kernel
+cp -rp ./Anykernel3/* device_kernel/
+API_URL="https://api.github.com/repos/cctv18/ReSukiSU_CI/releases/latest"
 
-          # 抓最新 name
-          TAG=$(curl -sL "$API_URL" | jq -r '.name')
+TAG=$(curl -sL "$API_URL" | jq -r '.name')
+BUILD_NUM=$(echo "$TAG" | grep -oE '[0-9]+' | head -n1)
+FINAL_ZIP="AK3-5.4.247-ReSukiSU-${BUILD_NUM}-star(KPM).zip"
 
-          # 提取版本号
-          BUILD_NUM=$(echo "$TAG" | grep -oE '[0-9]+' | head -n1)
-          FINAL_ZIP="AK3-5.4.247-ReSukiSU-${BUILD_NUM}-star(KPM).zip"
+echo "FINAL_ZIP=$FINAL_ZIP" >> $GITHUB_ENV
 
-          echo "FINAL_ZIP=$FINAL_ZIP" >> $GITHUB_ENV
+# 进入目录打包，不套娃
+cd device_kernel
+7za a -mx9 "../${FINAL_ZIP}" ./*
+cd ..
 
-          #【修复核心】进入 tmp 目录再打包，绝对不会套娃
-          cd tmp
-          7za a -mx9 "../${FINAL_ZIP}" ./*
-          cd ..
+# 删除临时目录
+rm -rf device_kernel
 
-          rm -rf tmp
-          echo "PACK_NAME=${FINAL_ZIP}" >> $GITHUB_ENV
+# 输出环境变量
+echo "PACK_NAME=${FINAL_ZIP}" >> $GITHUB_ENV
+
 
       - name: Make Latest Boot Image
         if: env.PACK_METHOD == 'MKBOOTIMG'
