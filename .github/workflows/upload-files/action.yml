@@ -4,9 +4,10 @@
           with:
                -name: ${{ env.PACK_NAME }}
                # 1. 引号包裹，规避括号特殊字符解析bug
-         # 2. 用 ${{ github.workspace }} 锁定绝对工作目录
-          path: "${{ github.workspace }}/${{ env.PACK_NAME }}"
-          overwrite: true
+               # 2. 用 ${{ github.workspace }} 锁定绝对工作目录
+               path: "${{ github.workspace }}/${{ env.PACK_NAME }}"
+               jobs:
+                 overwrite: true
 
         - name: Upload Build Artifacts For Boot Image
           if: env.PACK_METHOD == 'MKBOOTIMG'
