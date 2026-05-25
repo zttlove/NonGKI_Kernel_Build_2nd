@@ -8,13 +8,13 @@ runs:
         uses: actions/upload-artifact@v7
         with:
           name: ${{ env.PACK_NAME }}
-          path: |
-            device_kernel/${{ env.PACK_NAME }}
+          path: ${{ env.PACK_NAME }}  # 👈 关键修复：去掉 device_kernel/
+          overwrite: true
 
       - name: Upload Build Artifacts For Boot Image
         if: env.PACK_METHOD == 'MKBOOTIMG'
         uses: actions/upload-artifact@v7
         with:
           name: Kernel-${{ env.PACK_NAME }}
-          path: |
-            ${{ env.PACK_NAME }}
+          path: ${{ env.PACK_NAME }}
+          overwrite: true
