@@ -1,5 +1,4 @@
 name: Kernel Build
-
 on:
   workflow_dispatch:
 
@@ -24,9 +23,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # ======================
-      # 在这里粘贴你所有内核编译步骤
-      # ======================
+      # ========= 粘贴你原有所有内核编译步骤到此区域 =========
 
       - name: Make Anykernel3 Flasher
         if: env.PACK_METHOD == 'Anykernel3'
