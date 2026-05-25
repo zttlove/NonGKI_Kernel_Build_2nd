@@ -19,16 +19,14 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+  runs-on: ubuntu-latest
     steps:
-      - name: 拉取仓库代码
-        uses: actions/checkout@v4
-
-      # =====================
-      # 【这里粘贴你原有全部内核编译命令】
-      # =====================
-
-      - name: 打包 Anykernel3 刷机包
+  - name: 拉取仓库代码
+  uses: actions/checkout@v4
+  # =====================
+  # 【这里粘贴你原有全部内核编译命令】
+  # ====================
+  - name: 打包 Anykernel3 刷机包
         if: env.PACK_METHOD == 'Anykernel3'
         shell: bash
         run: |
@@ -115,8 +113,6 @@ jobs:
           update_existing: false
           prerelease: false
           make_latest: true
-          
-
           if [[ -f "$IMAGE_DIR/Image.gz-dtb" ]]; then
             cp -fp "$IMAGE_DIR/Image.gz-dtb" tmp
             echo "Found Image.gz-dtb !"
