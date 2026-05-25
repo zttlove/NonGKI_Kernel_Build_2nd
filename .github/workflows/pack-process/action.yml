@@ -100,16 +100,21 @@ runs:
           mkdir -p tmp
           cp -rp ./Anykernel3/* tmp/
           API_URL="https://api.github.com/repos/cctv18/ReSukiSU_CI/releases/latest"
-           
-           # 抓最新 tag（形如 v34904）
-           TAG=$(curl -sL "$API_URL" | jq -r '.name')
-           
-           # 提取首个数字串
+
+          # 抓最新 name
+          TAG=$(curl -sL "$API_URL" | jq -r '.name')
+
+          # 提取版本号
           BUILD_NUM=$(echo "$TAG" | grep -oE '[0-9]+' | head -n1)
           FINAL_ZIP="AK3-5.4.247-ReSukiSU-${BUILD_NUM}-star(KPM).zip"
 
           echo "FINAL_ZIP=$FINAL_ZIP" >> $GITHUB_ENV
-          7za a -mx9 -w./tmp "${FINAL_ZIP}" ./tmp/*
+
+          #【修复核心】进入 tmp 目录再打包，绝对不会套娃
+          cd tmp
+          7za a -mx9 "../${FINAL_ZIP}" ./*
+          cd ..
+
           rm -rf tmp
           echo "PACK_NAME=${FINAL_ZIP}" >> $GITHUB_ENV
 
