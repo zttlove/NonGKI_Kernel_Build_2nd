@@ -1,4 +1,4 @@
-      - name: Make Anykernel3 Flasher
+        name: Make Anykernel3 Flasher
         if: env.PACK_METHOD == 'Anykernel3'
         shell: bash
         run: |
