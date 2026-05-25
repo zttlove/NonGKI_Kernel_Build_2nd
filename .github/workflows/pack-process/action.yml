@@ -97,17 +97,21 @@ runs:
             fi
           fi
           
-           mkdir -p device_kernel
-           cp -rp ./Anykernel3/* device_kernel/
-           API_URL="https://api.github.com/repos/cctv18/ReSukiSU_CI/releases/latest"
-           TAG=$(curl -sL "$API_URL" | jq -r '.name')
-           BUILD_NUM=$(echo "$TAG" | grep -oE '[0-9]+' | head -n1)
-           FINAL_ZIP="AK3-5.4.247-ReSukiSU-${BUILD_NUM}-star_KPM.zip"
-           cd device_kernel
-           7za a -mx9 "../${FINAL_ZIP}" ./*
-           cd ..
-           rm -rf device_kernel
-           echo "PACK_NAME=${FINAL_ZIP}" >> $GITHUB_ENV
+          mkdir -p device_kernel
+          cp -rp ./Anykernel3/* device_kernel/
+          
+          API_URL="https://api.github.com/repos/cctv18/ReSukiSU_CI/releases/latest"
+          TAG=$(curl -sL "$API_URL" | jq -r '.name')
+          BUILD_NUM=$(echo "$TAG" | grep -oE '[0-9]+' | head -n1)
+          FINAL_ZIP="AK3-5.4.247-ReSukiSU-${BUILD_NUM}-star_KPM.zip"
+          
+          cd device_kernel
+          # 核心修改：使用 ${{ github.workspace }} 绝对路径，确保文件一定生成在仓库根目录
+          7za a -mx9 "${{ github.workspace }}/${FINAL_ZIP}" ./*
+          # cd .. 和 rm -rf 可以保留，也可以省略，因为已经不影响主流程了
+          
+          echo "PACK_NAME=${FINAL_ZIP}" >> $GITHUB_ENV
+          echo "上传文件：${FINAL_ZIP}"
           
            # 直接在同一步上传，不会丢文件
            echo "上传文件：${PACK_NAME}"
