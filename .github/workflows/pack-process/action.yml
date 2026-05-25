@@ -97,30 +97,40 @@ runs:
             fi
           fi
           
-          # 1. 创建临时目录并复制 AK3 模板
+                - name: Make Anykernel3 Flasher
+        if: env.PACK_METHOD == 'Anykernel3'
+        shell: bash
+        run: |
+          ROOT="$GITHUB_WORKSPACE"
           mkdir -p tmp
           cp -rp ./Anykernel3/* tmp/
-          # 2. 获取版本号
+
           API_URL="https://api.github.com/repos/cctv18/ReSukiSU_CI/releases/latest"
           TAG=$(curl -sL "$API_URL" | jq -r '.name')
           BUILD_NUM=$(echo "$TAG" | grep -oE '[0-9]+' | head -n1)
           FINAL_ZIP="AK3-5.4.247-ReSukiSU-${BUILD_NUM}-star_KPM.zip"
+          ZIP_FULL="$ROOT/$FINAL_ZIP"
 
-          # 3. 进入目录打包（核心：只打包 AK3 内容，不套娃）
           cd tmp
-          7za a -mx9 -tzip "${FINAL_ZIP}" ./*
+          # 压缩包输出到工作区根目录
+          7za a -mx9 -tzip "$ZIP_FULL" ./*
           cd ..
-          # 5. 清理并输出变量
+
+          # 校验文件
+          if [ ! -f "$ZIP_FULL" ]; then
+            echo "压缩包生成失败"
+            exit 1
+          fi
           rm -rf tmp
-          echo "PACK_NAME=${FINAL_ZIP}" >> $GITHUB_ENV
-          # 6. 打印成功信息
-          echo "✅ 打包完成：${FINAL_ZIP}"
-     
-          # 直接在同一步上传，不会丢文件
-          echo "上传文件：${PACK_NAME}"
+
+          # 写入环境变量（复合动作标准写法）
+          echo "PACK_NAME=$FINAL_ZIP" >> "$GITHUB_ENV"
+          echo "✅ 打包完成：$FINAL_ZIP"
+
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: Kernel-Package
-          path: ${PACK_NAME}
+          # 正确引用环境变量 + 绝对路径
+          path: ${{ github.workspace }}/${{ env.PACK_NAME }}
           if-no-files-found: error
