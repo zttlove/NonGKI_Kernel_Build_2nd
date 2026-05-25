@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 拉取仓库代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # =====================
       # 在此粘贴你的内核编译全部命令
