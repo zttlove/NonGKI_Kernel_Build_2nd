@@ -9,7 +9,7 @@ runs:
         with:
           name: ${{ env.PACK_NAME }}
           path: |
-           evice_kernel/${{ env.PACK_NAME }}  # 👈 修复这里
+           device_kernel/${{ env.PACK_NAME }}  # 👈 修复这里
            
       - name: Upload Build Artifacts For Boot Image
         if: env.PACK_METHOD == 'MKBOOTIMG'
