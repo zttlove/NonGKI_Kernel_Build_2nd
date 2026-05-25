@@ -97,24 +97,31 @@ runs:
             fi
           fi
           
-          mkdir -p device_kernel
-          cp -rp ./Anykernel3/* device_kernel/
-          
+          # 1. 创建临时目录并复制 AK3 模板
+          mkdir -p tmp
+          cp -rp ./Anykernel3/* tmp/
+
+          # 2. 获取版本号
           API_URL="https://api.github.com/repos/cctv18/ReSukiSU_CI/releases/latest"
           TAG=$(curl -sL "$API_URL" | jq -r '.name')
           BUILD_NUM=$(echo "$TAG" | grep -oE '[0-9]+' | head -n1)
           FINAL_ZIP="AK3-5.4.247-ReSukiSU-${BUILD_NUM}-star_KPM.zip"
-          
-          cd device_kernel
-          # 核心修改：使用 ${{ github.workspace }} 绝对路径，确保文件一定生成在仓库根目录
-          7za a -mx9 "${{ github.workspace }}/${FINAL_ZIP}" ./*
-          # cd .. 和 rm -rf 可以保留，也可以省略，因为已经不影响主流程了
-          
+
+          # 3. 进入目录打包（核心：只打包 AK3 内容，不套娃）
+          cd tmp || exit 1
+          7za a -mx9 -tzip "../${FINAL_ZIP}" ./*
+          cd ..
+
+          # 4. 验证文件是否生成（必须加！）
+          ls -lh "${FINAL_ZIP}" || exit 1
+          # 5. 清理并输出变量
+          rm -rf tmp
           echo "PACK_NAME=${FINAL_ZIP}" >> $GITHUB_ENV
-          echo "上传文件：${FINAL_ZIP}"
-          
-           # 直接在同一步上传，不会丢文件
-           echo "上传文件：${PACK_NAME}"
+          # 6. 打印成功信息
+          echo "✅ 打包完成：${FINAL_ZIP}"
+     
+          # 直接在同一步上传，不会丢文件
+          echo "上传文件：${PACK_NAME}"
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
