@@ -97,28 +97,21 @@ runs:
             fi
           fi
           
+          # 创建临时打包目录
           mkdir -p device_kernel
-          cp -rp ./Anykernel3/* device_kernel/
-          API_URL="https://api.github.com/repos/cctv18/ReSukiSU_CI/releases/latest"
+          cp -rfp ./Anykernel3/* device_kernel/
 
-          TAG=$(curl -sL "$API_URL" | jq -r '.name')
+          # 获取最新 Release 信息
+          API_URL="https://api.github.com/repos/cctv18/ReSukiSU_CI/releases/latest"
+          RELEASE_INFO=$(curl -sL "$API_URL")
+          TAG=$(echo "$RELEASE_INFO" | jq -r '.name')
           BUILD_NUM=$(echo "$TAG" | grep -oE '[0-9]+' | head -n1)
           FINAL_ZIP="AK3-5.4.247-ReSukiSU-${BUILD_NUM}-star(KPM).zip"
-
-          echo "FINAL_ZIP=$FINAL_ZIP" >> $GITHUB_ENV
-
-          # 进入目录打包，不套娃
-          cd device_kernel
-          7za a -mx9 "../${FINAL_ZIP}" ./*
+          cd device_kernel || exit 1
+          7za a -mx9 -tzip "../${FINAL_ZIP}" ./*
           cd ..
-
-          # 删除临时目录
           rm -rf device_kernel
-
-          # 输出环境变量
-          echo "FINAL_ZIP=$FINAL_ZIP" >> $GITHUB_ENV
-          echo "PACK_NAME=${FINAL_ZIP}" >> $GITHUB_ENV
-
+          echo "PACK_NAME=${FINAL_ZIP}" >> "$GITHUB_ENV"
 
       - name: Make Latest Boot Image
         if: env.PACK_METHOD == 'MKBOOTIMG'
