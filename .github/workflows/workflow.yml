@@ -1,42 +1,21 @@
-name: Kernel Build
-on:
-  workflow_dispatch
-
-permissions:
-  contents: write
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
-env:
-  PACK_METHOD: Anykernel3
-  AK3_SOURCE: osm0sis
-  GENERATE_DTB: false
-  GENERATE_CHIP: msm
-  PACK_KMODULES: true
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      # ========= 在这里粘贴你原有内核编译所有步骤 =========
-
       - name: Make Anykernel3 Flasher
         if: env.PACK_METHOD == 'Anykernel3'
         shell: bash
         run: |
           ROOT="$GITHUB_WORKSPACE"
-          cd "${ROOT}/device_kernel/"
+          if [ -d "${ROOT}/device_kernel" ]; then
+            KERNEL_DIR="${ROOT}/device_kernel"
+          else
+            KERNEL_DIR="${ROOT}"
+          fi
+          cd "${KERNEL_DIR}"
+
           TIME=$(TZ=Asia/Shanghai date +%Y%m%d-%H%M%S)
 
           if [[ -d "arch/arm64/configs" ]]; then
-            IMAGE_DIR="${ROOT}/device_kernel/out/arch/arm64/boot"
+            IMAGE_DIR="${KERNEL_DIR}/out/arch/arm64/boot"
           else
-            IMAGE_DIR="${ROOT}/device_kernel/out/arch/arm/boot"
+            IMAGE_DIR="${KERNEL_DIR}/out/arch/arm/boot"
           fi
 
           rm -rf tmp
@@ -106,7 +85,7 @@ jobs:
           if [ "${PACK_KMODULES}" == "true" ]; then
             echo "Packing kernel modules (.ko)..."
             mkdir -p tmp/modules/vendor/lib/modules
-            find "${ROOT}/device_kernel/out/" -name "*.ko" -exec cp -fp {} tmp/modules/vendor/lib/modules/ \;
+            find "${KERNEL_DIR}/out/" -name "*.ko" -exec cp -fp {} tmp/modules/vendor/lib/modules/ \;
             if [ "$(ls -A tmp/modules/vendor/lib/modules/ 2>/dev/null)" ]; then
               echo "Found and copied kernel modules."
             else
@@ -135,29 +114,3 @@ jobs:
           rm -rf tmp
           echo "PACK_NAME=$FINAL_ZIP" >> "$GITHUB_ENV"
           echo "✅ 打包完成：$FINAL_ZIP"
-
-      - name: Upload Build Artifacts
-        uses: actions/upload-artifact@v6
-        with:
-          name: Kernel-Package
-          path: ${{ env.PACK_NAME }}
-          if-no-files-found: error
-
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: Kernel-Package
-
-      - name: Publish Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: Build-${{ github.run_number }}
-          name: Build-${{ github.run_number }}
-          files: ./*.zip
-          update_existing: false
-          prerelease: false
-          make_latest: true
