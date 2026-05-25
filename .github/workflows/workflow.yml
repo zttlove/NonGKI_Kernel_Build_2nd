@@ -1,7 +1,6 @@
 name: Xiaomi11U 内核自动构建&Release
-
 on:
-  workflow_dispatch:
+    workflow_dispatch:
 
 permissions:
   contents: write
