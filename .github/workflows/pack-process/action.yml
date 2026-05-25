@@ -122,5 +122,5 @@ runs:
         uses: actions/upload-artifact@v4
         with:
           name: Kernel-Package
-          path: ${{ github.workspace }}/*.zip
+          path: ${PACK_NAME}
           if-no-files-found: error
