@@ -2,7 +2,7 @@
           if: env.PACK_METHOD == 'Anykernel3'
           shell: bash
           run: |
-        ROOT="$GITHUB_WORKSPACE"
+          ROOT="$GITHUB_WORKSPACE"
           if [ -d "${ROOT}/device_kernel" ]; then
             KERNEL_DIR="${ROOT}/device_kernel"
           else
