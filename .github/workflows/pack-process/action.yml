@@ -109,7 +109,7 @@ runs:
 
           # 3. 进入目录打包（核心：只打包 AK3 内容，不套娃）
           cd tmp || exit 1
-          7za a -mx9 -tzip "../${FINAL_ZIP}" ./*
+          7za a -mx9 -tzip "${GITHUB_WORKSPACE}/${FINAL_ZIP}" ./*
           cd ..
 
           # 4. 验证文件是否生成（必须加！）
