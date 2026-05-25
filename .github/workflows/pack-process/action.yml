@@ -132,7 +132,7 @@ runs:
         echo "✅ 打包完成：$FINAL_ZIP"
 
     - name: Upload Build Artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: Kernel-Package
         path: ${{ github.workspace }}/${{ env.PACK_NAME }}
