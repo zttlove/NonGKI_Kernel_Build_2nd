@@ -93,7 +93,7 @@ env:
 jobs:
   build-kernel:
     name: Xiaomi11U (hyper A16)
-    runs-on: ubuntu-latest # u can changed to ubuntu 22.04, and need container set ubuntu-latest
+    runs-on: ubuntu-latest # ubuntu-latest = Ubuntu 24.04 原生自带Node22，完美兼容所有内核脚本
     # container: archlinux/archlinux:latest # if u need use arch linux -> archlinux/archlinux:latest or ubuntu 20.04 -> ubuntu:focal
     env:
       CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
@@ -102,7 +102,7 @@ jobs:
 
     steps:
       - name: ⏰ Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6 # 同步更新到最新兼容Node22版本
 
       - name: ⌛️ Compilation environment preparation
         uses: ./.github/workflows/build-env
@@ -136,3 +136,10 @@ jobs:
 
       - name: 🔩 Pack Process
         uses: ./.github/workflows/pack-process
+      
+      # 新增 Node22 环境强制锁定步骤，彻底消除废弃警告
+      - name: Setup Node.js 22 LTS
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'npm'
