@@ -7,10 +7,10 @@ runs:
         if: env.PACK_METHOD == 'Anykernel3'
         uses: actions/upload-artifact@v7
         with:
-          name: Kernel-${{ env.PACK_NAME }}
+          name: ${{ env.PACK_NAME }}
           path: |
-            ${{ env.PACK_NAME }}
-
+           evice_kernel/${{ env.PACK_NAME }}  # 👈 修复这里
+           
       - name: Upload Build Artifacts For Boot Image
         if: env.PACK_METHOD == 'MKBOOTIMG'
         uses: actions/upload-artifact@v7
