@@ -1,7 +1,7 @@
 name: Xiaomi11U 内核自动构建&Release
 
 on:
-  workflow_dispatch
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -25,7 +25,7 @@ jobs:
         uses: actions/checkout@v4
 
       # =====================
-      # 【这里粘贴你原有全部内核编译命令】
+      # 在此粘贴你的内核编译全部命令
       # =====================
 
       - name: 打包 Anykernel3 刷机包
@@ -96,7 +96,6 @@ jobs:
           path: ${{ env.PACK_NAME }}
           if-no-files-found: error
 
-  # 自动发布Release任务
   release:
     needs: build
     runs-on: ubuntu-latest
@@ -110,7 +109,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: Build-${{ github.run_number }}
-          name: Build #${{ github.run_number }}
+          name: Build-${{ github.run_number }}
           files: ./*.zip
           update_existing: false
           prerelease: false
