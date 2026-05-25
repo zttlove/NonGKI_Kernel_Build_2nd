@@ -1,0 +1,15 @@
+name: Clean Old Action
+on: workflow_dispatch
+jobs:
+  clean:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Delete pack-process folder
+        run: |
+          rm -rf .github/workflows/pack-process
+          git config --global user.name "CI Bot"
+          git config --global user.email "ci@example.com"
+          git add .
+          git commit -m "Remove old broken composite action"
+          git push
