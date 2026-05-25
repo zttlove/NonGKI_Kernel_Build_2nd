@@ -2,7 +2,7 @@
           if: env.PACK_METHOD == 'Anykernel3'
           uses: actions/upload-artifact@v7
           with:
-        -name: ${{ env.PACK_NAME }}
+        - name: ${{ env.PACK_NAME }}
           path: "${{ github.workspace }}/${{ env.PACK_NAME }}"
           overwrite: true
 
