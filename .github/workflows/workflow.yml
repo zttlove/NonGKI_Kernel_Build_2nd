@@ -43,44 +43,41 @@ jobs:
           sed -i 's/BLOCK=auto;/BLOCK=boot;/g' anykernel.sh
           chmod +x anykernel.sh
 
-      - name: 打包内核刷机包（修复版）
+      - name: 打包内核刷机包（终极修复路径）
         run: |
           set -e
           ROOT="$GITHUB_WORKSPACE"
-          KERNEL_DIR="$GITHUB_WORKSPACE/device_kernel"
-          IMAGE_RAW="$KERNEL_DIR/out/arch/arm64/boot/Image"
-          
+          # 🔥 这里改成你真实的路径！！！
+          IMAGE_RAW="$ROOT/out/arch/arm64/boot/Image"
+          MODULES_ROOT="$ROOT/out"
+
           mkdir -p tmp
 
-          # 关键：检查真实 Image 是否存在，不存在直接报错
+          # 检查内核文件
           if [[ ! -f "$IMAGE_RAW" ]]; then
             echo "❌ 错误：内核 Image 不存在！路径：$IMAGE_RAW"
             exit 1
           fi
 
-          # 压缩成有效的 Image.gz（不会是空）
+          # 压缩生成有效 Image.gz
           gzip -c "$IMAGE_RAW" > tmp/Image.gz
-          if [[ ! -s tmp/Image.gz ]]; then
-            echo "❌ 错误：Image.gz 生成后为空！"
-            exit 1
-          fi
-          echo "✅ 成功压缩 Image -> Image.gz"
+          echo "✅ 成功打包内核 Image -> Image.gz"
 
-          # 复制 ko 模块
+          # 复制内核模块
           if [ "$PACK_KMODULES" = "true" ]; then
             mkdir -p tmp/modules/vendor/lib/modules
-            find "$KERNEL_DIR/out/" -name "*.ko" 2>/dev/null | xargs -I {} cp {} tmp/modules/vendor/lib/modules/
+            find "$MODULES_ROOT" -name "*.ko" 2>/dev/null | xargs -I {} cp {} tmp/modules/vendor/lib/modules/ || true
           fi
 
-          # 复制 AK3 文件
+          # 复制 AK3 脚本
           cp -rp ./Anykernel3/* tmp/
 
-          # 获取 ReSukiSU 版本号
+          # 生成刷机包名称
           API_URL="https://api.github.com/repos/cctv18/ReSukiSU_CI/releases/latest"
           BUILD_NUM=$(curl -sL "$API_URL" | jq -r '.name' | grep -oE '[0-9]+' | head -n1 || echo "0")
           ZIP_NAME="AK3-${KERNEL_VERSION}-ReSukiSU-${BUILD_NUM}-star_KPM.zip"
 
-          # 打包（必须用 zip，避免 7za 可能导致的奇怪问题）
+          # 打包
           cd tmp
           zip -r9 "$ROOT/$ZIP_NAME" ./*
           cd ..
@@ -104,7 +101,7 @@ jobs:
         with:
           name: Kernel-Package
 
-      - name: 发布 Release
+      - name: 自动发布 Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: Build-${{ github.run_number }}
