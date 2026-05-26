@@ -121,8 +121,8 @@ jobs:
       - name: 安装打包依赖
         run: |
           sudo apt update -y
-          sudo apt install -y p7zip-full git wget unzip
-          rm -rf Anykernel3 tmp
+          sudo apt install -y p7zip-full wget unzip
+          rm -rf Anykernel3 tmp ak3.zip
 
       - name: 🔩 自动打包 Anykernel3
         run: |
@@ -130,24 +130,24 @@ jobs:
           IMAGE_DIR="$ROOT/out/arch/arm64/boot"
           mkdir -p tmp
 
-          git clone --depth 1 ${{ env.AK3_SOURCE }} Anykernel3 || true
+          # 直接下载压缩包，不再使用 git clone
+          wget -q -O ak3.zip https://github.com/osm0sis/AnyKernel3/archive/refs/heads/${{ env.AK3_BRANCH }}.zip
+          unzip -q ak3.zip
+          mv AnyKernel3-${{ env.AK3_BRANCH }} Anykernel3
+          rm -f ak3.zip
 
-          if [ ! -d "Anykernel3" ]; then
-            wget -q -O ak3.zip https://github.com/osm0sis/AnyKernel3/archive/refs/heads/${{ env.AK3_BRANCH }}.zip
-            unzip -q ak3.zip
-            mv AnyKernel3-${{ env.AK3_BRANCH }} Anykernel3
-            rm -f ak3.zip
-          fi
-
+          # 修改配置
           sed -i 's/ExampleKernel by osm0sis/NonGKI Kernel Build/g' Anykernel3/anykernel.sh
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' Anykernel3/anykernel.sh
           sed -i 's/device.name1=.*/device.name1=${{ env.DEVICE_CODENAME }}/g' Anykernel3/anykernel.sh
           sed -i 's/IS_SLOT_DEVICE=0;/IS_SLOT_DEVICE=1;/g' Anykernel3/anykernel.sh
           sed -i 's/BLOCK=auto;/BLOCK=boot;/g' Anykernel3/anykernel.sh
 
+          # 复制内核文件
           [ -f "$IMAGE_DIR/Image.gz-dtb" ] && cp "$IMAGE_DIR/Image.gz-dtb" tmp/
           [ -f "$IMAGE_DIR/Image.gz" ] && cp "$IMAGE_DIR/Image.gz" tmp/
 
+          # 复制内核模块
           mkdir -p tmp/modules/vendor/lib/modules
           find "$ROOT/out/" -name "*.ko" -exec cp {} tmp/modules/vendor/lib/modules/ \; 2>/dev/null
 
