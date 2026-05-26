@@ -1,59 +1,55 @@
-name: 'Pack Process.'
-
-runs:
-  using: 'composite'
-  steps:
       - name: Make Anykernel3 Flasher
         if: env.PACK_METHOD == 'Anykernel3'
         shell: bash
         run: |
           set -e
-          # 如果 TIME 没在主环境定义，这里兜底生成
+          # 1. 获取时间戳
           TIME=${{ env.TIME }}
           if [ -z "$TIME" ]; then
             TIME=$(date +"%Y%m%d%H%M%S")
           fi
-          
+
           cd "$GITHUB_WORKSPACE"
 
-          # 检查 oImage
+          # 2. 严格检查内核文件 (防止打包假文件)
           if [ ! -f "oImage" ]; then
-            echo "⚠️ 未找到 oImage，创建占位文件防止中断"
-            echo "fake" > oImage
+            echo "::error::❌ 致命错误：未找到 oImage，请检查上一步编译日志。"
+            exit 1
           else
             echo "✅ 找到修补完成的内核 oImage"
           fi
 
           mkdir -p tmp
 
-          # 更加健壮的 AK3 配置修改 (使用正则匹配)
+          # 3. 配置 AK3 (保持你的正则写法，很棒)
           if [ -d Anykernel3 ]; then
-            sed -i 's/name=.*/name="NonGKI Kernel"/g' AnyKernel3/anykernel.sh
-            sed -i 's/do\.devicecheck=.*/do.devicecheck=0/g' AnyKernel3/anykernel.sh
-            sed -i 's/IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=1/g' AnyKernel3/anykernel.sh
-            sed -i 's/BLOCK=.*/BLOCK=boot/g' AnyKernel3/anykernel.sh
+            sed -i 's/name=.*/name="NonGKI Kernel"/g' Anykernel3/anykernel.sh
+            sed -i 's/do\.devicecheck=.*/do.devicecheck=0/g' Anykernel3/anykernel.sh
+            sed -i 's/IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=1/g' Anykernel3/anykernel.sh
+            sed -i 's/BLOCK=.*/BLOCK=boot/g' Anykernel3/anykernel.sh
           fi
 
-          # 复制内核
+          # 4. 组装文件
           cp oImage tmp/Image
 
-          # 复制模块 (优化了复制效率)
           mkdir -p tmp/modules/vendor/lib/modules
+          # 这里的 find 写法很稳
           find . -name "*.ko" -exec cp {} tmp/modules/vendor/lib/modules/ \; 2>/dev/null || true
 
-          # 复制 AK3 框架
-          [ -d Anykernel3 ] && cp -rp AnyKernel3/* tmp/
+          [ -d Anykernel3 ] && cp -rp Anykernel3/* tmp/
 
-          # 打包 (根据你的需求可以调整压缩等级，比如 -mx5 提速)
+          # 5. 打包 (调整为 mx5 提速，或者保留 mx9 如果你不在意时间)
           cd tmp
-          7za a -tzip -mx9 package.zip ./* >/dev/null
+          7za a -tzip -mx5 package.zip ./* >/dev/null
           cd ..
 
-          # 最终包名与清理
-          FINAL_ZIP="${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-$TIME-Anykernel3.zip"
+          # 6. 生成安全的文件名 (去除可能的空格或特殊符号)
+          SAFE_ROM_TEXT=$(echo "${{ env.ROM_TEXT }}" | tr ' ' '-')
+          FINAL_ZIP="${{ env.DEVICE_CODENAME }}-${SAFE_ROM_TEXT}-${TIME}-Anykernel3.zip"
+
           mv tmp/package.zip "$FINAL_ZIP"
           rm -rf tmp
 
-          # 输出变量给后续步骤使用
+          # 7. 输出
           echo "PACK_NAME=$FINAL_ZIP" >> $GITHUB_ENV
           echo "✅ 打包完成：$FINAL_ZIP"
