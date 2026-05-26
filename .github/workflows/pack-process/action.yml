@@ -9,18 +9,20 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# 全局只保留纯静态、不依赖任何上下文的环境变量
 env:
   PACK_METHOD: Anykernel3
   AK3_SOURCE: osm0sis/AnyKernel3
   PACK_KMODULES: true
   DEVICE_CODENAME: star
-  KERNEL_SOURCE_DIR: ${{ github.workspace }}/out/arch/arm64/boot
-  # 定义最终生成的 ZIP 名称变量
-  FINAL_ZIP_NAME: AK3-ReSukiSU-${{ github.run_number }}-${{ env.DEVICE_CODENAME }}.zip
 
 jobs:
   build:
     runs-on: ubuntu-22.04
+    # 将依赖动态值的变量移到这里定义
+    env:
+      KERNEL_SOURCE_DIR: ${{ github.workspace }}/out/arch/arm64/boot
+      FINAL_ZIP_NAME: AK3-ReSukiSU-${{ github.run_number }}-${{ env.DEVICE_CODENAME }}.zip
     steps:
       - name: 🛠️ 拉取仓库代码
         uses: actions/checkout@v4
@@ -31,9 +33,8 @@ jobs:
       - name: 📥 克隆 Anykernel3
         run: |
           git clone --depth=1 https://github.com/${{ env.AK3_SOURCE }}.git Anykernel3
-          # 检查克隆是否成功
           if [ ! -d "Anykernel3" ]; then
-            echo "❌ 克隆 Anykernel3 失败"
+            echo "❌ 克隆 AnyKernel3 失败"
             exit 1
           fi
 
