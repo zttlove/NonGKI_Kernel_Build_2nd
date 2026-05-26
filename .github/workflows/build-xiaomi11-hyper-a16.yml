@@ -140,4 +140,4 @@ jobs:
         uses: ./.github/workflows/build-process
 
       - name: 🔩 Pack Process
-        uses: ./.github/workflows/pack-process.yml
+        uses: ./.github/workflows/pack-process
