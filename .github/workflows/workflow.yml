@@ -28,9 +28,8 @@ jobs:
           sudo apt update -y
           sudo apt install -y git wget curl make gcc zip p7zip-full jq bc bison flex libssl-dev libelf-dev
 
-      - name: 编译 + 修补内核
+      - name: 编译 + 修补内核（直接在当前目录！）
         run: |
-          cd device_kernel
           bash build.sh
 
       - name: 克隆 Anykernel3
@@ -46,16 +45,16 @@ jobs:
           sed -i 's/BLOCK=auto;/BLOCK=boot;/g' anykernel.sh
           chmod +x anykernel.sh
 
-      - name: 打包刷机包（自动搜索 oImage，不写死路径）
+      - name: 打包刷机包（全自动搜索 oImage）
         run: |
           set -e
           ROOT=$GITHUB_WORKSPACE
 
-          # 🔥 全局搜索修补好的 oImage（你日志里明确输出的文件）
+          # 全局搜索你日志里生成的 oImage
           IMAGE=$(find "$ROOT" -name "oImage" | head -n 1)
 
           if [ -z "$IMAGE" ]; then
-            echo "❌ 找不到 oImage，编译/修补失败"
+            echo "❌ 找不到 oImage"
             exit 1
           fi
           echo "✅ 找到已修补内核：$IMAGE"
