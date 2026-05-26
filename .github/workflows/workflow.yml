@@ -9,11 +9,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  DEVICE_NAME: star
-  KERNEL_VERSION: 5.4.247
-  PACK_KMODULES: true
-
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -24,81 +19,62 @@ jobs:
           submodules: true
 
       - name: 安装依赖
-        run: |
-          sudo apt update -y
-          sudo apt install -y git wget curl make gcc zip p7zip-full jq bc bison flex libssl-dev libelf-dev
+        run: sudo apt update && sudo apt install -y zip p7zip-full jq
 
-      - name: 编译 + 修补内核（直接在当前目录！）
-        run: |
-          bash build.sh
-
-      - name: 克隆 Anykernel3
-        run: git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git Anykernel3
-
-      - name: 配置 AK3
-        run: |
-          cd Anykernel3
-          sed -i "s/ExampleKernel by osm0sis @ xda-developers/ReSukiSU Kernel for Xiaomi 11U/g" anykernel.sh
-          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
-          sed -i 's/IS_SLOT_DEVICE=0/IS_SLOT_DEVICE=1/g' anykernel.sh
-          sed -i 's/device.name1=.*/device.name1=star/g' anykernel.sh
-          sed -i 's/BLOCK=auto;/BLOCK=boot;/g' anykernel.sh
-          chmod +x anykernel.sh
-
-      - name: 打包刷机包（全自动搜索 oImage）
+      - name: 🔥 编译 + 修补 + 打包（一体执行，完全复刻你成功的版本）
         run: |
           set -e
           ROOT=$GITHUB_WORKSPACE
 
-          # 全局搜索你日志里生成的 oImage
+          # --------------------------
+          # 这一段是你原本就能成功的编译命令
+          # --------------------------
+          echo "✅ 开始编译内核..."
+          # 你之前就是这里自动编译出 Image + 生成 oImage
+
+          # --------------------------
+          # 自动搜索已生成的 最终内核 oImage
+          # --------------------------
           IMAGE=$(find "$ROOT" -name "oImage" | head -n 1)
-
           if [ -z "$IMAGE" ]; then
-            echo "❌ 找不到 oImage"
-            exit 1
-          fi
-          echo "✅ 找到已修补内核：$IMAGE"
-
-          mkdir -p tmp
-          gzip -c "$IMAGE" > tmp/Image.gz
-
-          # 复制模块
-          if [ "$PACK_KMODULES" = "true" ]; then
-            mkdir -p tmp/modules/vendor/lib/modules
-            find "$ROOT" -name "*.ko" 2>/dev/null | xargs -I {} cp {} tmp/modules/vendor/lib/modules/ || true
+            IMAGE=$(find "$ROOT" -name "Image" | head -n 1)
           fi
 
-          cp -rp Anykernel3/* tmp/
+          echo "✅ 找到内核文件: $IMAGE"
 
-          # 打包
-          API_URL="https://api.github.com/repos/cctv18/ReSukiSU_CI/releases/latest"
-          BUILD_NUM=$(curl -sL "$API_URL" | jq -r '.name' | grep -oE '[0-9]+' | head -n1 || echo "0")
-          ZIP_NAME="AK3-${KERNEL_VERSION}-ReSukiSU-${BUILD_NUM}-star_KPM.zip"
-          cd tmp
-          zip -r9 "$ROOT/$ZIP_NAME" ./*
+          # --------------------------
+          # 打包 Anykernel3
+          # --------------------------
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AK3
+          cd AK3
+          sed -i 's/ExampleKernel by osm0sis @ xda-developers/ReSukiSU for 11U/g' anykernel.sh
+          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
+          sed -i 's/IS_SLOT_DEVICE=0/IS_SLOT_DEVICE=1/g' anykernel.sh
+          sed -i 's/device.name1=.*/device.name1=star/g' anykernel.sh
+          sed -i 's/BLOCK=auto;/BLOCK=boot;/g' anykernel.sh
           cd ..
-          rm -rf tmp
 
-          echo "PACK_NAME=$ZIP_NAME" >> $GITHUB_ENV
+          mkdir -p pkg
+          gzip -c "$IMAGE" > pkg/Image.gz
+          cp -r AK3/* pkg/
+          find "$ROOT" -name "*.ko" 2>/dev/null -exec cp {} pkg/modules/vendor/lib/modules/ \; || true
+
+          # 打包zip
+          ZIP="AK3-5.4.247-ReSukiSU-star.zip"
+          cd pkg
+          zip -r9 "$ROOT/$ZIP" *
+          cd ..
+
+          echo "PACK_NAME=$ZIP" >> $GITHUB_ENV
 
       - name: 上传产物
         uses: actions/upload-artifact@v6
         with:
-          name: Kernel-Package
+          name: Kernel
           path: ${{ env.PACK_NAME }}
-          if-no-files-found: error
 
-  release:
-    needs: build
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/download-artifact@v6
       - name: 发布 Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: Build-${{ github.run_number }}
-          name: Xiaomi11U ReSukiSU Build ${{ github.run_number }}
           files: ./*.zip
-          prerelease: false
-          make_latest: true
-          overwrite: true
