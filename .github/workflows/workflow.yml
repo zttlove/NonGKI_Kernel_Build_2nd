@@ -1,56 +1,62 @@
-name: Xiaomi11U 内核自动构建&Release
-on:
-  workflow_dispatch:
+name: 'Pack Process.'
 
-permissions:
-  contents: write
+runs:
+  using: 'composite'
+  steps:
+      - name: Make Anykernel3 Flasher
+        if: env.PACK_METHOD == 'Anykernel3'
+        shell: bash
+        run: |
+          set -e
+          TIME=$(date +"%Y%m%d%H%M%S")
+          cd "$GITHUB_WORKSPACE"
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+          # ==============================================
+          # 🔥 强制只找 oImage（你日志里已经生成的文件）
+          # ==============================================
+          if [[ -f "oImage" ]]; then
+            IMAGE_FILE="oImage"
+            echo "✅ 找到修补完成的内核：oImage"
+          else
+            echo "❌ 找不到 oImage"
+            exit 1
+          fi
 
-# 【关键】这里必须填你环境里的真实配置
-env:
-  PACK_METHOD: Anykernel3
-  AK3_SOURCE: osm0sis
-  GENERATE_DTB: false
-  GENERATE_CHIP: msm
-  PACK_KMODULES: true
-  DEVICE_CODENAME: star
-  DEVICE_NAME: star
-  ROM_TEXT: ReSukiSU
+          # 准备打包目录
+          mkdir -p tmp
 
-jobs:
-  build:
-    runs-on: ubuntu-22.04
-    steps:
-      - name: 拉取代码
-        uses: actions/checkout@v6
-        with:
-          submodules: true
+          # Anykernel3 配置
+          if [[ "${{ env.AK3_SOURCE }}" =~ "osm0sis" ]]; then
+            sed -i 's/ExampleKernel by osm0sis @ xda-developers/NonGKI Kernel/g' Anykernel3/anykernel.sh
+            sed -i 's/do.devicecheck=1/do.devicecheck=0/g' Anykernel3/anykernel.sh
+            sed -i 's!BLOCK=/dev/.../boot;!BLOCK=boot;!g' Anykernel3/anykernel.sh
+            sed -i 's/IS_SLOT_DEVICE=0;/IS_SLOT_DEVICE=1;/g' Anykernel3/anykernel.sh
+            echo "✅ 配置 Anykernel3 完成"
+          fi
 
-      - name: 安装依赖
-        run: sudo apt update && sudo apt install -y p7zip-full git
+          # 复制内核
+          cp -v "$IMAGE_FILE" tmp/Image
+          echo "✅ 复制内核完成"
 
-      # 1. 克隆 AK3
-      - name: 克隆 Anykernel3
-        run: git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git Anykernel3
+          # 复制模块（忽略找不到的错误）
+          mkdir -p tmp/modules/vendor/lib/modules
+          find . -name "*.ko" 2>/dev/null -exec cp {} tmp/modules/vendor/lib/modules/ \; || true
 
-      # 2. 【核心】调用你仓库里【原本就完美能用】的打包脚本！！！
-      - name: 调用官方打包流程
-        uses: ./.github/workflows/pack-process   # 直接调用你本地的 Pack Process 脚本
+          # 复制 AK3
+          cp -rp ./Anykernel3/* tmp/
 
-      # 3. 上传
-      - name: 上传刷机包
-        uses: actions/upload-artifact@v6
-        with:
-          name: Kernel-Package
-          path: ${{ env.PACK_NAME }}
+          # 打包
+          cd tmp
+          7za a -mx9 package.zip ./*
+          cd ..
 
-      # 4. 发布 Release
-      - name: 发布 Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: Build-${{ github.run_number }}
-          name: Xiaomi 11U ReSukiSU - ${{ github.run_number }}
-          files: ./*.zip
+          # 输出最终包
+          FINAL_ZIP=${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-$TIME-Anykernel3.zip
+          mv tmp/package.zip "$FINAL_ZIP"
+
+          # 清理
+          rm -rf tmp
+
+          # 输出变量
+          echo "PACK_NAME=$FINAL_ZIP" >> "$GITHUB_ENV"
+          echo "✅ 打包成功：$FINAL_ZIP"
