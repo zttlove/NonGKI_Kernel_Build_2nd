@@ -66,7 +66,7 @@ env:
   HIDE_STUFF: "false"
   GENERATE_DTB: "false"
   GENERATE_CHIP: "qcom"
-  BUILD_DEBUGGER: "false"
+  BUILD_DEBUGGER: "true"
   SKIP_PATCH: "false"
   BUILD_OTHER_CONFIG: "false"
   MERGE_CONFIG_FILES: "vendor/venus_QGKI.config,vendor/xiaomi_QGKI.config"
@@ -128,65 +128,71 @@ jobs:
         run: |
           set +e
           ROOT="$GITHUB_WORKSPACE"
-          IMAGE_DIR="$ROOT/out/arch/arm64/boot"
+          IMAGE_PATHS=(
+            "$ROOT/out/arch/arm64/boot"
+            "$ROOT/out/arch/arm64/boot/dts"
+          )
           mkdir -p tmp
           echo "工作目录: $ROOT"
-          echo "内核镜像目录: $IMAGE_DIR"
 
-          # 下载 AnyKernel3
           wget -q -O ak3.zip https://github.com/osm0sis/AnyKernel3/archive/refs/heads/${{ env.AK3_BRANCH }}.zip
           unzip -q ak3.zip
           mv AnyKernel3-${{ env.AK3_BRANCH }} Anykernel3
           rm -f ak3.zip
 
-          # 修改 AK3 配置
           sed -i 's/ExampleKernel by osm0sis/NonGKI Kernel Build/g' Anykernel3/anykernel.sh
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' Anykernel3/anykernel.sh
           sed -i 's/device.name1=.*/device.name1=${{ env.DEVICE_CODENAME }}/g' Anykernel3/anykernel.sh
           sed -i 's/IS_SLOT_DEVICE=0;/IS_SLOT_DEVICE=1;/g' Anykernel3/anykernel.sh
           sed -i 's/BLOCK=auto;/BLOCK=boot;/g' Anykernel3/anykernel.sh
 
-          # 检查内核镜像
-          echo "检查内核镜像文件..."
-          if [ -f "$IMAGE_DIR/Image.gz-dtb" ]; then
-            echo "找到 Image.gz-dtb"
-            cp "$IMAGE_DIR/Image.gz-dtb" tmp/
-          fi
-          if [ -f "$IMAGE_DIR/Image.gz" ]; then
-            echo "找到 Image.gz"
-            cp "$IMAGE_DIR/Image.gz" tmp/
-          fi
+          IMAGE_FOUND=0
+          for IMAGE_DIR in "${IMAGE_PATHS[@]}"; do
+            echo "检索路径: $IMAGE_DIR"
+            if [ -d "$IMAGE_DIR" ]; then
+              if [ -f "$IMAGE_DIR/Image.gz-dtb" ]; then
+                cp "$IMAGE_DIR/Image.gz-dtb" tmp/
+                echo "找到镜像: Image.gz-dtb"
+                IMAGE_FOUND=1
+                break
+              elif [ -f "$IMAGE_DIR/Image.gz" ]; then
+                cp "$IMAGE_DIR/Image.gz" tmp/
+                echo "找到镜像: Image.gz"
+                IMAGE_FOUND=1
+                break
+              elif [ -f "$IMAGE_DIR/Image" ]; then
+                cp "$IMAGE_DIR/Image" tmp/
+                echo "找到镜像: Image"
+                IMAGE_FOUND=1
+                break
+              fi
+            fi
+          done
 
-          # 校验是否存在内核文件
-          if [ ! "$(ls -A tmp/Image* 2>/dev/null)" ]; then
-            echo "ERROR: 未找到内核镜像 Image.gz / Image.gz-dtb，请检查编译结果！"
+          if [ $IMAGE_FOUND -eq 0 ]; then
+            echo "ERROR: 所有路径下均未找到内核镜像，请检查编译配置与编译日志！"
             exit 1
           fi
 
-          # 按需复制内核模块
           if [ "${{ env.PACK_KMODULES }}" = "true" ]; then
-            echo "开始复制 .ko 模块"
+            echo "复制内核模块 .ko"
             mkdir -p tmp/modules/vendor/lib/modules
             find "$ROOT/out/" -name "*.ko" -exec cp {} tmp/modules/vendor/lib/modules/ \; 2>/dev/null
           fi
 
-          # 拷贝 AK3 脚本
           cp -rp Anykernel3/* tmp/
 
-          # 检查 7za 命令
           if ! command -v 7za &> /dev/null; then
-            echo "ERROR: 7za 命令未找到！"
-            exit 1
+            alias 7za='7z'
           fi
 
-          # 执行打包
           ZIP="Kernel-${{ github.run_number }}-${{ env.DEVICE_CODENAME }}.zip"
           cd tmp
           7za a -mx9 -tzip "$ROOT/$ZIP" ./*
           cd "$ROOT"
 
           if [ ! -f "$ZIP" ]; then
-            echo "ERROR: 打包失败，未生成 ZIP 文件"
+            echo "ERROR: 打包失败"
             exit 1
           fi
 
