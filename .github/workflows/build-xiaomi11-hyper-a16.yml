@@ -200,7 +200,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: Star-HyperA16-Kernel-${{ github.run_number }}
-          release_name: Xiaomi 11 Ultra Star HyperOS A16 NonGKI Kernel #构建号#${{ github.run_number }}
+          name: Xiaomi 11 Ultra Star HyperOS A16 NonGKI Kernel #构建号#${{ github.run_number }}
           body: |
             ## Xiaomi 11 Ultra Star HyperOS A16 内核刷机包
             - 适配 HyperOS A16 全版本
