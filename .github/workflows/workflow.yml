@@ -21,17 +21,21 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: 拉取仓库代码
         uses: actions/checkout@v6
         with:
           fetch-depth: 1
-          
+
+      # 修复：安装 Ubuntu 22.04 兼容的编译依赖（废弃包全部移除）
       - name: 安装编译依赖
         run: |
           sudo apt update -y
-          sudo apt install -y bc bison build-essential ccache curl flex git git-lfs gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev lib32z1-dev libelf-dev liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev libssl-dev libwxgtk3.0-gtk3-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python2 python3
+          sudo apt install -y bc bison build-essential ccache curl flex git git-lfs \
+            libelf-dev liblz4-tool libncurses-dev libsdl1.2-dev libssl-dev \
+            libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools \
+            xsltproc zip zlib1g-dev python3 python3-pip
 
       - name: 克隆GCC工具链
         run: |
@@ -44,7 +48,7 @@ jobs:
           make O=out ARCH=$ARCH $DEFCONFIG
           make -j$(nproc) O=out ARCH=$ARCH CROSS_COMPILE=aarch64-elf- CROSS_COMPILE_ARM32=arm-eabi-
 
-      # 克隆 Anykernel3（修复文件不存在）
+      # 克隆 Anykernel3
       - name: 克隆 Anykernel3
         run: git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git Anykernel3
 
@@ -55,13 +59,12 @@ jobs:
           ROOT="$GITHUB_WORKSPACE"
           KERNEL_DIR="${ROOT}"
           cd "${KERNEL_DIR}"
-          TIME=$(TZ=Asia/Shanghai date +%Y%m%d-%H%M%S)
           IMAGE_DIR="${KERNEL_DIR}/out/arch/arm64/boot"
           
           rm -rf tmp
           mkdir -p tmp
           
-          # 处理 Anykernel3
+          # 配置 Anykernel3
           if [[ "${AK3_SOURCE}" =~ "osm0sis" ]]; then
             sed -i 's/ExampleKernel by osm0sis @ xda-developers/NonGKI Kernel Build by JackAltman @ Github/g' Anykernel3/anykernel.sh
             sed -i 's/do.devicecheck=1/do.devicecheck=0/g' Anykernel3/anykernel.sh
@@ -74,14 +77,14 @@ jobs:
             chmod +x Anykernel3/anykernel.sh
           fi
           
-          # 复制内核镜像
+          # 复制内核文件
           if [[ -f "$IMAGE_DIR/Image.gz-dtb" ]]; then
             cp -fp "$IMAGE_DIR/Image.gz-dtb" tmp
           elif [[ -f "$IMAGE_DIR/Image.gz" ]]; then
             cp -fp "$IMAGE_DIR/Image.gz" tmp
           fi
           
-          # 复制内核模块（忽略找不到目录，防止报错）
+          # 复制内核模块（防报错）
           if [ "${PACK_KMODULES}" == "true" ]; then
             mkdir -p tmp/modules/vendor/lib/modules
             find "${KERNEL_DIR}/out/" -name "*.ko" -exec cp -fp {} tmp/modules/vendor/lib/modules/ \; 2>/dev/null || true
@@ -89,7 +92,7 @@ jobs:
           
           cp -rp ./Anykernel3/* tmp/
           
-          # 生成最终ZIP
+          # 生成刷机包
           API_URL="https://api.github.com/repos/cctv18/ReSukiSU_CI/releases/latest"
           TAG=$(curl -sL "$API_URL" | jq -r '.name' || echo "0")
           BUILD_NUM=$(echo "$TAG" | grep -oE '[0-9]+' | head -n1 || echo "0")
@@ -111,7 +114,7 @@ jobs:
 
   release:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: 下载构建成品
         uses: actions/download-artifact@v4
@@ -119,7 +122,7 @@ jobs:
           name: Kernel-Package
 
       - name: 自动创建Release
-        uses: softprops/softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: Build-${{ github.run_number }}
           name: Build-${{ github.run_number }}
