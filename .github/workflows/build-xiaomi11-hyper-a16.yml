@@ -6,7 +6,7 @@ on:
 
 env:
   # Device env
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 : true
   DEVICE_NAME : "xiaomi_11U"
   DEVICE_CODENAME : "star"
 
