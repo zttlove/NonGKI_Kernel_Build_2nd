@@ -50,7 +50,7 @@ env:
   PACK_KMODULES: "false"
   KERNELSU_METHOD: "shell"
   KERNELSU_SUS_PATCH: "false"
-  PATCHES_SOURCE: "JackA1ltman/NonGKI_Kernel_Patches"
+  PATCHES_SOURCE: "JackA1ltman/NonGKI_Kernel_Build_2nd"
   PATCHES_BRANCH: "mi_kernel"
   SUSFS_FOLDER_FIXED: "mi11_evox_a16"
   SUSFS_PATCH_FIXED: "susfs_fixed"
@@ -59,6 +59,7 @@ env:
   KERNEL_PATCH: "false"
   KPM_ENABLE: "true"
   KPM_INLINE: "true"
+  KPM_KPATCH_NEXT: "false"
   KPM_KPATCH_NEXT: "false"
   KPM_PATCH_SOURCE: "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU_patch/refs/heads/main/kpm/patch_linux"
   BASEBAND_GUARD_ENABLE: "false"
@@ -118,34 +119,41 @@ jobs:
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
 
+      # 安装打包依赖
       - name: 安装打包依赖
         run: |
           sudo apt update -y
           sudo apt install -y p7zip-full wget unzip
           rm -rf Anykernel3 tmp ak3.zip
 
+      # 打包：优先源码根目录，再遍历传统路径
       - name: 🔩 自动打包 Anykernel3
         run: |
           set +e
           ROOT="$GITHUB_WORKSPACE"
+          # 优先内核源码根目录（当前编译脚本输出位置）
           IMAGE_PATHS=(
+            "$ROOT/device_kernel"
             "$ROOT/out/arch/arm64/boot"
             "$ROOT/out/arch/arm64/boot/dts"
           )
           mkdir -p tmp
           echo "工作目录: $ROOT"
 
+          # 下载 AnyKernel3
           wget -q -O ak3.zip https://github.com/osm0sis/AnyKernel3/archive/refs/heads/${{ env.AK3_BRANCH }}.zip
           unzip -q ak3.zip
           mv AnyKernel3-${{ env.AK3_BRANCH }} Anykernel3
           rm -f ak3.zip
 
+          # 修改 AK3 配置
           sed -i 's/ExampleKernel by osm0sis/NonGKI Kernel Build/g' Anykernel3/anykernel.sh
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' Anykernel3/anykernel.sh
           sed -i 's/device.name1=.*/device.name1=${{ env.DEVICE_CODENAME }}/g' Anykernel3/anykernel.sh
           sed -i 's/IS_SLOT_DEVICE=0;/IS_SLOT_DEVICE=1;/g' Anykernel3/anykernel.sh
           sed -i 's/BLOCK=auto;/BLOCK=boot;/g' Anykernel3/anykernel.sh
 
+          # 多路径查找镜像
           IMAGE_FOUND=0
           for IMAGE_DIR in "${IMAGE_PATHS[@]}"; do
             echo "检索路径: $IMAGE_DIR"
@@ -170,22 +178,26 @@ jobs:
           done
 
           if [ $IMAGE_FOUND -eq 0 ]; then
-            echo "ERROR: 所有路径下均未找到内核镜像，请检查编译配置与编译日志！"
+            echo "ERROR: 未找到内核镜像！"
             exit 1
           fi
 
+          # 复制 ko 模块
           if [ "${{ env.PACK_KMODULES }}" = "true" ]; then
             echo "复制内核模块 .ko"
             mkdir -p tmp/modules/vendor/lib/modules
             find "$ROOT/out/" -name "*.ko" -exec cp {} tmp/modules/vendor/lib/modules/ \; 2>/dev/null
           fi
 
+          # 拷贝 AK3 文件
           cp -rp Anykernel3/* tmp/
 
+          # 兼容 7z/7za
           if ! command -v 7za &> /dev/null; then
             alias 7za='7z'
           fi
 
+          # 打包
           ZIP="Kernel-${{ github.run_number }}-${{ env.DEVICE_CODENAME }}.zip"
           cd tmp
           7za a -mx9 -tzip "$ROOT/$ZIP" ./*
