@@ -16,7 +16,8 @@ env:
   GENERATE_CHIP: msm
   PACK_KMODULES: true
   DEVICE: star
-  DEFCONFIG: vendor/star_defconfig
+  # 👇 修复：正确的小米11U defconfig 路径
+  DEFCONFIG: star_defconfig
   ARCH: arm64
 
 jobs:
@@ -28,7 +29,7 @@ jobs:
         with:
           fetch-depth: 1
 
-      # 修复：安装 Ubuntu 22.04 兼容的编译依赖（废弃包全部移除）
+      # 安装 Ubuntu 22.04 兼容依赖
       - name: 安装编译依赖
         run: |
           sudo apt update -y
@@ -37,11 +38,13 @@ jobs:
             libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools \
             xsltproc zip zlib1g-dev python3 python3-pip
 
+      # 克隆编译器
       - name: 克隆GCC工具链
         run: |
           git clone --depth=1 https://github.com/mvaisakh/gcc-arm64.git gcc64
           git clone --depth=1 https://github.com/mvaisakh/gcc-arm.git gcc32
 
+      # 编译内核（已修复 defconfig）
       - name: 编译内核
         run: |
           export PATH="${GITHUB_WORKSPACE}/gcc64/bin:${GITHUB_WORKSPACE}/gcc32/bin:$PATH"
@@ -52,6 +55,7 @@ jobs:
       - name: 克隆 Anykernel3
         run: git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git Anykernel3
 
+      # 打包脚本
       - name: 打包 Anykernel3 刷机包
         if: env.PACK_METHOD == 'Anykernel3'
         shell: bash
