@@ -1,0 +1,55 @@
+      - name: Make Anykernel3 Flasher
+        if: env.PACK_METHOD == 'Anykernel3'
+        shell: bash
+        run: |
+          set -e
+          # 1. 获取时间戳
+          TIME=${{ env.TIME }}
+          if [ -z "$TIME" ]; then
+            TIME=$(date +"%Y%m%d%H%M%S")
+          fi
+
+          cd "$GITHUB_WORKSPACE"
+
+          # 2. 严格检查内核文件 (防止打包假文件)
+          if [ ! -f "oImage" ]; then
+            echo "::error::❌ 致命错误：未找到 oImage，请检查上一步编译日志。"
+            exit 1
+          else
+            echo "✅ 找到修补完成的内核 oImage"
+          fi
+
+          mkdir -p tmp
+
+          # 3. 配置 AK3 (保持你的正则写法，很棒)
+          if [ -d Anykernel3 ]; then
+            sed -i 's/name=.*/name="NonGKI Kernel"/g' Anykernel3/anykernel.sh
+            sed -i 's/do\.devicecheck=.*/do.devicecheck=0/g' Anykernel3/anykernel.sh
+            sed -i 's/IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=1/g' Anykernel3/anykernel.sh
+            sed -i 's/BLOCK=.*/BLOCK=boot/g' Anykernel3/anykernel.sh
+          fi
+
+          # 4. 组装文件
+          cp oImage tmp/Image
+
+          mkdir -p tmp/modules/vendor/lib/modules
+          # 这里的 find 写法很稳
+          find . -name "*.ko" -exec cp {} tmp/modules/vendor/lib/modules/ \; 2>/dev/null || true
+
+          [ -d Anykernel3 ] && cp -rp Anykernel3/* tmp/
+
+          # 5. 打包 (调整为 mx5 提速，或者保留 mx9 如果你不在意时间)
+          cd tmp
+          7za a -tzip -mx5 package.zip ./* >/dev/null
+          cd ..
+
+          # 6. 生成安全的文件名 (去除可能的空格或特殊符号)
+          SAFE_ROM_TEXT=$(echo "${{ env.ROM_TEXT }}" | tr ' ' '-')
+          FINAL_ZIP="${{ env.DEVICE_CODENAME }}-${SAFE_ROM_TEXT}-${TIME}-Anykernel3.zip"
+
+          mv tmp/package.zip "$FINAL_ZIP"
+          rm -rf tmp
+
+          # 7. 输出
+          echo "PACK_NAME=$FINAL_ZIP" >> $GITHUB_ENV
+          echo "✅ 打包完成：$FINAL_ZIP"
