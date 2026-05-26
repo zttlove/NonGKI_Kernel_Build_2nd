@@ -199,7 +199,7 @@ jobs:
       # 自动发布到GitHub Releases页面（动态标签永不重复报错）
       - name: 🚀 Auto Upload To Github Release
         if: env.PACK_METHOD == 'Anykernel3'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v5
         with:
           tag_name: Star-HyperA16-Kernel-${{ github.run_number }}
           name: Xiaomi 11 Ultra Star HyperOS A16 NonGKI Kernel #构建号#${{ github.run_number }}
