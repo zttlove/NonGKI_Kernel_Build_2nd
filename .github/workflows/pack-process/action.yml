@@ -1,0 +1,105 @@
+name: Xiaomi11U 内核自动构建&Release
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PACK_METHOD: Anykernel3
+  AK3_SOURCE: osm0sis
+  GENERATE_DTB: false
+  GENERATE_CHIP: msm
+  PACK_KMODULES: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: 拉取仓库代码
+        uses: actions/checkout@v6
+
+      - name: 克隆 Anykernel3
+        run: git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git Anykernel3
+
+      - name: 打包 Anykernel3 刷机包
+        if: env.PACK_METHOD == 'Anykernel3'
+        shell: bash
+        run: |
+          ROOT="$GITHUB_WORKSPACE"
+          KERNEL_DIR="${ROOT}"
+          cd "${KERNEL_DIR}"
+          IMAGE_DIR="${KERNEL_DIR}/out/arch/arm64/boot"
+          
+          rm -rf tmp
+          mkdir -p tmp
+          
+          if [[ "${AK3_SOURCE}" =~ "osm0sis" ]]; then
+            sed -i 's/ExampleKernel by osm0sis @ xda-developers/NonGKI Kernel Build by JackAltman @ Github/g' Anykernel3/anykernel.sh
+            sed -i 's/do.devicecheck=1/do.devicecheck=0/g' Anykernel3/anykernel.sh
+            sed -i 's!BLOCK=/dev/block/platform/omap/omap_hsmc.0/by-name/boot;!BLOCK=auto;!g' Anykernel3/anykernel.sh
+            sed -i 's/device.name1=.*/device.name1=star/g' Anykernel3/anykernel.sh
+            sed -i 's/BLOCK=auto;/BLOCK=boot;/g' Anykernel3/anykernel.sh
+            sed -i 's/IS_SLOT_DEVICE=0;/IS_SLOT_DEVICE=1/g' Anykernel3/anykernel.sh
+            sed -i '/fstab.tuna/d' Anykernel3/anykernel.sh
+            curl -L https://raw.githubusercontent.com/zttlove/NonGKI_Kernel_Build_2nd/mainline/Patches/anykernel.sh -o Anykernel3/anykernel.sh
+            chmod +x Anykernel3/anykernel.sh
+          fi
+          
+          mkdir -p "${IMAGE_DIR}"
+          touch "${IMAGE_DIR}/Image.gz"
+          
+          if [[ -f "$IMAGE_DIR/Image.gz-dtb" ]]; then
+            cp -fp "$IMAGE_DIR/Image.gz-dtb" tmp
+          elif [[ -f "$IMAGE_DIR/Image.gz" ]]; then
+            cp -fp "$IMAGE_DIR/Image.gz" tmp
+          fi
+          
+          if [ "${PACK_KMODULES}" == "true" ]; then
+            mkdir -p tmp/modules/vendor/lib/modules
+            find "${KERNEL_DIR}/out/" -name "*.ko" -exec cp -fp {} tmp/modules/vendor/lib/modules/ \; 2>/dev/null || true
+          fi
+          
+          cp -rp ./Anykernel3/* tmp/
+          
+          API_URL="https://api.github.com/repos/cctv18/ReSukiSU_CI/releases/latest"
+          TAG=$(curl -sL "$API_URL" | jq -r '.name' || echo "0")
+          BUILD_NUM=$(echo "$TAG" | grep -oE '[0-9]+' | head -n1 || echo "0")
+          FINAL_ZIP="AK3-5.4.247-ReSukiSU-${BUILD_NUM}-star_KPM.zip"
+          ZIP_FULL="${ROOT}/${FINAL_ZIP}"
+          
+          cd tmp
+          7za a -mx9 -tzip "$ZIP_FULL" ./*
+          cd ..
+          rm -rf tmp
+          echo "PACK_NAME=$FINAL_ZIP" >> "$GITHUB_ENV"
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v6
+        with:
+          name: Kernel-Package
+          path: ${{ env.PACK_NAME }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - name: 下载构建成品
+        uses: actions/download-artifact@v6
+        with:
+          name: Kernel-Package
+
+      - name: 自动创建Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: Build-${{ github.run_number }}
+          name: Build-${{ github.run_number }}
+          files: ./*.zip
+          prerelease: false
+          make_latest: true
+          overwrite_files: true
