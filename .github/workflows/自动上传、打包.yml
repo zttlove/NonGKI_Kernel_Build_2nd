@@ -1,55 +1,75 @@
-      - name: Make Anykernel3 Flasher
-        if: env.PACK_METHOD == 'Anykernel3'
-        shell: bash
-        run: |
-          set -e
-          # 1. 获取时间戳
-          TIME=${{ env.TIME }}
-          if [ -z "$TIME" ]; then
-            TIME=$(date +"%Y%m%d%H%M%S")
-          fi
+- name: Make Anykernel3 Flasher
+  if: env.PACK_METHOD == 'Anykernel3'
+  shell: bash
+  run: |
+    set -euo pipefail
+    echo "============================================="
+    echo "📦 开始构建 Anykernel3 内核刷机包"
+    echo "============================================="
 
-          cd "$GITHUB_WORKSPACE"
+    # 1. 时间戳（优先使用环境变量，否则自动生成）
+    TIME="${{ env.TIME }}"
+    if [ -z "$TIME" ]; then
+      TIME=$(date +"%Y%m%d%H%M%S")
+      echo "⏰ 自动生成时间戳：$TIME"
+    fi
 
-          # 2. 严格检查内核文件 (防止打包假文件)
-          if [ ! -f "oImage" ]; then
-            echo "::error::❌ 致命错误：未找到 oImage，请检查上一步编译日志。"
-            exit 1
-          else
-            echo "✅ 找到修补完成的内核 oImage"
-          fi
+    cd "$GITHUB_WORKSPACE"
 
-          mkdir -p tmp
+    # 2. 严格校验内核文件（防止空包）
+    if [ ! -f "oImage" ]; then
+      echo "::error::❌ 编译失败：未找到内核文件 oImage"
+      exit 1
+    fi
+    echo "✅ 找到内核文件：oImage ($(du -h oImage | awk '{print $1}'))"
 
-          # 3. 配置 AK3 (保持你的正则写法，很棒)
-          if [ -d Anykernel3 ]; then
-            sed -i 's/name=.*/name="NonGKI Kernel"/g' Anykernel3/anykernel.sh
-            sed -i 's/do\.devicecheck=.*/do.devicecheck=0/g' Anykernel3/anykernel.sh
-            sed -i 's/IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=1/g' Anykernel3/anykernel.sh
-            sed -i 's/BLOCK=.*/BLOCK=boot/g' Anykernel3/anykernel.sh
-          fi
+    # 3. 清空并创建干净打包目录
+    rm -rf tmp
+    mkdir -p tmp
 
-          # 4. 组装文件
-          cp oImage tmp/Image
+    # 4. 配置 Anykernel3（确保文件存在再修改）
+    if [ -d "Anykernel3" ] && [ -f "Anykernel3/anykernel.sh" ]; then
+      echo "🔧 配置 Anykernel3 参数"
+      sed -i "s/^name=.*/name=\"NonGKI Kernel\"/" Anykernel3/anykernel.sh
+      sed -i "s/^do\.devicecheck=.*/do.devicecheck=0/" Anykernel3/anykernel.sh
+      sed -i "s/^IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=1/" Anykernel3/anykernel.sh
+      sed -i "s/^BLOCK=.*/BLOCK=boot/" Anykernel3/anykernel.sh
+    else
+      echo "::error::❌ Anykernel3 目录不存在，无法打包"
+      exit 1
+    fi
 
-          mkdir -p tmp/modules/vendor/lib/modules
-          # 这里的 find 写法很稳
-          find . -name "*.ko" -exec cp {} tmp/modules/vendor/lib/modules/ \; 2>/dev/null || true
+    # 5. 复制内核文件
+    cp -v oImage tmp/Image
 
-          [ -d Anykernel3 ] && cp -rp Anykernel3/* tmp/
+    # 6. 复制所有 ko 模块（自动创建目录，无模块也不报错）
+    mkdir -p tmp/modules/vendor/lib/modules
+    find . -name "*.ko" -type f -print0 | xargs -0 cp -t tmp/modules/vendor/lib/modules/ 2>/dev/null || true
+    module_count=$(find tmp/modules/vendor/lib/modules -name "*.ko" | wc -l)
+    echo "📦 找到并复制内核模块：$module_count 个"
 
-          # 5. 打包 (调整为 mx5 提速，或者保留 mx9 如果你不在意时间)
-          cd tmp
-          7za a -tzip -mx5 package.zip ./* >/dev/null
-          cd ..
+    # 7. 复制 AK3 全套文件
+    cp -rp Anykernel3/* tmp/
 
-          # 6. 生成安全的文件名 (去除可能的空格或特殊符号)
-          SAFE_ROM_TEXT=$(echo "${{ env.ROM_TEXT }}" | tr ' ' '-')
-          FINAL_ZIP="${{ env.DEVICE_CODENAME }}-${SAFE_ROM_TEXT}-${TIME}-Anykernel3.zip"
+    # 8. 高速压缩打包（mx5 速度/压缩比均衡）
+    echo "🚀 开始压缩刷机包..."
+    cd tmp
+    7za a -tzip -mx5 -mmt=on package.zip ./* >/dev/null
+    cd ..
 
-          mv tmp/package.zip "$FINAL_ZIP"
-          rm -rf tmp
+    # 9. 生成安全文件名（去空格/特殊字符）
+    ROM_TEXT="${{ env.ROM_TEXT }}"
+    SAFE_ROM_TEXT=$(echo "$ROM_TEXT" | tr -d '":*?<>|' | tr ' ' '-')
+    DEVICE_CODENAME="${{ env.DEVICE_CODENAME }}"
+    FINAL_ZIP="${DEVICE_CODENAME}-${SAFE_ROM_TEXT}-${TIME}-Anykernel3.zip"
 
-          # 7. 输出
-          echo "PACK_NAME=$FINAL_ZIP" >> $GITHUB_ENV
-          echo "✅ 打包完成：$FINAL_ZIP"
+    # 10. 输出最终文件
+    mv -v tmp/package.zip "$FINAL_ZIP"
+    rm -rf tmp
+
+    # 11. 输出到 GitHub 环境变量
+    echo "PACK_NAME=$FINAL_ZIP" >> $GITHUB_ENV
+    echo "============================================="
+    echo "✅ 打包完成！文件名：$FINAL_ZIP"
+    echo "📁 文件大小：$(du -h "$FINAL_ZIP" | awk '{print $1}')"
+    echo "============================================="
