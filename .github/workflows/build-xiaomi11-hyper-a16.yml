@@ -46,7 +46,6 @@ env:
   NEED_SAFE_DTBO : false
   ROM_TEXT : "Xiaomi11U (hyper A16)"
 
-  # Other env
   PYTHON_VERSION: "3"
   PACK_METHOD: "Anykernel3"
   PACK_KMODULES: "false"
@@ -123,17 +122,14 @@ jobs:
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
 
-      # ==============================
-      # 打包 Anykernel3 + 自动上传制品
-      # 仅适配 out/arch/arm64/boot/Image
-      # ==============================
-      - name: 📦 Package & Upload Anykernel3
+      # 打包 Anykernel3 仅Image内核
+      - name: 📦 Package Anykernel3 Zip
         if: env.PACK_METHOD == 'Anykernel3'
         shell: bash
         run: |
           set -euo pipefail
           echo "============================================="
-          echo "📦 开始打包 Anykernel3 刷机包"
+          echo "📦 打包 Star Hyper A16 内核刷机包"
           echo "============================================="
 
           TIME=$(date +"%Y%m%d%H%M%S")
@@ -142,65 +138,51 @@ jobs:
           IMG_PATH="${KERNEL_DIR}/out/arch/arm64/boot/Image"
           cd "${KERNEL_DIR}"
 
-          # 校验内核文件
           if [[ ! -f "${IMG_PATH}" ]]; then
-            echo "::error::❌ 未找到 Image 内核文件"
+            echo "::error::未找到 Image 内核镜像"
             exit 1
           fi
-          IMG_SIZE=$(du -h "${IMG_PATH}" | awk '{print $1}')
-          echo "✅ 内核文件: Image (${IMG_SIZE})"
 
-          # 初始化临时目录
           rm -rf "${TMP_DIR}"
           mkdir -p "${TMP_DIR}"
 
-          # 配置 Anykernel3
           AK3_DIR="${KERNEL_DIR}/Anykernel3"
           if [[ -d "${AK3_DIR}" && -f "${AK3_DIR}/anykernel.sh" ]]; then
             sed -i \
-              -e 's/^name=.*/name="NonGKI Kernel"/' \
+              -e 's/^name=.*/name="NonGKI Star Kernel"/' \
               -e 's/^do\.devicecheck=.*/do.devicecheck=0/' \
               -e 's/^IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=1/' \
               -e 's/^BLOCK=.*/BLOCK=boot/' \
               "${AK3_DIR}/anykernel.sh"
           fi
 
-          # 复制内核镜像
           cp -v "${IMG_PATH}" "${TMP_DIR}/Image"
-
-          # 按需打包内核模块
-          if [[ "${{ env.PACK_KMODULES }}" == "true" ]]; then
-            MOD_DIR="${TMP_DIR}/modules/vendor/lib/modules"
-            mkdir -p "${MOD_DIR}"
-            find . -name "*.ko" -type f -print0 | xargs -0 cp -t "${MOD_DIR}/" 2>/dev/null || true
-            module_count=$(find "${MOD_DIR}" -name "*.ko" | wc -l)
-            echo "📦 内核模块: ${module_count} 个"
-            [[ ${module_count} -eq 0 ]] && rm -rf "${TMP_DIR}/modules"
-          else
-            echo "ℹ️ 跳过内核模块打包"
-          fi
-
-          # 合并 Anykernel3 文件
           [[ -d "${AK3_DIR}" ]] && cp -rp "${AK3_DIR}"/* "${TMP_DIR}/"
 
-          # 压缩 ZIP
           cd "${TMP_DIR}"
-          7za a -tzip -mx5 -mmt=on package.zip ./* >/dev/null
+          7za a -tzip -mx9 -mmt=on package.zip ./* >/dev/null
           cd "${GITHUB_WORKSPACE}"
 
-          # 定义最终文件名并写入环境变量
-          FINAL_ZIP="${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-${TIME}-${{ env.PACK_METHOD }}.zip"
+          FINAL_ZIP="${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-${TIME}.zip"
           cp -fp "${TMP_DIR}/package.zip" "${FINAL_ZIP}"
           echo "PACK_NAME=${FINAL_ZIP}" >> "${GITHUB_ENV}"
-          echo "✅ 打包完成: ${FINAL_ZIP}"
+          echo "✅ 打包完成：${FINAL_ZIP}"
 
-          # 清理临时目录
           rm -rf "${TMP_DIR}"
 
-      # 上传打包好的文件为 Action 制品
-      - name: 📤 Upload Artifact
+      # 自动发布到 GitHub Releases 页面
+      - name: 🚀 Upload to Release
         if: env.PACK_METHOD == 'Anykernel3'
-        uses: actions/upload-artifact@v4
+        uses: softprops/action-gh-release@v2
         with:
-          name: ${{ env.PACK_NAME }}
-          path: ${{ env.PACK_NAME }}
+          tag_name: Star-Hyper-A16-Kernel
+          release_name: Xiaomi 11U Star HyperOS A16 NonGKI Kernel
+          body: |
+            # Xiaomi 11 Ultra Star HyperOS A16 Kernel
+            - SukiSU ResukiSU
+            - SUSFS 完整适配
+            - NonGKI 免补丁Root
+            - Anykernel3 卡刷包
+          files: ${{ env.PACK_NAME }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
