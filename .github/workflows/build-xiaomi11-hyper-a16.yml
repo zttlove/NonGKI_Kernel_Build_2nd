@@ -150,7 +150,7 @@ jobs:
           TIME=$(date +"%Y%m%d%H%M%S")
           echo "⏰ 自动生成时间戳：$TIME"
 
-          cd "$GITHUB_WORKSPACE"
+          cd "$GITHUB_WORKSPACE/device_kernel"
 
           # 2. 检查内核文件
           if [ ! -f "oImage" ]; then
