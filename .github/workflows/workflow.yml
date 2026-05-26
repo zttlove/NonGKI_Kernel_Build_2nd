@@ -27,6 +27,10 @@ jobs:
       # 在此粘贴你的内核编译全部命令
       # =====================
 
+      # 👇 修复点 1：先克隆 Anykernel3
+      - name: 克隆 Anykernel3
+        run: git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git Anykernel3
+
       - name: 打包 Anykernel3 刷机包
         if: env.PACK_METHOD == 'Anykernel3'
         shell: bash
@@ -34,18 +38,14 @@ jobs:
           ROOT="$GITHUB_WORKSPACE"
           KERNEL_DIR="${ROOT}"
           cd "${KERNEL_DIR}"
-
           TIME=$(TZ=Asia/Shanghai date +%Y%m%d-%H%M%S)
-
           if [[ -d "arch/arm64/configs" ]]; then
             IMAGE_DIR="${KERNEL_DIR}/out/arch/arm64/boot"
           else
             IMAGE_DIR="${KERNEL_DIR}/out/arch/arm/boot"
           fi
-
           rm -rf tmp
           mkdir -p tmp
-
           # 处理 Anykernel3
           if [[ "${AK3_SOURCE}" =~ "osm0sis" ]]; then
             sed -i 's/ExampleKernel by osm0sis @ xda-developers/NonGKI Kernel Build by JackAltman @ Github/g' Anykernel3/anykernel.sh
@@ -58,36 +58,29 @@ jobs:
             curl -L https://raw.githubusercontent.com/zttlove/NonGKI_Kernel_Build_2nd/mainline/Patches/anykernel.sh -o Anykernel3/anykernel.sh
             chmod +x Anykernel3/anykernel.sh
           fi
-
           # 复制内核镜像
           if [[ -f "$IMAGE_DIR/Image.gz-dtb" ]]; then
             cp -fp "$IMAGE_DIR/Image.gz-dtb" tmp
           elif [[ -f "$IMAGE_DIR/Image.gz" ]]; then
             cp -fp "$IMAGE_DIR/Image.gz" tmp
           fi
-
           # 复制内核模块
           if [ "${PACK_KMODULES}" == "true" ]; then
             mkdir -p tmp/modules/vendor/lib/modules
             find "${KERNEL_DIR}/out/" -name "*.ko" -exec cp -fp {} tmp/modules/vendor/lib/modules/ \;
           fi
-
           cp -rp ./Anykernel3/* tmp/
-
           # 生成最终ZIP
           API_URL="https://api.github.com/repos/cctv18/ReSukiSU_CI/releases/latest"
           TAG=$(curl -sL "$API_URL" | jq -r '.name')
           BUILD_NUM=$(echo "$TAG" | grep -oE '[0-9]+' | head -n1)
           FINAL_ZIP="AK3-5.4.247-ReSukiSU-${BUILD_NUM}-star_KPM.zip"
           ZIP_FULL="${ROOT}/${FINAL_ZIP}"
-
           cd tmp
           7za a -mx9 -tzip "$ZIP_FULL" ./*
           cd ..
-
           rm -rf tmp
           echo "PACK_NAME=$FINAL_ZIP" >> "$GITHUB_ENV"
-
       - name: 上传构建产物
         uses: actions/upload-artifact@v6
         with:
