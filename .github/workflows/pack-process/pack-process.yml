@@ -21,6 +21,9 @@ jobs:
       - name: 拉取仓库代码
         uses: actions/checkout@v4
 
+      - name: 安装依赖
+        run: sudo apt install -y p7zip-full
+
       - name: 克隆 Anykernel3
         run: git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git Anykernel3
 
@@ -68,6 +71,10 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/download-artifact@v4
+        with:
+          name: Kernel
+          path: ./
+          
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: Build-${{ github.run_number }}
