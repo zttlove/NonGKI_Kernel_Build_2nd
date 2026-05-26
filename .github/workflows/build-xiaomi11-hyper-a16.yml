@@ -137,7 +137,7 @@ jobs:
         uses: ./.github/workflows/patch-hide-stuff
 
       - name: 🚀 Build Process
-        uses: ./.github/workflows/build-process
+        uses: ./.github/workflows/workflow.yml
 
       - name: 🔩 Pack Process
         uses: ./.github/workflows/pack-process
