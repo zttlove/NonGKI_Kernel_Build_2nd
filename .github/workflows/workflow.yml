@@ -38,7 +38,7 @@ jobs:
 
       # 2. 【核心】调用你仓库里【原本就完美能用】的打包脚本！！！
       - name: 调用官方打包流程
-        uses: ./   # 直接调用你本地的 Pack Process 脚本
+        uses: ./.github/workflows/pack-process   # 直接调用你本地的 Pack Process 脚本
 
       # 3. 上传
       - name: 上传刷机包
