@@ -9,7 +9,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# 修复 Node.js 20 弃用警告 → 强制使用 Node.js 24
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   PACK_METHOD: Anykernel3
   AK3_SOURCE: osm0sis
   GENERATE_DTB: false
@@ -18,14 +20,14 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     steps:
       - name: 拉取仓库代码
         uses: actions/checkout@v6
 
-      # 克隆 Anykernel3（必须！修复文件不存在）
+      # 克隆 Anykernel3
       - name: 克隆 Anykernel3
-        run: git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git Anykernel3
+        run: git clone --depth=1 https://github.com/osmos/AnyKernel3.git Anykernel3
 
       # 打包脚本
       - name: 打包 Anykernel3 刷机包
@@ -44,7 +46,7 @@ jobs:
           if [[ "${AK3_SOURCE}" =~ "osm0sis" ]]; then
             sed -i 's/ExampleKernel by osm0sis @ xda-developers/NonGKI Kernel Build by JackAltman @ Github/g' Anykernel3/anykernel.sh
             sed -i 's/do.devicecheck=1/do.devicecheck=0/g' Anykernel3/anykernel.sh
-            sed -i 's!BLOCK=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!BLOCK=auto;!g' Anykernel3/anykernel.sh
+            sed -i 's!BLOCK=/dev/block/platform/omap/omap_hsmc.0/by-name/boot;!BLOCK=auto;!g' Anykernel3/anykernel.sh
             sed -i 's/device.name1=.*/device.name1=star/g' Anykernel3/anykernel.sh
             sed -i 's/BLOCK=auto;/BLOCK=boot;/g' Anykernel3/anykernel.sh
             sed -i 's/IS_SLOT_DEVICE=0;/IS_SLOT_DEVICE=1/g' Anykernel3/anykernel.sh
@@ -53,9 +55,11 @@ jobs:
             chmod +x Anykernel3/anykernel.sh
           fi
           
-          # 复制内核文件（防报错）
+          # 确保文件存在，防止报错
           mkdir -p "${IMAGE_DIR}"
           touch "${IMAGE_DIR}/Image.gz"
+          
+          # 复制内核文件
           if [[ -f "$IMAGE_DIR/Image.gz-dtb" ]]; then
             cp -fp "$IMAGE_DIR/Image.gz-dtb" tmp
           elif [[ -f "$IMAGE_DIR/Image.gz" ]]; then
@@ -95,16 +99,17 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: 下载构建成品
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: Kernel-Package
 
+      # 修复：删除无效参数，无报错发布
       - name: 自动创建Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: Build-${{ github.run_number }}
           name: Build-${{ github.run_number }}
           files: ./*.zip
-          update_existing: false
           prerelease: false
           make_latest: true
+          overwrite_files: true
