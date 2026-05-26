@@ -5,6 +5,12 @@ on:
   push:
     branches: [ main ]
 
+# 全局默认变量（关键：让 if 能读到）
+env:
+  PACK_METHOD: Anykernel3
+  ROM_TEXT: NonGKI
+  DEVICE_CODENAME: mi11ultra
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -12,8 +18,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Debug Env（临时加，用来验证变量）
+        run: |
+          echo "PACK_METHOD = ${{ env.PACK_METHOD }}"
+          echo "ROM_TEXT    = ${{ env.ROM_TEXT }}"
+          echo "DEVICE_CODENAME = ${{ env.DEVICE_CODENAME }}"
+
       - name: Make Anykernel3 Flasher
-        if: env.PACK_METHOD == 'Anykernel3'
+        if: ${{ env.PACK_METHOD == 'Anykernel3' }}   # 规范写法
         shell: bash
         run: |
           set -euo pipefail
