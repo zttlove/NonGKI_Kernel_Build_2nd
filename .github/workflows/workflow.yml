@@ -10,82 +10,79 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PACK_METHOD: Anykernel3
-  AK3_SOURCE: osm0sis
-  GENERATE_DTB: false
-  GENERATE_CHIP: msm
-  PACK_KMODULES: true
   DEVICE_NAME: star
   KERNEL_VERSION: 5.4.247
+  PACK_KMODULES: true
 
 jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - name: 拉取仓库代码
+      - name: 拉取代码
         uses: actions/checkout@v6
+        with:
+          submodules: true
 
       - name: 安装依赖
         run: |
           sudo apt update -y
-          sudo apt install -y git wget curl make gcc zip p7zip-full jq ccache bc bison flex libssl-dev libelf-dev
+          sudo apt install -y git wget curl make gcc zip p7zip-full jq bc bison flex libssl-dev libelf-dev
+
+      - name: 编译 + 修补内核
+        run: |
+          cd device_kernel
+          bash build.sh
 
       - name: 克隆 Anykernel3
         run: git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git Anykernel3
 
-      - name: 配置 Anykernel3（小米11U star专用）
+      - name: 配置 AK3
         run: |
           cd Anykernel3
-          sed -i "s/ExampleKernel by osm0sis @ xda-developers/NonGKI Kernel for Xiaomi 11U/g" anykernel.sh
+          sed -i "s/ExampleKernel by osm0sis @ xda-developers/ReSukiSU Kernel for Xiaomi 11U/g" anykernel.sh
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
           sed -i 's/IS_SLOT_DEVICE=0/IS_SLOT_DEVICE=1/g' anykernel.sh
           sed -i 's/device.name1=.*/device.name1=star/g' anykernel.sh
           sed -i 's/BLOCK=auto;/BLOCK=boot;/g' anykernel.sh
           chmod +x anykernel.sh
 
-      - name: 打包内核刷机包（终极修复路径）
+      - name: 打包刷机包（自动搜索 oImage，不写死路径）
         run: |
           set -e
-          ROOT="$GITHUB_WORKSPACE"
-          # 🔥 这里改成你真实的路径！！！
-          IMAGE_RAW="$ROOT/out/arch/arm64/boot/Image"
-          MODULES_ROOT="$ROOT/out"
+          ROOT=$GITHUB_WORKSPACE
 
-          mkdir -p tmp
+          # 🔥 全局搜索修补好的 oImage（你日志里明确输出的文件）
+          IMAGE=$(find "$ROOT" -name "oImage" | head -n 1)
 
-          # 检查内核文件
-          if [[ ! -f "$IMAGE_RAW" ]]; then
-            echo "❌ 错误：内核 Image 不存在！路径：$IMAGE_RAW"
+          if [ -z "$IMAGE" ]; then
+            echo "❌ 找不到 oImage，编译/修补失败"
             exit 1
           fi
+          echo "✅ 找到已修补内核：$IMAGE"
 
-          # 压缩生成有效 Image.gz
-          gzip -c "$IMAGE_RAW" > tmp/Image.gz
-          echo "✅ 成功打包内核 Image -> Image.gz"
+          mkdir -p tmp
+          gzip -c "$IMAGE" > tmp/Image.gz
 
-          # 复制内核模块
+          # 复制模块
           if [ "$PACK_KMODULES" = "true" ]; then
             mkdir -p tmp/modules/vendor/lib/modules
-            find "$MODULES_ROOT" -name "*.ko" 2>/dev/null | xargs -I {} cp {} tmp/modules/vendor/lib/modules/ || true
+            find "$ROOT" -name "*.ko" 2>/dev/null | xargs -I {} cp {} tmp/modules/vendor/lib/modules/ || true
           fi
 
-          # 复制 AK3 脚本
-          cp -rp ./Anykernel3/* tmp/
+          cp -rp Anykernel3/* tmp/
 
-          # 生成刷机包名称
+          # 打包
           API_URL="https://api.github.com/repos/cctv18/ReSukiSU_CI/releases/latest"
           BUILD_NUM=$(curl -sL "$API_URL" | jq -r '.name' | grep -oE '[0-9]+' | head -n1 || echo "0")
           ZIP_NAME="AK3-${KERNEL_VERSION}-ReSukiSU-${BUILD_NUM}-star_KPM.zip"
-
-          # 打包
           cd tmp
           zip -r9 "$ROOT/$ZIP_NAME" ./*
           cd ..
           rm -rf tmp
 
-          echo "PACK_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
+          echo "PACK_NAME=$ZIP_NAME" >> $GITHUB_ENV
 
-      - name: 上传内核包
+      - name: 上传产物
         uses: actions/upload-artifact@v6
         with:
           name: Kernel-Package
@@ -96,16 +93,12 @@ jobs:
     needs: build
     runs-on: ubuntu-22.04
     steps:
-      - name: 下载内核包
-        uses: actions/download-artifact@v6
-        with:
-          name: Kernel-Package
-
-      - name: 自动发布 Release
+      - uses: actions/download-artifact@v6
+      - name: 发布 Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: Build-${{ github.run_number }}
-          name: Xiaomi11U 内核 Build ${{ github.run_number }}
+          name: Xiaomi11U ReSukiSU Build ${{ github.run_number }}
           files: ./*.zip
           prerelease: false
           make_latest: true
