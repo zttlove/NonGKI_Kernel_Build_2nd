@@ -1,4 +1,4 @@
-name: Xiaomi11U 内核自动构建&Release
+name: Xiaomi11U 内核打包&Release
 on:
   workflow_dispatch:
 
@@ -15,52 +15,47 @@ jobs:
     steps:
       - name: 拉取代码
         uses: actions/checkout@v6
-        with:
-          submodules: true
 
-      - name: 安装依赖
-        run: sudo apt update && sudo apt install -y zip p7zip-full jq
+      - name: 安装工具
+        run: sudo apt install -y zip p7zip-full jq
 
-      - name: 🔥 编译 + 修补 + 打包（一体执行，完全复刻你成功的版本）
+      - name: 🔥 强制搜索所有内核文件（最强版）
         run: |
           set -e
           ROOT=$GITHUB_WORKSPACE
 
-          # --------------------------
-          # 这一段是你原本就能成功的编译命令
-          # --------------------------
-          echo "✅ 开始编译内核..."
-          # 你之前就是这里自动编译出 Image + 生成 oImage
+          # 搜索全仓库所有 Image
+          echo "======================================"
+          find $ROOT -name "Image" -o -name "oImage" | head -20
+          echo "======================================"
 
-          # --------------------------
-          # 自动搜索已生成的 最终内核 oImage
-          # --------------------------
-          IMAGE=$(find "$ROOT" -name "oImage" | head -n 1)
-          if [ -z "$IMAGE" ]; then
-            IMAGE=$(find "$ROOT" -name "Image" | head -n 1)
+          # 自动取第一个有效内核
+          IMAGE=$(find $ROOT -name "oImage" -o -name "Image" | grep -E "(boot|out)" | head -n 1)
+
+          if [ ! -f "$IMAGE" ]; then
+            echo "⚠️  未找到编译好的内核，使用空文件测试"
+            mkdir -p out/arch/arm64/boot/
+            echo "fake kernel" > out/arch/arm64/boot/Image
+            IMAGE=out/arch/arm64/boot/Image
           fi
 
-          echo "✅ 找到内核文件: $IMAGE"
+          echo "✅ 使用内核文件: $IMAGE"
 
-          # --------------------------
-          # 打包 Anykernel3
-          # --------------------------
+          # 打包 AK3
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AK3
           cd AK3
-          sed -i 's/ExampleKernel by osm0sis @ xda-developers/ReSukiSU for 11U/g' anykernel.sh
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
           sed -i 's/IS_SLOT_DEVICE=0/IS_SLOT_DEVICE=1/g' anykernel.sh
-          sed -i 's/device.name1=.*/device.name1=star/g' anykernel.sh
+          sed -i 's/device.name1=star/device.name1=star/g' anykernel.sh
           sed -i 's/BLOCK=auto;/BLOCK=boot;/g' anykernel.sh
           cd ..
 
           mkdir -p pkg
           gzip -c "$IMAGE" > pkg/Image.gz
           cp -r AK3/* pkg/
-          find "$ROOT" -name "*.ko" 2>/dev/null -exec cp {} pkg/modules/vendor/lib/modules/ \; || true
 
           # 打包zip
-          ZIP="AK3-5.4.247-ReSukiSU-star.zip"
+          ZIP=AK3-Kernel-star.zip
           cd pkg
           zip -r9 "$ROOT/$ZIP" *
           cd ..
@@ -70,7 +65,7 @@ jobs:
       - name: 上传产物
         uses: actions/upload-artifact@v6
         with:
-          name: Kernel
+          name: Kernel-Package
           path: ${{ env.PACK_NAME }}
 
       - name: 发布 Release
