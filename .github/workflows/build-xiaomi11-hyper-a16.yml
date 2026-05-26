@@ -213,7 +213,9 @@ jobs:
             - Clang 20 最新编译
           files: ${{ env.PACK_NAME }}
           draft: false
-          prerelease: true
+          prerelease: false
+          overwrite_files: true
+          make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
