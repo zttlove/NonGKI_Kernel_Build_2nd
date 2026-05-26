@@ -1,8 +1,8 @@
-      - name: Make Anykernel3 Flasher
-        if: env.PACK_METHOD == 'Anykernel3'
-        shell: bash
-        run: |
-          set -e
+name: Make Anykernel3 Flasher
+  if: env.PACK_METHOD == 'Anykernel3'
+  shell: bash
+  run: |
+  set -e
           # 1. 获取时间戳
           TIME=${{ env.TIME }}
           if [ -z "$TIME" ]; then
