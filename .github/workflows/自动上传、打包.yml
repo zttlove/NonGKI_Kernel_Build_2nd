@@ -1,75 +1,89 @@
-- name: Make Anykernel3 Flasher
-  if: env.PACK_METHOD == 'Anykernel3'
-  shell: bash
-  run: |
-    set -euo pipefail
-    echo "============================================="
-    echo "📦 开始构建 Anykernel3 内核刷机包"
-    echo "============================================="
+name: 内核打包上传
 
-    # 1. 时间戳（优先使用环境变量，否则自动生成）
-    TIME="${{ env.TIME }}"
-    if [ -z "$TIME" ]; then
-      TIME=$(date +"%Y%m%d%H%M%S")
-      echo "⏰ 自动生成时间戳：$TIME"
-    fi
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
 
-    cd "$GITHUB_WORKSPACE"
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    # 2. 严格校验内核文件（防止空包）
-    if [ ! -f "oImage" ]; then
-      echo "::error::❌ 编译失败：未找到内核文件 oImage"
-      exit 1
-    fi
-    echo "✅ 找到内核文件：oImage ($(du -h oImage | awk '{print $1}'))"
+      - name: Make Anykernel3 Flasher
+        if: env.PACK_METHOD == 'Anykernel3'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "============================================="
+          echo "📦 开始构建 Anykernel3 内核刷机包"
+          echo "============================================="
 
-    # 3. 清空并创建干净打包目录
-    rm -rf tmp
-    mkdir -p tmp
+          # 1. 时间戳
+          TIME="${{ env.TIME }}"
+          if [ -z "$TIME" ]; then
+            TIME=$(date +"%Y%m%d%H%M%S")
+            echo "⏰ 自动生成时间戳：$TIME"
+          fi
 
-    # 4. 配置 Anykernel3（确保文件存在再修改）
-    if [ -d "Anykernel3" ] && [ -f "Anykernel3/anykernel.sh" ]; then
-      echo "🔧 配置 Anykernel3 参数"
-      sed -i "s/^name=.*/name=\"NonGKI Kernel\"/" Anykernel3/anykernel.sh
-      sed -i "s/^do\.devicecheck=.*/do.devicecheck=0/" Anykernel3/anykernel.sh
-      sed -i "s/^IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=1/" Anykernel3/anykernel.sh
-      sed -i "s/^BLOCK=.*/BLOCK=boot/" Anykernel3/anykernel.sh
-    else
-      echo "::error::❌ Anykernel3 目录不存在，无法打包"
-      exit 1
-    fi
+          cd "$GITHUB_WORKSPACE"
 
-    # 5. 复制内核文件
-    cp -v oImage tmp/Image
+          # 2. 检查内核文件
+          if [ ! -f "oImage" ]; then
+            echo "::error::❌ 编译失败：未找到内核文件 oImage"
+            exit 1
+          fi
+          echo "✅ 找到内核文件：oImage ($(du -h oImage | awk '{print $1}'))"
 
-    # 6. 复制所有 ko 模块（自动创建目录，无模块也不报错）
-    mkdir -p tmp/modules/vendor/lib/modules
-    find . -name "*.ko" -type f -print0 | xargs -0 cp -t tmp/modules/vendor/lib/modules/ 2>/dev/null || true
-    module_count=$(find tmp/modules/vendor/lib/modules -name "*.ko" | wc -l)
-    echo "📦 找到并复制内核模块：$module_count 个"
+          # 3. 清理临时目录
+          rm -rf tmp
+          mkdir -p tmp
 
-    # 7. 复制 AK3 全套文件
-    cp -rp Anykernel3/* tmp/
+          # 4. 配置 Anykernel3
+          if [ -d "Anykernel3" ] && [ -f "Anykernel3/anykernel.sh" ]; then
+            echo "🔧 配置 Anykernel3 参数"
+            sed -i "s/^name=.*/name=\"NonGKI Kernel\"/" Anykernel3/anykernel.sh
+            sed -i "s/^do\.devicecheck=.*/do.devicecheck=0/" Anykernel3/anykernel.sh
+            sed -i "s/^IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=1/" Anykernel3/anykernel.sh
+            sed -i "s/^BLOCK=.*/BLOCK=boot/" Anykernel3/anykernel.sh
+          else
+            echo "::error::❌ Anykernel3 目录不存在，无法打包"
+            exit 1
+          fi
 
-    # 8. 高速压缩打包（mx5 速度/压缩比均衡）
-    echo "🚀 开始压缩刷机包..."
-    cd tmp
-    7za a -tzip -mx5 -mmt=on package.zip ./* >/dev/null
-    cd ..
+          # 5. 复制内核
+          cp -v oImage tmp/Image
 
-    # 9. 生成安全文件名（去空格/特殊字符）
-    ROM_TEXT="${{ env.ROM_TEXT }}"
-    SAFE_ROM_TEXT=$(echo "$ROM_TEXT" | tr -d '":*?<>|' | tr ' ' '-')
-    DEVICE_CODENAME="${{ env.DEVICE_CODENAME }}"
-    FINAL_ZIP="${DEVICE_CODENAME}-${SAFE_ROM_TEXT}-${TIME}-Anykernel3.zip"
+          # 6. 复制模块
+          mkdir -p tmp/modules/vendor/lib/modules
+          find . -name "*.ko" -type f -print0 | xargs -0 cp -t tmp/modules/vendor/lib/modules/ 2>/dev/null || true
+          module_count=$(find tmp/modules/vendor/lib/modules -name "*.ko" | wc -l)
+          echo "📦 复制内核模块：$module_count 个"
 
-    # 10. 输出最终文件
-    mv -v tmp/package.zip "$FINAL_ZIP"
-    rm -rf tmp
+          # 7. 复制 AK3 全套文件
+          cp -rp Anykernel3/* tmp/
 
-    # 11. 输出到 GitHub 环境变量
-    echo "PACK_NAME=$FINAL_ZIP" >> $GITHUB_ENV
-    echo "============================================="
-    echo "✅ 打包完成！文件名：$FINAL_ZIP"
-    echo "📁 文件大小：$(du -h "$FINAL_ZIP" | awk '{print $1}')"
-    echo "============================================="
+          # 8. 打包
+          echo "🚀 开始压缩刷机包..."
+          cd tmp
+          7za a -tzip -mx5 -mmt=on package.zip ./* >/dev/null
+          cd ..
+
+          # 9. 生成文件名
+          ROM_TEXT="${{ env.ROM_TEXT }}"
+          SAFE_ROM_TEXT=$(echo "$ROM_TEXT" | tr -d '":*?<>|' | tr ' ' '-')
+          DEVICE_CODENAME="${{ env.DEVICE_CODENAME }}"
+          FINAL_ZIP="${DEVICE_CODENAME}-${SAFE_ROM_TEXT}-${TIME}-Anykernel3.zip"
+
+          # 10. 输出文件
+          mv -v tmp/package.zip "$FINAL_ZIP"
+          rm -rf tmp
+
+          # 11. 导出变量
+          echo "PACK_NAME=$FINAL_ZIP" >> $GITHUB_ENV
+          echo "============================================="
+          echo "✅ 打包完成：$FINAL_ZIP"
+          echo "📁 大小：$(du -h "$FINAL_ZIP" | awk '{print $1}')"
+          echo "============================================="
