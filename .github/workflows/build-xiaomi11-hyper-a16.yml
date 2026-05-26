@@ -5,10 +5,8 @@ on:
   workflow_dispatch:
 
 env:
-  # 全局强制所有Action使用Node24，永久消除Node20废弃警告
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
-  # Device env
   DEVICE_NAME : "xiaomi_11U"
   DEVICE_CODENAME : "star"
 
@@ -34,7 +32,6 @@ env:
 
   KERNELSU_SOURCE : ""
   KERNELSU_BRANCH : ""
-
   KERNELSU_AUTO_GET : "true"
   KERNELSU_AUTO_FORK : "resukisu"
   SUSFS_ENABLE : true
@@ -48,7 +45,6 @@ env:
   NEED_SAFE_DTBO : false
   ROM_TEXT : "hyperos_a16_rusukisu"
 
-  # Other env
   PYTHON_VERSION: "3"
   PACK_METHOD: "Anykernel3"
   PACK_KMODULES: "false"
@@ -122,7 +118,6 @@ jobs:
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
 
-      # 打包流程（移除不兼容的 --timeout，保留双下载容错）
       - name: 安装打包依赖
         run: |
           sudo apt update -y
@@ -135,10 +130,8 @@ jobs:
           IMAGE_DIR="$ROOT/out/arch/arm64/boot"
           mkdir -p tmp
 
-          # 移除 --timeout，兼容旧版 git
           git clone --depth 1 ${{ env.AK3_SOURCE }} Anykernel3 || true
 
-          # 克隆失败切换为压缩包下载
           if [ ! -d "Anykernel3" ]; then
             wget -q -O ak3.zip https://github.com/osm0sis/AnyKernel3/archive/refs/heads/${{ env.AK3_BRANCH }}.zip
             unzip -q ak3.zip
@@ -146,155 +139,15 @@ jobs:
             rm -f ak3.zip
           fi
 
-          # 修改 AnyKernel3 配置
           sed -i 's/ExampleKernel by osm0sis/NonGKI Kernel Build/g' Anykernel3/anykernel.sh
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' Anykernel3/anykernel.sh
           sed -i 's/device.name1=.*/device.name1=${{ env.DEVICE_CODENAME }}/g' Anykernel3/anykernel.sh
           sed -i 's/IS_SLOT_DEVICE=0;/IS_SLOT_DEVICE=1;/g' Anykernel3/anykernel.sh
           sed -i 's/BLOCK=auto;/BLOCK=boot;/g' Anykernel3/anykernel.sh
 
-          # 复制内核镜像
           [ -f "$IMAGE_DIR/Image.gz-dtb" ] && cp "$IMAGE_DIR/Image.gz-dtb" tmp/
           [ -f "$IMAGE_DIR/Image.gz" ] && cp "$IMAGE_DIR/Image.gz" tmp/
 
-          # 复制内核模块
-          mkdir -p tmp/modules/vendor/lib/modules
-          find "$ROOT/out/" -name "*.ko" -exec cp {} tmp/modules/vendor/lib/modules/ \; 2>/dev/null
-
-          cp -rp Anykernel3/* tmp/
-          ZIP="Kernel-${{ github.run_number }}-${{ env.DEVICE_CODENAME }}.zip"
-          cd tmp && 7za a -mx9 -tzip "$ROOT/$ZIP" ./*
-          echo "PACK_FILE=$ZIP" >> "$GITHUB_ENV"
-
-      - name: 上传内核包
-        uses: actions/upload-artifact@v4
-        with:
-          name: KernelPackage
-          path: ${{ env.PACK_FILE }}
-
-  KERNELSU_AUTO_GET : "true"
-  KERNELSU_AUTO_FORK : "resukisu"
-  SUSFS_ENABLE : true
-  SUSFS_FIXED : true
-
-  AK3_SOURCE : "https://github.com/osm0sis/AnyKernel3.git"
-  AK3_BRANCH : "master"
-
-  BOOT_SOURCE : ""
-  NEED_DTBO : false
-  NEED_SAFE_DTBO : false
-  ROM_TEXT : "hyperos_a16_rusukisu"
-
-  # Other env
-  PYTHON_VERSION: "3"
-  PACK_METHOD: "Anykernel3"
-  PACK_KMODULES: "false"
-  KERNELSU_METHOD: "shell"
-  KERNELSU_SUS_PATCH: "false"
-  PATCHES_SOURCE: "JackA1ltman/NonGKI_Kernel_Patches"
-  PATCHES_BRANCH: "mi_kernel"
-  SUSFS_FOLDER_FIXED: "mi11_evox_a16"
-  SUSFS_PATCH_FIXED: "susfs_fixed"
-  REKERNEL_ENABLE: "false"
-  HOOK_METHOD: "syscall"
-  KERNEL_PATCH: "false"
-  KPM_ENABLE: "true"
-  KPM_INLINE: "true"
-  KPM_KPATCH_NEXT: "false"
-  KPM_PATCH_SOURCE: "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU_patch/refs/heads/main/kpm/patch_linux"
-  BASEBAND_GUARD_ENABLE: "false"
-  BASEBAND_GUARD_BOOT: "false"
-  HIDE_STUFF: "false"
-  GENERATE_DTB: "false"
-  GENERATE_CHIP: "qcom"
-  BUILD_DEBUGGER: "false"
-  SKIP_PATCH: "false"
-  BUILD_OTHER_CONFIG: "false"
-  MERGE_CONFIG_FILES: "vendor/venus_QGKI.config,vendor/xiaomi_QGKI.config"
-  FREE_MORE_SPACE: "false"
-
-jobs:
-  build-kernel:
-    name: Xiaomi11U (hyper A16)
-    runs-on: ubuntu-latest
-    env:
-      CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
-      CCACHE_NOHASHDIR: "true"
-      CCACHE_HARDLINK: "true"
-
-    steps:
-      - name: ⏰ Checkout repository
-        uses: actions/checkout@v6
-
-      - name: Setup Node.js 22 LTS
-        uses: actions/setup-node@v5
-        with:
-          node-version: '22'
-
-      - name: ⌛️ Compilation environment preparation
-        uses: ./.github/workflows/build-env
-
-      - name: ⚙️ Get neccssary tools
-        uses: ./.github/workflows/build-ready
-
-      - name: 🪝 Patch Kernel of SUSFS
-        uses: ./.github/workflows/patch-susfs
-
-      - name: 🔗 Patch for no-kprobe
-        uses: ./.github/workflows/patch-no-kprobe
-
-      - name: 🪛 Extra Kernel Options
-        run: |
-          cd $GITHUB_WORKSPACE/device_kernel
-
-      - name: 🧰 Patch Kernel of Re:Kernel
-        uses: ./.github/workflows/patch-rekernel
-
-      - name: 🔒 Patch Kernel of Baseband Guard
-        uses: ./.github/workflows/patch-baseband-guard
-
-      - name: 🔧 Patch Hide Stuff
-        uses: ./.github/workflows/patch-hide-stuff
-
-      - name: 🚀 Build Process
-        uses: ./.github/workflows/build-process
-
-      # 打包流程（含网络容错+双下载方案）
-      - name: 安装打包依赖
-        run: |
-          sudo apt update -y
-          sudo apt install -y p7zip-full git wget unzip
-          rm -rf Anykernel3 tmp
-
-      - name: 🔩 自动打包 Anykernel3
-        run: |
-          ROOT="$GITHUB_WORKSPACE"
-          IMAGE_DIR="$ROOT/out/arch/arm64/boot"
-          mkdir -p tmp
-
-          # 优先 git 克隆，超时容错
-          git clone --depth 1 --timeout 240 ${{ env.AK3_SOURCE }} Anykernel3 || true
-
-          # 克隆失败切换为压缩包下载
-          if [ ! -d "Anykernel3" ]; then
-            wget -q -O ak3.zip https://github.com/osm0sis/AnyKernel3/archive/refs/heads/${{ env.AK3_BRANCH }}.zip
-            unzip -q ak3.zip
-            mv AnyKernel3-${{ env.AK3_BRANCH }} Anykernel3
-            rm -f ak3.zip
-          fi
-
-          # 修改 AnyKernel3 配置
-          sed -i 's/ExampleKernel by osm0sis/NonGKI Kernel Build/g' Anykernel3/anykernel.sh
-          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' Anykernel3/anykernel.sh
-          sed -i 's/device.name1=.*/device.name1=${{ env.DEVICE_CODENAME }}/g' Anykernel3/anykernel.sh
-          sed -i 's/IS_SLOT_DEVICE=0;/IS_SLOT_DEVICE=1;/g' Anykernel3/anykernel.sh
-          sed -i 's/BLOCK=auto;/BLOCK=boot;/g' Anykernel3/anykernel.sh
-
-          # 复制内核镜像
-          [ -f "$IMAGE_DIR/Image.gz-dtb" ] && cp "$IMAGE_DIR/Image.gz-dtb" tmp/
-          [ -f "$IMAGE_DIR/Image.gz" ] && cp "$IMAGE_DIR/Image.gz" tmp/
-
-          # 复制内核模块
           mkdir -p tmp/modules/vendor/lib/modules
           find "$ROOT/out/" -name "*.ko" -exec cp {} tmp/modules/vendor/lib/modules/ \; 2>/dev/null
 
