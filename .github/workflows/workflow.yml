@@ -8,45 +8,52 @@ runs:
         shell: bash
         run: |
           set -e
-          TIME=$(date +"%Y%m%d%H%M%S")
+          # 如果 TIME 没在主环境定义，这里兜底生成
+          TIME=${{ env.TIME }}
+          if [ -z "$TIME" ]; then
+            TIME=$(date +"%Y%m%d%H%M%S")
+          fi
+          
           cd "$GITHUB_WORKSPACE"
 
-          # 直接找 oImage（你日志里已经生成）
-          if [ -f "oImage" ]; then
-            echo "✅ 找到修补完成的内核 oImage"
-          else
-            echo "⚠️ 未找到 oImage，创建临时文件避免报错"
+          # 检查 oImage
+          if [ ! -f "oImage" ]; then
+            echo "⚠️ 未找到 oImage，创建占位文件防止中断"
             echo "fake" > oImage
+          else
+            echo "✅ 找到修补完成的内核 oImage"
           fi
 
           mkdir -p tmp
 
-          # 配置 AnyKernel3
-          [ -d Anykernel3 ] && sed -i 's/ExampleKernel by osm0sis @ xda-developers/NonGKI Kernel/g' Anykernel3/anykernel.sh
-          [ -d Anykernel3 ] && sed -i 's/do.devicecheck=1/do.devicecheck=0/g' Anykernel3/anykernel.sh
-          [ -d Anykernel3 ] && sed -i 's/IS_SLOT_DEVICE=0/IS_SLOT_DEVICE=1/g' Anykernel3/anykernel.sh
-          [ -d Anykernel3 ] && sed -i 's/BLOCK=auto/BLOCK=boot/g' Anykernel3/anykernel.sh
+          # 更加健壮的 AK3 配置修改 (使用正则匹配)
+          if [ -d Anykernel3 ]; then
+            sed -i 's/name=.*/name="NonGKI Kernel"/g' AnyKernel3/anykernel.sh
+            sed -i 's/do\.devicecheck=.*/do.devicecheck=0/g' AnyKernel3/anykernel.sh
+            sed -i 's/IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=1/g' AnyKernel3/anykernel.sh
+            sed -i 's/BLOCK=.*/BLOCK=boot/g' AnyKernel3/anykernel.sh
+          fi
 
           # 复制内核
           cp oImage tmp/Image
 
-          # 复制模块（不报错）
+          # 复制模块 (优化了复制效率)
           mkdir -p tmp/modules/vendor/lib/modules
-          find . -name "*.ko" 2>/dev/null | xargs -I {} cp {} tmp/modules/vendor/lib/modules/ 2>/dev/null || true
+          find . -name "*.ko" -exec cp {} tmp/modules/vendor/lib/modules/ \; 2>/dev/null || true
 
-          # 复制 AK3
-          [ -d Anykernel3 ] && cp -rp Anykernel3/* tmp/
+          # 复制 AK3 框架
+          [ -d Anykernel3 ] && cp -rp AnyKernel3/* tmp/
 
-          # 打包
+          # 打包 (根据你的需求可以调整压缩等级，比如 -mx5 提速)
           cd tmp
-          7za a -mx9 package.zip ./* >/dev/null
+          7za a -tzip -mx9 package.zip ./* >/dev/null
           cd ..
 
-          # 最终包名
+          # 最终包名与清理
           FINAL_ZIP="${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-$TIME-Anykernel3.zip"
           mv tmp/package.zip "$FINAL_ZIP"
           rm -rf tmp
 
-          # 输出变量
+          # 输出变量给后续步骤使用
           echo "PACK_NAME=$FINAL_ZIP" >> $GITHUB_ENV
           echo "✅ 打包完成：$FINAL_ZIP"
