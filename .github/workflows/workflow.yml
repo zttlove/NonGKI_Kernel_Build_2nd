@@ -9,7 +9,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# 修复 Node.js 20 弃用警告 → 强制使用 Node.js 24
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   PACK_METHOD: Anykernel3
@@ -25,11 +24,10 @@ jobs:
       - name: 拉取仓库代码
         uses: actions/checkout@v6
 
-      # 克隆 Anykernel3
+      # ✅ 修复：正确的 AnyKernel3 地址
       - name: 克隆 Anykernel3
-        run: git clone --depth=1 https://github.com/osmos/AnyKernel3.git Anykernel3
+        run: git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git Anykernel3
 
-      # 打包脚本
       - name: 打包 Anykernel3 刷机包
         if: env.PACK_METHOD == 'Anykernel3'
         shell: bash
@@ -42,7 +40,6 @@ jobs:
           rm -rf tmp
           mkdir -p tmp
           
-          # 配置 Anykernel3
           if [[ "${AK3_SOURCE}" =~ "osm0sis" ]]; then
             sed -i 's/ExampleKernel by osm0sis @ xda-developers/NonGKI Kernel Build by JackAltman @ Github/g' Anykernel3/anykernel.sh
             sed -i 's/do.devicecheck=1/do.devicecheck=0/g' Anykernel3/anykernel.sh
@@ -55,18 +52,15 @@ jobs:
             chmod +x Anykernel3/anykernel.sh
           fi
           
-          # 确保文件存在，防止报错
           mkdir -p "${IMAGE_DIR}"
           touch "${IMAGE_DIR}/Image.gz"
           
-          # 复制内核文件
           if [[ -f "$IMAGE_DIR/Image.gz-dtb" ]]; then
             cp -fp "$IMAGE_DIR/Image.gz-dtb" tmp
           elif [[ -f "$IMAGE_DIR/Image.gz" ]]; then
             cp -fp "$IMAGE_DIR/Image.gz" tmp
           fi
           
-          # 复制内核模块（防报错）
           if [ "${PACK_KMODULES}" == "true" ]; then
             mkdir -p tmp/modules/vendor/lib/modules
             find "${KERNEL_DIR}/out/" -name "*.ko" -exec cp -fp {} tmp/modules/vendor/lib/modules/ \; 2>/dev/null || true
@@ -74,7 +68,6 @@ jobs:
           
           cp -rp ./Anykernel3/* tmp/
           
-          # 生成刷机包
           API_URL="https://api.github.com/repos/cctv18/ReSukiSU_CI/releases/latest"
           TAG=$(curl -sL "$API_URL" | jq -r '.name' || echo "0")
           BUILD_NUM=$(echo "$TAG" | grep -oE '[0-9]+' | head -n1 || echo "0")
@@ -103,7 +96,6 @@ jobs:
         with:
           name: Kernel-Package
 
-      # 修复：删除无效参数，无报错发布
       - name: 自动创建Release
         uses: softprops/action-gh-release@v2
         with:
