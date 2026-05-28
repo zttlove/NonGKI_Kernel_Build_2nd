@@ -231,10 +231,6 @@ runs:
                 tar -xvf Python-2.7.18.tgz
                 cd Python-2.7.18
                 ./configure
-                export KBUILD_BUILD_TIMESTAMP="Tue Feb 11 03:07:14 2025 +0000"
-                export SOURCE_DATE_EPOCH=-1739243234
-                export KBUILD_BUILD_USER="android-build"
-                export KBUILD_BUILD_HOST="localhost"
                 make -j$(nproc)
                 sudo make install
                 curl https://bootstrap.pypa.io/pip/2.7/get-pip.py -o get-pip.py
@@ -497,7 +493,7 @@ runs:
                 cd clang-custom
                 ${{ env.CURLX }} "${{ env.CLANG_SOURCE }}" antman
                 chmod +x antman
-                bash antman -S
+                bash antman -S=10032024
             elif [[ "${{ env.CLANG_SOURCE }}" == *"android.googlesource.com"* ]]; then
                 git clone "${{ env.CLANG_SOURCE }}" -b "${{ env.CLANG_BRANCH }}" clang-custom --depth=1
                 SUBDIR=$(find clang-custom -maxdepth 1 -type d -name 'clang-r*' | head -n 1)
