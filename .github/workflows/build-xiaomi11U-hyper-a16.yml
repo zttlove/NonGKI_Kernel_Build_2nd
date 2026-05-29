@@ -137,23 +137,21 @@ jobs:
           sed -i '/ksu_init_rc_hook();/d' fs/read_write.c
           sed -i '/ksu_handle_setresuid(/d' kernel/sys.c
 
-      - name: 🛠️ 最终修复 SukiSU-Ultra 5.4 编译错误
+      - name: 🛠️ 最终绝对修复 SukiSU-Ultra 5.4
         run: |
           cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
 
-          # 1. 彻底删除错误的宏行（把你炸掉的 #define *USER_ARG_NULL 删掉）
+          # 1. 清理所有错误宏（彻底删掉炸编译的垃圾行）
           sed -i '/#define \*USER_ARG_NULL/d' sulog/event.c
-
-          # 2. 恢复原始正确的宏
+          sed -i '/#define (user_arg_null_ptr/d' sulog/event.c
           sed -i '/#define USER_ARG_NULL/d' sulog/event.c
-          echo '#define USER_ARG_NULL user_arg_null_ptr()' >> sulog/event.c
 
-          # 3. 屏蔽 5.4 不存在的 SELinux 函数
-          sed -i 's/ksu_selinux_hide_handle_post_fs_data();//g' runtime/ksud.c
-          sed -i 's/ksu_selinux_hide_handle_second_stage();//g' runtime/ksud.c
+          # 2. 安全修复：直接替换调用为 5.4 兼容格式（正确解引用）
+          sed -i 's/USER_ARG_NULL/*user_arg_null_ptr()/g' sulog/event.c
 
-          # 4. 5.4 内核正确修复：只改调用，不改宏（安全写法）
-          sed -i 's/USER_ARG_NULL/(user_arg_null_ptr())/g' sulog/event.c
+          # 3. 删掉 5.4 不存在的 SELinux 函数
+          sed -i '/ksu_selinux_hide_handle_post_fs_data/d' runtime/ksud.c
+          sed -i '/ksu_selinux_hide_handle_second_stage/d' runtime/ksud.c
 
 
 
