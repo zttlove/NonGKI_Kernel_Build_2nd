@@ -1,0 +1,31 @@
+From: Your Name <your@mail.com>
+Date: Fri, 29 May 2026 12:00:00 +0800
+Subject: [PATCH] KSU: remove obsolete ksu_init_rc_hook/ksu_handle_setresuid (5.4)
+
+These functions are completely removed in SukiSU-Ultra builtin,
+the old calls cause linker errors. Safe to delete for 5.4 non-GKI.
+
+diff --git a/fs/read_write.c b/fs/read_write.c
+index 1234567..abcdef0 100644
+--- a/fs/read_write.c
++++ b/fs/read_write.c
+@@ -601,7 +601,6 @@ SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count
+                ret = vfs_read(file, buf, count, &pos);
+                if (ret > 0)
+                        add_syscalls(current, 1);
+-               ksu_init_rc_hook();
+        }
+        fput(file);
+        return ret;
+diff --git a/kernel/sys.c b/kernel/sys.c
+index 789abc0..1234567 100644
+--- a/kernel/sys.c
++++ b/kernel/sys.c
+@@ -634,7 +634,6 @@ SYSCALL_DEFINE3(setresuid, uid_t, ruid, uid_t, euid, uid_t, suid)
+        if (ret)
+                goto out;
+ 
+-       ksu_handle_setresuid(ruid, euid, suid);
+        ret = security_task_setresuid(ruid, euid, suid);
+        if (ret)
+                goto out;
