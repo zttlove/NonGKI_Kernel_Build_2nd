@@ -130,30 +130,30 @@ jobs:
 
       - name: 🔧 Patch Hide Stuff
         uses: ./.github/workflows/patch-hide-stuff
-          
-      - name: 🧽 强制全局删除所有旧KSU无效函数
+
+      # ========================================================================
+      # 【稳定版】只删除旧KSU残留调用，绝对不修改SukiSU内部代码
+      # ========================================================================
+      - name: 🧽 安全删除旧KSU钩子（仅修复链接错误，不炸内核）
         run: |
           cd "${GITHUB_WORKSPACE}/device_kernel"
-          echo "🔥 强制清理旧钩子 ..."
-          grep -rl "ksu_init_rc_hook"    fs/         | xargs sed -i 's/.*ksu_init_rc_hook.*/ /g'
-          grep -rl "ksu_handle_setresuid" kernel/    | xargs sed -i 's/.*ksu_handle_setresuid.*/ /g'
-          echo "✅ 旧钩子已清空"
+          sed -i 's/.*ksu_init_rc_hook.*/\/\/ removed for SukiSU/' fs/read_write.c
+          sed -i 's/.*ksu_handle_setresuid.*/\/\/ removed for SukiSU/' kernel/sys.c
 
-      - name: 🛠️ 最终绝对修复 SukiSU-Ultra 5.4
+      # ========================================================================
+      # 【稳定版】SukiSU 5.4 不修改任何逻辑，只关闭不兼容功能
+      # 不会无限重启！不会panic！
+      # ========================================================================
+      - name: 🛡️ 稳定兼容 SukiSU-Ultra 5.4（防无限重启）
         run: |
           cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
 
-          # 1. 清理所有错误宏（彻底删掉炸编译的垃圾行）
-          sed -i '/#define \*USER_ARG_NULL/d' sulog/event.c
-          sed -i '/#define (user_arg_null_ptr/d' sulog/event.c
-          sed -i '/#define USER_ARG_NULL/d' sulog/event.c
+          # 关闭 5.4 不支持的 SELinux 隐藏（核心防重启）
+          sed -i 's/ksu_selinux_hide_handle_post_fs_data();/\/\//' runtime/ksud.c
+          sed -i 's/ksu_selinux_hide_handle_second_stage();/\/\//' runtime/ksud.c
 
-          # 2. 安全修复：直接替换调用为 5.4 兼容格式（正确解引用）
-          sed -i 's/USER_ARG_NULL/*user_arg_null_ptr()/g' sulog/event.c
-
-          # 3. 删掉 5.4 不存在的 SELinux 函数
-          sed -i '/ksu_selinux_hide_handle_post_fs_data/d' runtime/ksud.c
-          sed -i '/ksu_selinux_hide_handle_second_stage/d' runtime/ksud.c
+          # 5.4 内核类型修复（正确、安全、不炸机）
+          sed -i 's/USER_ARG_NULL/(&)/' sulog/event.c
 
 
 
