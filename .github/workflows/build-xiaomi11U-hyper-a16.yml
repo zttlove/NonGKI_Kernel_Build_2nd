@@ -130,17 +130,24 @@ jobs:
 
       - name: 🔧 Patch Hide Stuff
         uses: ./.github/workflows/patch-hide-stuff
+           # 之前的删除旧钩子步骤（保留）
       - name: 🧽 Remove obsolete KSU hooks (fix ld.lld error)
         run: |
           cd "${GITHUB_WORKSPACE}/device_kernel"
-          
-          echo "🧹 Removing ksu_init_rc_hook from fs/read_write.c..."
           sed -i '/ksu_init_rc_hook();/d' fs/read_write.c
-          
-          echo "🧹 Removing ksu_handle_setresuid from kernel/sys.c..."
           sed -i '/ksu_handle_setresuid(/d' kernel/sys.c
-          
-          echo "✅ Cleanup finished! Linker errors fixed."
+
+      # 新增：SukiSU-Ultra 5.4 内核编译错误修复
+      - name: 🛠️ Fix SukiSU-Ultra 5.4 kernel build errors
+        run: |
+          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
+
+          echo "✅ Fix 1/3: Remove undefined selinux hide functions"
+          sed -i 's/ksu_selinux_hide_handle_post_fs_data();//g' runtime/ksud.c
+          sed -i 's/ksu_selinux_hide_handle_second_stage();//g' runtime/ksud.c
+
+          echo "✅ Fix 2/3: Fix USER_ARG_NULL type mismatch (event.c)"
+          sed -i 's/USER_ARG_NULL/*USER_ARG_NULL/g' sulog/event.c
 
 
       - name: 🚀 Build Process
