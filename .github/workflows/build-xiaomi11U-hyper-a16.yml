@@ -157,11 +157,7 @@ jobs:
           sed -i 's/ksu_selinux_hide_handle_post_fs_data/\/\/ &/' runtime/ksud.c
           sed -i 's/ksu_selinux_hide_handle_second_stage/\/\/ &/' runtime/ksud.c
 
-      - name: 🚀 Build Process
-        uses: ./.github/workflows/build-process
-
-
-
+    
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
