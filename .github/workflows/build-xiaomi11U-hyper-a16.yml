@@ -131,29 +131,34 @@ jobs:
       - name: 🔧 Patch Hide Stuff
         uses: ./.github/workflows/patch-hide-stuff
 
-      # ========================================================================
-      # 【稳定版】只删除旧KSU残留调用，绝对不修改SukiSU内部代码
-      # ========================================================================
-      - name: 🧽 安全删除旧KSU钩子（仅修复链接错误，不炸内核）
+      # ===================== 永久修复链接错误 =====================
+      - name: 🧽 清理旧KSU钩子（仅删除，不破坏任何代码）
         run: |
           cd "${GITHUB_WORKSPACE}/device_kernel"
-          sed -i 's/.*ksu_init_rc_hook.*/\/\/ removed for SukiSU/' fs/read_write.c
-          sed -i 's/.*ksu_handle_setresuid.*/\/\/ removed for SukiSU/' kernel/sys.c
+          sed -i 's/.*ksu_init_rc_hook.*/ /g' fs/read_write.c
+          sed -i 's/.*ksu_handle_setresuid.*/ /g' kernel/sys.c
 
-      # ========================================================================
-      # 【稳定版】SukiSU 5.4 不修改任何逻辑，只关闭不兼容功能
-      # 不会无限重启！不会panic！
-      # ========================================================================
-      - name: 🛡️ 稳定兼容 SukiSU-Ultra 5.4（防无限重启）
+      # ===================== 永久修复编译错误 =====================
+      - name: 🛡️ SukiSU 5.4 安全修复（不碰宏、不炸机、不重启）
         run: |
           cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
+          
+          # 1. 清理所有被弄坏的宏（彻底删除错误的 #define *xxx / #define (xxx)）
+          sed -i '/#define [*(]/d' sulog/event.c
+          
+          # 2. 确保原始宏存在（安全写入）
+          sed -i '/#define USER_ARG_NULL/d' sulog/event.c
+          echo '#define USER_ARG_NULL user_arg_null_ptr()' >> sulog/event.c
+          
+          # 3. 5.4 内核唯一正确修复（只加 *，不碰任何结构）
+          sed -i 's/USER_ARG_NULL/*USER_ARG_NULL/' sulog/event.c
+          
+          # 4. 屏蔽5.4不存在的SELinux函数（注释，不删除）
+          sed -i 's/ksu_selinux_hide_handle_post_fs_data/\/\/ &/' runtime/ksud.c
+          sed -i 's/ksu_selinux_hide_handle_second_stage/\/\/ &/' runtime/ksud.c
 
-          # 关闭 5.4 不支持的 SELinux 隐藏（核心防重启）
-          sed -i 's/ksu_selinux_hide_handle_post_fs_data();/\/\//' runtime/ksud.c
-          sed -i 's/ksu_selinux_hide_handle_second_stage();/\/\//' runtime/ksud.c
-
-          # 5.4 内核类型修复（正确、安全、不炸机）
-          sed -i 's/USER_ARG_NULL/(&)/' sulog/event.c
+      - name: 🚀 Build Process
+        uses: ./.github/workflows/build-process
 
 
 
