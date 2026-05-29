@@ -137,24 +137,23 @@ jobs:
           sed -i '/ksu_init_rc_hook();/d' fs/read_write.c
           sed -i '/ksu_handle_setresuid(/d' kernel/sys.c
 
-      # 新增：SukiSU-Ultra 5.4 内核编译错误修复
       - name: 🛠️ 终极修复 SukiSU-Ultra 5.4 编译错误
         run: |
-         cd "${GITHUB_WORKSPACE}/device_kernel"
+         cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
 
-         # ======== 第一步：重置 sulog/event.c 到原始状态（删掉我之前改错的内容）========
-         git checkout drivers/kernelsu/sulog/event.c
-         echo "✅ 重置 event.c 成功"
+         # 1. 修复错误的宏定义：删除那行残废的 #define *user_arg_null_ptr()
+         sed -i '/#define \*user_arg_null_ptr/d' sulog/event.c
 
-         cd drivers/kernelsu
+         # 2. 恢复原始的正确宏（如果被我之前改坏了）
+         sed -i '376,378d' sulog/event.c  # 删除坏行
+         sed -i '377i #define USER_ARG_NULL user_arg_null_ptr()' sulog/event.c
 
-         #======== 第二步：正确修复所有错误 ========
-         echo "✅ Fix 1: 移除无效SELinux隐藏函数"
+         # 3. 移除5.4不存在的SELinux函数调用
          sed -i 's/ksu_selinux_hide_handle_post_fs_data();//g' runtime/ksud.c
          sed -i 's/ksu_selinux_hide_handle_second_stage();//g' runtime/ksud.c
 
-         echo "✅ Fix 2: 5.4 内核正确修复 USER_ARG 类型不匹配"
-         sed -i 's/, USER_ARG_NULL/, *user_arg_null_ptr()/' sulog/event.c
+         # 4. 5.4内核专用：修复类型不匹配（只改调用，不改宏）
+         sed -i 's/USER_ARG_NULL/*USER_ARG_NULL/g' sulog/event.c
 
 
 
