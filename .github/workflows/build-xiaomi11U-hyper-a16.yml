@@ -130,6 +130,18 @@ jobs:
 
       - name: 🔧 Patch Hide Stuff
         uses: ./.github/workflows/patch-hide-stuff
+      - name: 🧽 Remove obsolete KSU hooks (fix ld.lld error)
+        run: |
+          cd "${GITHUB_WORKSPACE}/device_kernel"
+          
+          echo "🧹 Removing ksu_init_rc_hook from fs/read_write.c..."
+          sed -i '/ksu_init_rc_hook();/d' fs/read_write.c
+          
+          echo "🧹 Removing ksu_handle_setresuid from kernel/sys.c..."
+          sed -i '/ksu_handle_setresuid(/d' kernel/sys.c
+          
+          echo "✅ Cleanup finished! Linker errors fixed."
+
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
