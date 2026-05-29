@@ -130,12 +130,14 @@ jobs:
 
       - name: 🔧 Patch Hide Stuff
         uses: ./.github/workflows/patch-hide-stuff
-           # 之前的删除旧钩子步骤（保留）
-      - name: 🧽 Remove obsolete KSU hooks (fix ld.lld error)
+          
+      - name: 🧽 强制全局删除所有旧KSU无效函数
         run: |
           cd "${GITHUB_WORKSPACE}/device_kernel"
-          sed -i '/ksu_init_rc_hook();/d' fs/read_write.c
-          sed -i '/ksu_handle_setresuid(/d' kernel/sys.c
+          echo "🔥 强制清理旧钩子 ..."
+          grep -rl "ksu_init_rc_hook"    fs/         | xargs sed -i 's/.*ksu_init_rc_hook.*/ /g'
+          grep -rl "ksu_handle_setresuid" kernel/    | xargs sed -i 's/.*ksu_handle_setresuid.*/ /g'
+          echo "✅ 旧钩子已清空"
 
       - name: 🛠️ 最终绝对修复 SukiSU-Ultra 5.4
         run: |
