@@ -131,23 +131,26 @@ jobs:
       - name: 🔧 Patch Hide Stuff
         uses: ./.github/workflows/patch-hide-stuff
 
-      # 1. 强制删除旧KSU钩子（解决链接错误）
-      - name: 🧽 清理旧钩子
+      - name: 🧽 彻底清理 KSU 旧钩子（干净版）
         run: |
           cd "${GITHUB_WORKSPACE}/device_kernel"
-          sed -i 's/.*ksu_init_rc_hook.*/#/g' fs/read_write.c
-          sed -i 's/.*ksu_handle_setresuid.*/#/g' kernel/sys.c
+          # 删调用
+          sed -i '/ksu_init_rc_hook/d' fs/read_write.c
+          sed -i '/ksu_handle_setresuid/d' kernel/sys.c
+          # 删定义（防止残留）
+          find . -name "*.c" -o -name "*.h" | xargs sed -i '/ksu_init_rc_hook/d'
+          find . -name "*.c" -o -name "*.h" | xargs sed -i '/ksu_handle_setresuid/d'
 
-      # 2. 终极安全修复：直接注释掉报错行！不碰任何宏！
-      - name: 🛡️ 终极修复（绝不报错·不重启）
+      - name: 🛡️ 5.4 专用：彻底干掉 sulog/event.c 里坏宏
         run: |
           cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
-
-          # 直接注释掉整个报错的函数调用（最安全，不碰宏，不报错）
-          sed -i 's/.*USER_ARG_NULL.*/\/\/ disabled for 5.4/g' sulog/event.c
-
-          # 注释掉不存在的SELinux函数
-          sed -i 's/.*ksu_selinux_hide_handle.*/\/\/ /g' runtime/ksud.c
+          # 1. 删掉所有 #define * / #define ( 这种垃圾行
+          sed -i '/#define [*(]/d' sulog/event.c
+          # 2. 删掉 USER_ARG_NULL 所有定义，直接注释调用
+          sed -i '/USER_ARG_NULL/d' sulog/event.c
+          sed -i 's/.*ksu_sulog_capture.*IOCTL_GRANT_ROOT.*/\/\/ KSU_SULOG_DISABLED/' sulog/event.c
+          # 3. 删掉 5.4 不存在的 selinux 函数
+          sed -i '/ksu_selinux_hide/d' runtime/ksud.c
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
