@@ -141,13 +141,12 @@ jobs:
       - name: 🛠️ Fix SukiSU-Ultra 5.4 kernel build errors
         run: |
           cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
-
-          echo "✅ Fix 1/3: Remove undefined selinux hide functions"
+          echo "✅ Fix 1/3: 删除SELinux隐藏函数(5.4无需)"
           sed -i 's/ksu_selinux_hide_handle_post_fs_data();//g' runtime/ksud.c
           sed -i 's/ksu_selinux_hide_handle_second_stage();//g' runtime/ksud.c
 
-          echo "✅ Fix 2/3: Fix USER_ARG_NULL type mismatch (event.c)"
-          sed -i 's/USER_ARG_NULL/*USER_ARG_NULL/g' sulog/event.c
+          echo "✅ Fix 2/3: 修复 user_arg_ptr 类型错误(5.4专用)"
+          sed -i 's/USER_ARG_NULL/*user_arg_null_ptr()/g' sulog/event.c
 
 
       - name: 🚀 Build Process
