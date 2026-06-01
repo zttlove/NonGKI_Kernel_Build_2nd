@@ -5,7 +5,6 @@ on:
   workflow_dispatch:
 
 env:
-  # Device env
   TZ: Asia/Shanghai
   DEVICE_NAME : "xiaomi_11U"
   DEVICE_CODENAME : "star"
@@ -42,15 +41,11 @@ env:
   AK3_BRANCH : "master"
 
   BOOT_SOURCE : ""
-
   NEED_DTBO : false
   NEED_SAFE_DTBO : false
-
   ROM_TEXT : "hyperos_a16"
 
-  # Other env
   PYTHON_VERSION: "3"
-
   PACK_METHOD: "Anykernel3"
   PACK_KMODULES: "false"
 
@@ -59,7 +54,6 @@ env:
 
   PATCHES_SOURCE: ""
   PATCHES_BRANCH: ""
-
   SUSFS_FOLDER_FIXED: ""
   SUSFS_PATCH_FIXED: ""
 
@@ -96,17 +90,13 @@ jobs:
       CCACHE_HARDLINK: "true"
 
     steps:
-      - name: ⏰ Checkout repository
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
 
-      - name: ⌛️ Compilation environment preparation
-        uses: ./.github/workflows/build-env
+      - uses: ./.github/workflows/build-env
+      - uses: ./.github/workflows/build-ready
 
-      - name: ⚙️ Get necessary tools
-        uses: ./.github/workflows/build-ready
-
-      # 🔥 强制还原被补丁改坏的所有内核文件
-      - name: 🔥 还原内核源码（修复所有语法错误）
+      # 🔥 彻底还原内核 + 清理所有坏文件
+      - name: 🔥 还原纯净内核源码
         shell: bash
         run: |
           cd $GITHUB_WORKSPACE/device_kernel
@@ -115,24 +105,14 @@ jobs:
           rm -rf drivers/kernelsu KernelSU NonGKI_Kernel_Patches
           make clean mrproper
 
+      # 🔥 只调用纯净无补丁Action
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
 
-      - name: 🔗 Patch for no-kprobe
-        uses: ./.github/workflows/patch-no-kprobe
-
-      - name: 🪛 Extra Kernel Options
-        run: |
-          cd $GITHUB_WORKSPACE/device_kernel
-
-      - name: 🧰 Patch Kernel of Re:Kernel
-        uses: ./.github/workflows/patch-rekernel
-
-      - name: 🔒 Patch Kernel of Baseband Guard
-        uses: ./.github/workflows/patch-baseband-guard
-
-      - name: 🔧 Patch Hide Stuff
-        uses: ./.github/workflows/patch-hide-stuff
+      - uses: ./.github/workflows/patch-no-kprobe
+      - uses: ./.github/workflows/patch-rekernel
+      - uses: ./.github/workflows/patch-baseband-guard
+      - uses: ./.github/workflows/patch-hide-stuff
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
@@ -143,54 +123,30 @@ jobs:
         run: |
           set -euo pipefail
           TIME=$(date +"%Y%m%d%H%M%S")
-          KERNEL_DIR="${GITHUB_WORKSPACE}/device_kernel"
-          TMP_DIR="${KERNEL_DIR}/tmp"
-          IMG_PATH="${KERNEL_DIR}/out/arch/arm64/boot/Image"
-          cd "${KERNEL_DIR}"
+          KERNEL_DIR="$GITHUB_WORKSPACE/device_kernel"
+          TMP_DIR="$KERNEL_DIR/tmp"
+          IMG_PATH="$KERNEL_DIR/out/arch/arm64/boot/Image"
+          cd "$KERNEL_DIR"
 
-          if [[ ! -f "${IMG_PATH}" ]]; then
-            echo "::error::❌ 编译失败，未找到内核文件"
-            exit 1
-          fi
+          rm -rf "$TMP_DIR" && mkdir -p "$TMP_DIR"
+          cp -v "$IMG_PATH" "$TMP_DIR/Image"
+          cp -rp Anykernel3/* "$TMP_DIR"/
+          
+          cd "$TMP_DIR"
+          7za a -tzip -mx9 package.zip ./* >/dev/null
+          cd ..
+          mv "$TMP_DIR/package.zip" "${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-$TIME-Anykernel3.zip"
+          echo "PACK_NAME=${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-$TIME-Anykernel3.zip" >> $GITHUB_ENV
+          rm -rf "$TMP_DIR"
 
-          rm -rf "${TMP_DIR}"
-          mkdir -p "${TMP_DIR}"
-
-          AK3_DIR="${KERNEL_DIR}/Anykernel3"
-          if [[ -d "${AK3_DIR}" && -f "${AK3_DIR}/anykernel.sh" ]]; then
-            sed -i \
-              -e 's/^name=.*/name="Star-HyperA16-NonGKI-Kernel"/' \
-              -e 's/^do\.devicecheck=.*/do.devicecheck=0/' \
-              -e 's/^IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=1/' \
-              -e 's/^BLOCK=.*/BLOCK=boot/' \
-              "${AK3_DIR}/anykernel.sh"
-          fi
-
-          cp -v "${IMG_PATH}" "${TMP_DIR}/Image"
-          [[ -d "${AK3_DIR}" ]] && cp -rp "${AK3_DIR}"/* "${TMP_DIR}/"
-
-          cd "${TMP_DIR}"
-          7za a -tzip -mx9 -mmt=on package.zip ./* >/dev/null
-          cd "${GITHUB_WORKSPACE}"
-
-          FINAL_ZIP="${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-${TIME}-Anykernel3.zip"
-          cp -fp "${TMP_DIR}/package.zip" "${FINAL_ZIP}"
-          echo "PACK_NAME=${FINAL_ZIP}" >> "${GITHUB_ENV}"
-
-          rm -rf "${TMP_DIR}"
-
-      - name: 🚀 Auto Upload To Github Release
-        if: env.PACK_METHOD == 'Anykernel3'
+      - name: 🚀 Upload
         uses: softprops/gh-release@v1
         with:
           tag_name: Star-HyperA16-Kernel-${{ github.run_number }}
-          name: Xiaomi 11 Ultra Star HyperOS A16 Kernel
-          body: |
-            Xiaomi 11 Ultra HyperOS A16 NonGKI 内核
-            自带 KernelSU + SUSFS
+          name: Xiaomi 11 Ultra HyperOS A16
+          body: "KernelSU + SUSFS | 5.4 NonGKI"
           files: ${{ env.PACK_NAME }}
           draft: false
-          prerelease: false
           overwrite: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
