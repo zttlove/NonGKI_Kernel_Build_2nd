@@ -95,15 +95,15 @@ jobs:
       - uses: ./.github/workflows/build-env
       - uses: ./.github/workflows/build-ready
 
-      # 🔥 终极清理：彻底删除坏目录 + 禁止make clean报错
-      - name: 🔥 终极清理修复
+      # 🔥 绝杀修复：强制还原所有文件！包括 Kconfig！
+      - name: 🔥 强制还原纯净内核
         shell: bash
         run: |
           cd $GITHUB_WORKSPACE/device_kernel
-          rm -rf drivers/kernelsu KernelSU NonGKI_Kernel_Patches
-          rm -f .config .config.old
-          git checkout --force .
+          git reset --hard HEAD
           git clean -fdx
+          rm -rf drivers/kernelsu
+          rm -f .config .config.old
 
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
@@ -123,20 +123,14 @@ jobs:
           set -euo pipefail
           TIME=$(date +"%Y%m%d%H%M%S")
           KERNEL_DIR="$GITHUB_WORKSPACE/device_kernel"
-          TMP_DIR="$KERNEL_DIR/tmp"
           IMG_PATH="$KERNEL_DIR/out/arch/arm64/boot/Image"
-          cd "$KERNEL_DIR"
-
-          rm -rf "$TMP_DIR" && mkdir -p "$TMP_DIR"
-          cp -v "$IMG_PATH" "$TMP_DIR/Image"
-          cp -rp Anykernel3/* "$TMP_DIR"/
+          FINAL_ZIP="${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-$TIME-Anykernel3.zip"
           
-          cd "$TMP_DIR"
-          7za a -tzip -mx9 package.zip ./* >/dev/null
-          cd ..
-          mv "$TMP_DIR/package.zip" "${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-$TIME-Anykernel3.zip"
-          echo "PACK_NAME=${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-$TIME-Anykernel3.zip" >> $GITHUB_ENV
-          rm -rf "$TMP_DIR"
+          cd "$KERNEL_DIR"
+          cp -v "$IMG_PATH" Anykernel3/Image
+          cd Anykernel3
+          7za a -tzip -mx9 "../$FINAL_ZIP" ./* >/dev/null
+          echo "PACK_NAME=$FINAL_ZIP" >> $GITHUB_ENV
 
       - name: 🚀 Upload
         uses: softprops/action-gh-release@v2
