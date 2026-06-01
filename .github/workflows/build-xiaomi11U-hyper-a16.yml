@@ -95,14 +95,15 @@ jobs:
       - uses: ./.github/workflows/build-env
       - uses: ./.github/workflows/build-ready
 
-      - name: 🔥 还原纯净内核源码
+      # 🔥 终极清理：彻底删除坏目录 + 禁止make clean报错
+      - name: 🔥 终极清理修复
         shell: bash
         run: |
           cd $GITHUB_WORKSPACE/device_kernel
+          rm -rf drivers/kernelsu KernelSU NonGKI_Kernel_Patches
+          rm -f .config .config.old
           git checkout --force .
           git clean -fdx
-          rm -rf drivers/kernelsu KernelSU NonGKI_Kernel_Patches
-          make clean mrproper
 
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
