@@ -1,30 +1,59 @@
-name: 'Patch SuSFS for Kernel.'
+name: 'SukiSU Ultra Builtin INTEGRATION (NO PATCHES)'
+
 runs:
   using: 'composite'
   steps:
-    - name: Integrate SukiSU Ultra Builtin (Official)
-      shell: bash
-      run: |
-        cd $GITHUB_WORKSPACE/device_kernel
-        rm -rf KernelSU/
-        curl -LSs "https://raw.githubusercontent.com/zttlove/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
+      - name: Clean damaged kernel files
+        shell: bash
+        run: |
+          cd $GITHUB_WORKSPACE/device_kernel
+          echo "====================================="
+          echo " Cleaning up broken patches & files  "
+          echo "====================================="
+          rm -rf KernelSU/ NonGKI_Kernel_Patches/
+          find . -name "*.rej" -delete
+          find . -name "*.orig" -delete
+          find . -name "*.patch" -delete
+          git checkout kernel/sys.c fs/open.c include/linux/ >/dev/null 2>&1 || true
+          make clean mrproper >/dev/null 2>&1 || true
 
-    - name: Apply Defconfig (5.4 + Builtin + SUSFS)
-      shell: bash
-      run: |
-        cd $GITHUB_WORKSPACE/device_kernel
-        cfg=./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-        
-        # 清空原有KSU配置避免重复
-        sed -i '/CONFIG_KSU/d' $cfg
-        sed -i '/CONFIG_MODULES/d' $cfg
-        sed -i '/CONFIG_KALLSYMS/d' $cfg
-        
-        # 写入正确配置
-        echo "CONFIG_KSU=y" >> $cfg
-        echo "CONFIG_KSU_BUILTIN=y" >> $cfg
-        echo "CONFIG_KSU_SUSFS=y" >> $cfg
-        echo "CONFIG_KSU_KPM=y" >> $cfg
-        echo "CONFIG_KALLSYMS=y" >> $cfg
-        echo "CONFIG_KALLSYMS_ALL=y" >> $cfg
-        echo "CONFIG_MODULES=n" >> $cfg
+      - name: Integrate OFFICIAL SukiSU-Ultra (builtin)
+        shell: bash
+        run: |
+          cd $GITHUB_WORKSPACE/device_kernel
+          echo "====================================="
+          echo " Integrating SukiSU Ultra Builtin    "
+          echo "====================================="
+          curl -LSs "https://raw.githubusercontent.com/zttlove/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
+
+      - name: Apply DEFCONFIG (5.4 + Builtin + SUSFS)
+        shell: bash
+        run: |
+          cd $GITHUB_WORKSPACE/device_kernel
+          cfg=./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
+
+          echo "====================================="
+          echo " Writing correct defconfig for 5.4   "
+          echo "====================================="
+
+          # 清除旧配置
+          sed -i '/CONFIG_KSU/d' $cfg
+          sed -i '/CONFIG_MODULES/d' $cfg
+          sed -i '/CONFIG_KALLSYMS/d' $cfg
+
+          # 写入 5.4 builtin 必须配置
+          echo "CONFIG_KSU=y" >> $cfg
+          echo "CONFIG_KSU_BUILTIN=y" >> $cfg
+          echo "CONFIG_KSU_SUSFS=y" >> $cfg
+          echo "CONFIG_KSU_KPM=y" >> $cfg
+          echo "CONFIG_KALLSYMS=y" >> $cfg
+          echo "CONFIG_KALLSYMS_ALL=y" >> $cfg
+          echo "CONFIG_MODULES=n" >> $cfg
+
+      - name: Force skip all patches
+        shell: bash
+        run: |
+          echo "SUSFS_SKIP=true" >> $GITHUB_ENV
+          echo "====================================="
+          echo " ALL PATCHES SKIPPED (SAFE FOR 5.4)   "
+          echo "====================================="
