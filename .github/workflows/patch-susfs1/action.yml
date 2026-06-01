@@ -3,39 +3,37 @@ name: 'SukiSU Ultra Builtin (NO PATCHES, 5.4 ONLY)'
 runs:
   using: 'composite'
   steps:
-    - name: Clean & FULL RESTORE kernel
+    - name: Clean & Restore
       shell: bash
       run: |
         cd $GITHUB_WORKSPACE/device_kernel
-        
-        # 强制还原所有被补丁改坏的内核文件
         git checkout --force .
         git clean -fdx
-        
-        # 删除所有垃圾文件
-        rm -rf KernelSU/ drivers/kernelsu/ NonGKI_Kernel_Patches/
-        find . -name "*.rej" -delete
-        find . -name "*.orig" -delete
-        find . -name "*.patch" -delete
+        rm -rf KernelSU drivers/kernelsu NonGKI_Kernel_Patches
+        make clean mrproper
 
-    - name: Integrate OFFICIAL SukiSU-Ultra builtin
+    - name: Integrate SukiSU Ultra Builtin
       shell: bash
       run: |
         cd $GITHUB_WORKSPACE/device_kernel
         curl -LSs "https://raw.githubusercontent.com/zttlove/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
 
-    - name: Write correct defconfig
+    # 👇 这一步是关键：自动删除那行报错的 #include <linux/susfs_def.h>
+    - name: FIX fs/open.c error permanently
+      shell: bash
+      run: |
+        cd $GITHUB_WORKSPACE/device_kernel
+        sed -i '/#include <linux\/susfs_def.h>/d' fs/open.c
+        sed -i '/susfs_def.h/d' fs/open.c
+
+    - name: Set Defconfig
       shell: bash
       run: |
         cd $GITHUB_WORKSPACE/device_kernel
         cfg=./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-        
-        # 清空旧配置
         sed -i '/CONFIG_KSU/d' $cfg
         sed -i '/CONFIG_MODULES/d' $cfg
         sed -i '/CONFIG_KALLSYMS/d' $cfg
-        
-        # 5.4 builtin 必须配置
         echo "CONFIG_KSU=y" >> $cfg
         echo "CONFIG_KSU_BUILTIN=y" >> $cfg
         echo "CONFIG_KSU_SUSFS=y" >> $cfg
@@ -44,7 +42,7 @@ runs:
         echo "CONFIG_KALLSYMS_ALL=y" >> $cfg
         echo "CONFIG_MODULES=n" >> $cfg
 
-    - name: FORCE SKIP ALL PATCHES
+    - name: SKIP ALL PATCHES
       shell: bash
       run: |
         echo "SUSFS_SKIP=true" >> $GITHUB_ENV
