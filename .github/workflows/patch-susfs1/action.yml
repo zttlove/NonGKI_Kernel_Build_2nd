@@ -1,26 +1,27 @@
 name: 'Patch SuSFS for Kernel.'
-
 runs:
   using: 'composite'
   steps:
-      - name: Set KSU and SUSFS for DEFCONFIG
-        if: env.SUSFS_ENABLE == 'true'
+      - name: Integrate SukiSU Ultra Builtin
         shell: bash
         run: |
           cd $GITHUB_WORKSPACE/device_kernel
+          rm -rf KernelSU/
+          curl -LSs "https://raw.githubusercontent.com/zttlove/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
+          
+          # 复制 SUSFS 头文件到内核 (修复 susfs_def.h 错误)
+          cp -af KernelSU/SUSFS/linux/* include/linux/
+          cp -af KernelSU/SUSFS/fs/* fs/
 
-          echo "CONFIG_KSU=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_KSU_BUILTIN=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_KSU_SUSFS=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_KSU_KPM=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_KALLSYMS=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_KALLSYMS_ALL=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_MODULES=n" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-
-      - name: Clean Up Unused Patch Steps
-        if: env.SUSFS_ENABLE == 'true'
+      - name: Set DEFCONFIG for 5.4 Builtin + SUSFS
         shell: bash
         run: |
-          echo "SUSFS_SKIP=true" >> $GITHUB_ENV
-          echo "✅ 使用 SukiSU-Ultra builtin 官方原生 SUSFS，跳过所有第三方补丁"
-          echo "✅ 5.4 非GKI 无需额外补丁，编译即生效"
+          cd $GITHUB_WORKSPACE/device_kernel
+          cfg=./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
+          echo "CONFIG_KSU=y" >> $cfg
+          echo "CONFIG_KSU_BUILTIN=y" >> $cfg
+          echo "CONFIG_KSU_SUSFS=y" >> $cfg
+          echo "CONFIG_KSU_KPM=y" >> $cfg
+          echo "CONFIG_KALLSYMS=y" >> $cfg
+          echo "CONFIG_KALLSYMS_ALL=y" >> $cfg
+          echo "CONFIG_MODULES=n" >> $cfg
