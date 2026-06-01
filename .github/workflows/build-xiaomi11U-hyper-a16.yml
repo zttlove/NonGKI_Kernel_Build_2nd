@@ -95,7 +95,6 @@ jobs:
       - uses: ./.github/workflows/build-env
       - uses: ./.github/workflows/build-ready
 
-      # 🔥 彻底还原内核 + 清理所有坏文件
       - name: 🔥 还原纯净内核源码
         shell: bash
         run: |
@@ -105,7 +104,6 @@ jobs:
           rm -rf drivers/kernelsu KernelSU NonGKI_Kernel_Patches
           make clean mrproper
 
-      # 🔥 只调用纯净无补丁Action
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
 
@@ -140,7 +138,7 @@ jobs:
           rm -rf "$TMP_DIR"
 
       - name: 🚀 Upload
-        uses: softprops/gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: Star-HyperA16-Kernel-${{ github.run_number }}
           name: Xiaomi 11 Ultra HyperOS A16
