@@ -111,7 +111,7 @@ jobs:
         uses: ./.github/workflows/build-ready
 
       - name: 🪝 Patch Kernel of SUSFS
-        uses: ./.github/workflows/patch-susfs
+        uses: ./.github/workflows/patch-susfs1
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
