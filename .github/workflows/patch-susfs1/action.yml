@@ -2,26 +2,29 @@ name: 'Patch SuSFS for Kernel.'
 runs:
   using: 'composite'
   steps:
-      - name: Integrate SukiSU Ultra Builtin
-        shell: bash
-        run: |
-          cd $GITHUB_WORKSPACE/device_kernel
-          rm -rf KernelSU/
-          curl -LSs "https://raw.githubusercontent.com/zttlove/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
-          
-          # 复制 SUSFS 头文件到内核 (修复 susfs_def.h 错误)
-          cp -af KernelSU/SUSFS/linux/* include/linux/
-          cp -af KernelSU/SUSFS/fs/* fs/
+    - name: Integrate SukiSU Ultra Builtin (Official)
+      shell: bash
+      run: |
+        cd $GITHUB_WORKSPACE/device_kernel
+        rm -rf KernelSU/
+        curl -LSs "https://raw.githubusercontent.com/zttlove/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
 
-      - name: Set DEFCONFIG for 5.4 Builtin + SUSFS
-        shell: bash
-        run: |
-          cd $GITHUB_WORKSPACE/device_kernel
-          cfg=./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_KSU=y" >> $cfg
-          echo "CONFIG_KSU_BUILTIN=y" >> $cfg
-          echo "CONFIG_KSU_SUSFS=y" >> $cfg
-          echo "CONFIG_KSU_KPM=y" >> $cfg
-          echo "CONFIG_KALLSYMS=y" >> $cfg
-          echo "CONFIG_KALLSYMS_ALL=y" >> $cfg
-          echo "CONFIG_MODULES=n" >> $cfg
+    - name: Apply Defconfig (5.4 + Builtin + SUSFS)
+      shell: bash
+      run: |
+        cd $GITHUB_WORKSPACE/device_kernel
+        cfg=./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
+        
+        # 清空原有KSU配置避免重复
+        sed -i '/CONFIG_KSU/d' $cfg
+        sed -i '/CONFIG_MODULES/d' $cfg
+        sed -i '/CONFIG_KALLSYMS/d' $cfg
+        
+        # 写入正确配置
+        echo "CONFIG_KSU=y" >> $cfg
+        echo "CONFIG_KSU_BUILTIN=y" >> $cfg
+        echo "CONFIG_KSU_SUSFS=y" >> $cfg
+        echo "CONFIG_KSU_KPM=y" >> $cfg
+        echo "CONFIG_KALLSYMS=y" >> $cfg
+        echo "CONFIG_KALLSYMS_ALL=y" >> $cfg
+        echo "CONFIG_MODULES=n" >> $cfg
