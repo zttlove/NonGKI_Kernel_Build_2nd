@@ -75,15 +75,10 @@ jobs:
 
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
-
-      - uses: ./.github/workflows/patch-no-kprobe
       - uses: ./.github/workflows/patch-rekernel
       - uses: ./.github/workflows/patch-baseband-guard
-      - uses: ./.github/workflows/patch-hide-stuff
-
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
-
       - name: 📦 Package Anykernel3
         shell: bash
         run: |
