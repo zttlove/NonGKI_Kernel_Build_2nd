@@ -38,6 +38,7 @@ env:
   AK3_BRANCH : "master"
 
   ROM_TEXT : "hyperos_a16"
+  PYTHON_VERSION: "3"
   PACK_METHOD: "Anykernel3"
   PACK_KMODULES: "false"
 
