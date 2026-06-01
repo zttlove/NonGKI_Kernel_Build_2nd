@@ -34,7 +34,7 @@ env:
   KERNELSU_BRANCH : ""
 
   KERNELSU_AUTO_GET : "true"
-  KERNELSU_AUTO_FORK : "next" # xxksu, rsuntk , next, resukisu and sukisu
+  KERNELSU_AUTO_FORK : "next"
    
   SUSFS_ENABLE : true
   SUSFS_FIXED : false
@@ -49,52 +49,47 @@ env:
   ROM_TEXT : "hyperos_a16"
 
   # Other env
-  PYTHON_VERSION: "3" # Only 2(Ubuntu 22.04 and Ubuntu 20.04) or 3(Any OS Versions).
+  PYTHON_VERSION: "3"
 
-  PACK_METHOD: "Anykernel3" # Anykernel3 need SOURCE and BRANCH, MKBOOTIMG needn't it.
-  PACK_KMODULES: "false" # if u want pack kernel modules (.ko) into Anykernel3.
+  PACK_METHOD: "Anykernel3"
+  PACK_KMODULES: "false"
 
-  KERNELSU_METHOD: "shell" # shell, manual and only.
-  KERNELSU_SUS_PATCH: "false" # if u need manual susfs patch to kernelsu.
+  KERNELSU_METHOD: "shell"
+  KERNELSU_SUS_PATCH: "false"
 
-  PATCHES_SOURCE: "JackA1ltman/NonGKI_Kernel_Patches" # [your_name]/[your_patch] -> gooder123/NonGKI_Patcher
-  PATCHES_BRANCH: "mi_kernel" # [your_branch] -> main
+  PATCHES_SOURCE: ""
+  PATCHES_BRANCH: ""
 
-  SUSFS_FOLDER_FIXED: "" # Fill in your patch prefix directory here. Leave it blank if there isn't one. -> your_folder
-  SUSFS_PATCH_FIXED: "" # Fill in your patches here. If there are multiple patches, please separate them with a comma. Leave it blank if there isn't one. -> patch1,patch2
+  SUSFS_FOLDER_FIXED: ""
+  SUSFS_PATCH_FIXED: ""
 
-  REKERNEL_ENABLE: "false" # if u need Re:Kernel.
+  REKERNEL_ENABLE: "false"
+  HOOK_METHOD: "syscall"
+  KERNEL_PATCH: "false"
 
-  HOOK_METHOD: "syscall" # Manual hook method ->  syscall.
+  KPM_ENABLE: "false"
+  KPM_INLINE: "false"
+  KPM_KPATCH_NEXT: "false"
+  KPM_PATCH_SOURCE: ""
 
-  KERNEL_PATCH: "false" # If your kernel version is <= 4.9, you have the option of enabling the patch to patch the kernel_write and kernel_read functions.
+  BASEBAND_GUARD_ENABLE: "false"
+  BASEBAND_GUARD_BOOT: "false"
 
-  KPM_ENABLE: "false" # Anyone devices.
-  KPM_INLINE: "false" # Only use it for SukiSU-Ultra.
-  KPM_KPATCH_NEXT: "false" # If u want hook KPatch-Next in build step.
-  KPM_PATCH_SOURCE: "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU_patch/refs/heads/main/kpm/patch_linux" # If u want to use KPM Inline,so you need set patch exec file source -> raw.githubusercontent.com/Test/Test/patch .
+  HIDE_STUFF: "false"
+  GENERATE_DTB: "false"
+  GENERATE_CHIP: "qcom"
 
-  BASEBAND_GUARD_ENABLE: "false" #if u want prevent unauthorized writes to critical partitions/device nodes.
-  BASEBAND_GUARD_BOOT: "false" #if u want to protect boot partition.
+  BUILD_DEBUGGER: "false"
+  SKIP_PATCH: "true"
 
-  HIDE_STUFF: "false" # hide some of the features
-
-  GENERATE_DTB: "false" # if u kernel need DTB , but cannot auto generate it. (Only Anykernel3).
-  GENERATE_CHIP: "qcom" # only supported for qcom and mediatek.
-
-  BUILD_DEBUGGER: "false" # Output build errors.
-  SKIP_PATCH: "true" # Ignore errors found in Patch Debugger.
-
-  BUILD_OTHER_CONFIG: "false" # Merge config files.
-  MERGE_CONFIG_FILES: "vendor/venus_QGKI.config,vendor/xiaomi_QGKI.config"
-
-  FREE_MORE_SPACE: "false" # if u want get more space, enabled it.
+  BUILD_OTHER_CONFIG: "false"
+  MERGE_CONFIG_FILES: ""
+  FREE_MORE_SPACE: "false"
 
 jobs:
   build-kernel:
     name: Xiaomi11u A2
-    runs-on: ubuntu-latest # u can changed to ubuntu 22.04, and need container set ubuntu-latest
-    # container: archlinux/archlinux:latest # if u need use arch linux -> archlinux/archlinux:latest or ubuntu 20.04 -> ubuntu:focal
+    runs-on: ubuntu-latest
     env:
       CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
       CCACHE_NOHASHDIR: "true"
@@ -102,27 +97,33 @@ jobs:
 
     steps:
       - name: ⏰ Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@6
 
       - name: ⌛️ Compilation environment preparation
         uses: ./.github/workflows/build-env
 
-      - name: ⚙️ Get neccssary tools
+      - name: ⚙️ Get necessary tools
         uses: ./.github/workflows/build-ready
-      
 
+      # 🔥 强制还原被补丁改坏的所有内核文件
+      - name: 🔥 还原内核源码（修复所有语法错误）
+        shell: bash
+        run: |
+          cd $GITHUB_WORKSPACE/device_kernel
+          git checkout --force .
+          git clean -fdx
+          rm -rf drivers/kernelsu KernelSU NonGKI_Kernel_Patches
+          make clean mrproper
 
       - name: 🪝 Patch Kernel of SUSFS
-        uses: ./.github/workflows/patch-susfs
+        uses: ./.github/workflows/patch-susfs1
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
 
       - name: 🪛 Extra Kernel Options
         run: |
-          # Only ${{ env.DEVICE_NAME }} use it.
           cd $GITHUB_WORKSPACE/device_kernel
-          # Nothing happen.
 
       - name: 🧰 Patch Kernel of Re:Kernel
         uses: ./.github/workflows/patch-rekernel
@@ -133,60 +134,28 @@ jobs:
       - name: 🔧 Patch Hide Stuff
         uses: ./.github/workflows/patch-hide-stuff
 
-      - name: 🧽 彻底清理 KSU 旧钩子（干净版）
-        run: |
-          cd "${GITHUB_WORKSPACE}/device_kernel"
-          # 删调用
-          sed -i '/ksu_init_rc_hook/d' fs/read_write.c
-          sed -i '/ksu_handle_setresuid/d' kernel/sys.c
-          # 删定义（防止残留）
-          find . -name "*.c" -o -name "*.h" | xargs sed -i '/ksu_init_rc_hook/d'
-          find . -name "*.c" -o -name "*.h" | xargs sed -i '/ksu_handle_setresuid/d'
-
-      - name: 🛡️ 5.4 专用：彻底干掉 sulog/event.c 里坏宏
-        run: |
-          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
-          # 1. 删掉所有 #define * / #define ( 这种垃圾行
-          sed -i '/#define [*(]/d' sulog/event.c
-          # 2. 删掉 USER_ARG_NULL 所有定义，直接注释调用
-          sed -i '/USER_ARG_NULL/d' sulog/event.c
-          sed -i 's/.*ksu_sulog_capture.*IOCTL_GRANT_ROOT.*/\/\/ KSU_SULOG_DISABLED/' sulog/event.c
-          # 3. 删掉 5.4 不存在的 selinux 函数
-          sed -i '/ksu_selinux_hide/d' runtime/ksud.c
-
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
 
-       
-          # 打包Anykernel3 仅Image内核专用
       - name: 📦 Package Anykernel3 Flash Zip
         if: env.PACK_METHOD == 'Anykernel3'
         shell: bash
         run: |
           set -euo pipefail
-          echo "============================================="
-          echo "📦 开始打包 Star Hyper A16 内核卡刷包"
-          echo "============================================="
-
           TIME=$(date +"%Y%m%d%H%M%S")
           KERNEL_DIR="${GITHUB_WORKSPACE}/device_kernel"
           TMP_DIR="${KERNEL_DIR}/tmp"
           IMG_PATH="${KERNEL_DIR}/out/arch/arm64/boot/Image"
           cd "${KERNEL_DIR}"
 
-          # 严格校验内核文件存在
           if [[ ! -f "${IMG_PATH}" ]]; then
-            echo "::error::❌ 编译失败，未找到 out/arch/arm64/boot/Image 内核文件"
+            echo "::error::❌ 编译失败，未找到内核文件"
             exit 1
           fi
-          IMG_SIZE=$(du -h "${IMG_PATH}" | awk '{print $1}')
-          echo "✅ 检测到内核镜像 Image | 大小: ${IMG_SIZE}"
 
-          # 清理重建临时目录
           rm -rf "${TMP_DIR}"
           mkdir -p "${TMP_DIR}"
 
-          # 自动修改Anykernel3机型适配参数
           AK3_DIR="${KERNEL_DIR}/Anykernel3"
           if [[ -d "${AK3_DIR}" && -f "${AK3_DIR}/anykernel.sh" ]]; then
             sed -i \
@@ -195,61 +164,33 @@ jobs:
               -e 's/^IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=1/' \
               -e 's/^BLOCK=.*/BLOCK=boot/' \
               "${AK3_DIR}/anykernel.sh"
-              curl -L https://raw.githubusercontent.com/zttlove/NonGKI_Kernel_Build_2nd/mainline/Patches/anykernel.sh -o Anykernel3/anykernel.sh
-              chmod +x Anykernel3/anykernel.sh
           fi
 
-          # 复制内核主镜像
           cp -v "${IMG_PATH}" "${TMP_DIR}/Image"
-
-          # 按需打包内核模块
-          if [[ "${{ env.PACK_KMODULES }}" == "true" ]]; then
-            MOD_DIR="${TMP_DIR}/modules/vendor/lib/modules"
-            mkdir -p "${MOD_DIR}"
-            find . -name "*.ko" -type f -print0 | xargs -0 cp -t "${MOD_DIR}/" 2>/dev/null || true
-            module_count=$(find "${MOD_DIR}" -name "*.ko" | wc -l)
-            echo "📦 打包内核模块: ${module_count} 个"
-            [[ ${module_count} -eq 0 ]] && rm -rf "${TMP_DIR}/modules"
-          else
-            echo "ℹ️ 已关闭模块打包，跳过ko文件"
-          fi
-
-          # 合并Anykernel3刷机脚本全部文件
           [[ -d "${AK3_DIR}" ]] && cp -rp "${AK3_DIR}"/* "${TMP_DIR}/"
 
-          # 最高压缩率打包ZIP
           cd "${TMP_DIR}"
           7za a -tzip -mx9 -mmt=on package.zip ./* >/dev/null
           cd "${GITHUB_WORKSPACE}"
 
-          # 生成唯一不重复文件名
           FINAL_ZIP="${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-${TIME}-Anykernel3.zip"
           cp -fp "${TMP_DIR}/package.zip" "${FINAL_ZIP}"
           echo "PACK_NAME=${FINAL_ZIP}" >> "${GITHUB_ENV}"
-          echo "✅ 刷机包打包完成: ${FINAL_ZIP}"
 
-          # 彻底清理临时垃圾文件
           rm -rf "${TMP_DIR}"
 
-      # 自动发布到GitHub Releases页面（动态标签永不重复报错）
       - name: 🚀 Auto Upload To Github Release
         if: env.PACK_METHOD == 'Anykernel3'
-        uses: softprops/action-gh-release@v3
+        uses: softprops/gh-release@v1
         with:
           tag_name: Star-HyperA16-Kernel-${{ github.run_number }}
-          name: Xiaomi 11 Ultra Star HyperOS A16 NonGKI Kernel #构建号#${{ github.run_number }}
+          name: Xiaomi 11 Ultra Star HyperOS A16 Kernel
           body: |
-            ## Xiaomi 11 Ultra Star HyperOS A16 内核刷机包
-            - 适配 HyperOS A16 全版本
-            - rsuntk_kernelsu Root 完整适配
-            - NonGKI 通用免解boot补丁
-            - Osm0sis Anykernel3 官方卡刷格式
-            - Clang 20 最新编译
+            Xiaomi 11 Ultra HyperOS A16 NonGKI 内核
+            自带 KernelSU + SUSFS
           files: ${{ env.PACK_NAME }}
           draft: false
           prerelease: false
-          overwrite_files: true
-          make_latest: true
+          overwrite: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
