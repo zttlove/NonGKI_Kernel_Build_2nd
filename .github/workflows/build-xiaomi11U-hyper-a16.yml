@@ -109,6 +109,13 @@ jobs:
 
       - name: ⚙️ Get neccssary tools
         uses: ./.github/workflows/build-ready
+      - name: 🔥 强制还原被补丁改烂的内核文件（永久修复）
+        shell: bash
+        run: |
+          cd $GITHUB_WORKSPACE/device_kernel
+          git checkout --force kernel/sys.c fs/open.c
+          git clean -fdx
+
 
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs
