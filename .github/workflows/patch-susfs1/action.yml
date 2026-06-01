@@ -1,59 +1,42 @@
-name: 'SukiSU Ultra Builtin INTEGRATION (NO PATCHES)'
+name: 'SukiSU Ultra Builtin (NO PATCHES, 5.4 ONLY)'
 
 runs:
   using: 'composite'
   steps:
-      - name: Clean damaged kernel files
-        shell: bash
-        run: |
-          cd $GITHUB_WORKSPACE/device_kernel
-          echo "====================================="
-          echo " Cleaning up broken patches & files  "
-          echo "====================================="
-          rm -rf KernelSU/ NonGKI_Kernel_Patches/
-          find . -name "*.rej" -delete
-          find . -name "*.orig" -delete
-          find . -name "*.patch" -delete
-          git checkout kernel/sys.c fs/open.c include/linux/ >/dev/null 2>&1 || true
-          make clean mrproper >/dev/null 2>&1 || true
+    - name: Clean & Restore Kernel Files
+      shell: bash
+      run: |
+        cd $GITHUB_WORKSPACE/device_kernel
+        git checkout fs/open.c kernel/sys.c include/linux/ >/dev/null 2>&1
+        rm -rf KernelSU/ NonGKI_Kernel_Patches/
+        find . -name "*.rej" -delete
+        find . -name "*.orig" -delete
+        make clean mrproper
 
-      - name: Integrate OFFICIAL SukiSU-Ultra (builtin)
-        shell: bash
-        run: |
-          cd $GITHUB_WORKSPACE/device_kernel
-          echo "====================================="
-          echo " Integrating SukiSU Ultra Builtin    "
-          echo "====================================="
-          curl -LSs "https://raw.githubusercontent.com/zttlove/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
+    - name: Integrate SukiSU Ultra Builtin
+      shell: bash
+      run: |
+        cd $GITHUB_WORKSPACE/device_kernel
+        curl -LSs "https://raw.githubusercontent.com/zttlove/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
 
-      - name: Apply DEFCONFIG (5.4 + Builtin + SUSFS)
-        shell: bash
-        run: |
-          cd $GITHUB_WORKSPACE/device_kernel
-          cfg=./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
+    - name: Write Defconfig (5.4 + SUSFS)
+      shell: bash
+      run: |
+        cd $GITHUB_WORKSPACE/device_kernel
+        cfg=./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
+        sed -i '/CONFIG_KSU/d' $cfg
+        sed -i '/CONFIG_MODULES/d' $cfg
+        sed -i '/CONFIG_KALLSYMS/d' $cfg
 
-          echo "====================================="
-          echo " Writing correct defconfig for 5.4   "
-          echo "====================================="
+        echo "CONFIG_KSU=y" >> $cfg
+        echo "CONFIG_KSU_BUILTIN=y" >> $cfg
+        echo "CONFIG_KSU_SUSFS=y" >> $cfg
+        echo "CONFIG_KSU_KPM=y" >> $cfg
+        echo "CONFIG_KALLSYMS=y" >> $cfg
+        echo "CONFIG_KALLSYMS_ALL=y" >> $cfg
+        echo "CONFIG_MODULES=n" >> $cfg
 
-          # 清除旧配置
-          sed -i '/CONFIG_KSU/d' $cfg
-          sed -i '/CONFIG_MODULES/d' $cfg
-          sed -i '/CONFIG_KALLSYMS/d' $cfg
-
-          # 写入 5.4 builtin 必须配置
-          echo "CONFIG_KSU=y" >> $cfg
-          echo "CONFIG_KSU_BUILTIN=y" >> $cfg
-          echo "CONFIG_KSU_SUSFS=y" >> $cfg
-          echo "CONFIG_KSU_KPM=y" >> $cfg
-          echo "CONFIG_KALLSYMS=y" >> $cfg
-          echo "CONFIG_KALLSYMS_ALL=y" >> $cfg
-          echo "CONFIG_MODULES=n" >> $cfg
-
-      - name: Force skip all patches
-        shell: bash
-        run: |
-          echo "SUSFS_SKIP=true" >> $GITHUB_ENV
-          echo "====================================="
-          echo " ALL PATCHES SKIPPED (SAFE FOR 5.4)   "
-          echo "====================================="
+    - name: SKIP ALL PATCHES
+      shell: bash
+      run: |
+        echo "SUSFS_SKIP=true" >> $GITHUB_ENV
