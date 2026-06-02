@@ -118,9 +118,7 @@ jobs:
 
       - name: 🪛 Extra Kernel Options
         run: |
-          # Only ${{ env.DEVICE_NAME }} use it.
-          cd $GITHUB_WORKSPACE/device_kernel
-          # Nothing happen.
+          cd "$GITHUB_WORKSPACE/device_kernel"
 
       - name: 🧰 Patch Kernel of Re:Kernel
         uses: ./.github/workflows/patch-rekernel
@@ -133,11 +131,101 @@ jobs:
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
-       
-      - name: 🔩 Pack Process
-        uses: ./.github/workflows/pack-process
 
-      - name: ✏️ Upload Artifacts
-        uses: ./.github/workflows/upload-files
+      # 打包Anykernel3 仅Image内核专用
+      - name: 📦 Package Anykernel3 Flash Zip
+        if: env.PACK_METHOD == 'Anykernel3'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "============================================="
+          echo "📦 开始打包 Star Hyper A16 内核卡刷包"
+          echo "============================================="
 
+          TIME=$(TZ=Asia/Shanghai date +"(%Y-%m-%d)")
+          KERNEL_DIR="${GITHUB_WORKSPACE}/device_kernel"
+          TMP_DIR="${KERNEL_DIR}/tmp"
+          IMG_PATH="${KERNEL_DIR}/out/arch/arm64/boot/Image"
+          cd "${KERNEL_DIR}"
+
+          # 严格校验内核文件存在
+          if [[ ! -f "${IMG_PATH}" ]]; then
+            echo "::error::❌ 编译失败，未找到 out/arch/arm64/boot/Image 内核文件"
+            exit 1
+          fi
+          IMG_SIZE=$(du -h "${IMG_PATH}" | awk '{print $1}')
+          echo "✅ 检测到内核镜像 Image | 大小: ${IMG_SIZE}"
+
+          # 清理重建临时目录
+          rm -rf "${TMP_DIR}"
+          mkdir -p "${TMP_DIR}"
+
+          # 自动修改Anykernel3机型适配参数
+          AK3_DIR="${KERNEL_DIR}/Anykernel3"
+          if [[ -d "${AK3_DIR}" && -f "${AK3_DIR}/anykernel.sh" ]]; then
+            sed -i \
+              -e 's/^name=.*/name="Star-HyperA16-NonGKI-Kernel"/' \
+              -e 's/^do\.devicecheck=.*/do.devicecheck=0/' \
+              -e 's/^IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=1/' \
+              -e 's/^BLOCK=.*/BLOCK=boot/' \
+              "${AK3_DIR}/anykernel.sh"
+              curl -L https://raw.githubusercontent.com/zttlove/NonGKI_Kernel_Build_2nd/mainline/Patches/anykernel.sh -o Anykernel3/anykernel.sh
+              chmod +x Anykernel3/anykernel.sh
+          fi
+
+          # 复制内核主镜像
+          cp -v "${IMG_PATH}" "${TMP_DIR}/Image"
+
+          # 按需打包内核模块
+          if [[ "${{ env.PACK_KMODULES }}" == "true" ]]; then
+            MOD_DIR="${TMP_DIR}/modules/vendor/lib/modules"
+            mkdir -p "${MOD_DIR}"
+            find . -name "*.ko" -type f -print0 | xargs -0 cp -t "${MOD_DIR}/" 2>/dev/null || true
+            module_count=$(find "${MOD_DIR}" -name "*.ko" | wc -l)
+            echo "📦 打包内核模块: ${module_count} 个"
+            [[ ${module_count} -eq 0 ]] && rm -rf "${TMP_DIR}/modules"
+          else
+            echo "ℹ️ 已关闭模块打包，跳过ko文件"
+          fi
+
+          # 合并Anykernel3刷机脚本全部文件
+          [[ -d "${AK3_DIR}" ]] && cp -rp "${AK3_DIR}"/* "${TMP_DIR}/"
+
+          # 最高压缩率打包ZIP
+          cd "${TMP_DIR}"
+          7za a -tzip -mx9 -mmt=on package.zip ./* >/dev/null
+          cd "${GITHUB_WORKSPACE}"
+
+          # 生成唯一不重复文件名
+          FINAL_ZIP="${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-${TIME}-Ak3.zip"
+          cp -fp "${TMP_DIR}/package.zip" "${FINAL_ZIP}"
+          echo "PACK_NAME=${FINAL_ZIP}" >> "${GITHUB_ENV}"
+          echo "✅ 刷机包打包完成: ${FINAL_ZIP}"
+
+          # 彻底清理临时垃圾文件
+          rm -rf "${TMP_DIR}"
+
+      # 自动发布到GitHub Releases页面（动态标签永不重复报错）
+      - name: 🚀 Auto Upload To Github Release
+        if: env.PACK_METHOD == 'Anykernel3'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: Star-HyperA16-Kernel-${{ github.run_number }}
+          name: Xiaomi 11 Ultra Star HyperOS A16 NonGKI Kernel #构建号#${{ github.run_number }}
+          body: |
+            ## Xiaomi 11 Ultra Star HyperOS A16 内核刷机包
+            - 适配 HyperOS A16 全版本
+            - SukiSU ResukiSU Root 完整适配
+            - SUSFS 隐藏文件系统免补丁
+            - NonGKI 通用免解boot补丁
+            - Osm0sis Anykernel3 官方卡刷格式
+            - Clang 20 最新编译
+          files: ${{ env.PACK_NAME }}
+          draft: false
+          prerelease: false
+          overwrite_files: true
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
