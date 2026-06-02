@@ -133,7 +133,7 @@ jobs:
           echo "📦 开始打包 Star Hyper A16 内核卡刷包"
           echo "============================================="
 
-          TIME=$(TZ=Asia/Shanghai date +"(%Y-%m-%d)_%H-%M")
+          TIME=$(TZ=Asia/Shanghai date +"(%Y-%m-%d)")
           KERNEL_DIR="${GITHUB_WORKSPACE}/device_kernel"
           TMP_DIR="${KERNEL_DIR}/tmp"
           IMG_PATH="${KERNEL_DIR}/out/arch/arm64/boot/Image"
@@ -188,7 +188,7 @@ jobs:
           cd "${GITHUB_WORKSPACE}"
 
           # 生成唯一不重复文件名
-          FINAL_ZIP="${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-${TIME}-Anykernel3.zip"
+          FINAL_ZIP="${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-${TIME}-Ak3.zip"
           cp -fp "${TMP_DIR}/package.zip" "${FINAL_ZIP}"
           echo "PACK_NAME=${FINAL_ZIP}" >> "${GITHUB_ENV}"
           echo "✅ 刷机包打包完成: ${FINAL_ZIP}"
