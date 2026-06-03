@@ -33,7 +33,7 @@ runs:
           echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
           echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
           
-          # 以下全部关闭，防止无限重启
+          # 全部关闭，防止无限重启
           # echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
           # echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
           # echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
@@ -46,15 +46,27 @@ runs:
           fi
 
       # ==============================
-      # 【关键】删除导致重启的错误文件
+      # 【最终】安全空实现，解决链接错误，不触发重启
       # ==============================
-      - name: REMOVE BROKEN FILES (FIX BOOTLOOP)
+      - name: Add SAFE Stub to Fix Undefined Symbols (NO BOOTLOOP)
         if: env.SUSFS_ENABLE == 'true'
         shell: bash
         run: |
           cd $GITHUB_WORKSPACE/device_kernel
-          rm -f drivers/kernelsu/hook/stub.c
-          sed -i '/hook\/stub.o/d' drivers/kernelsu/Makefile
+          
+          # 创建最安全、无依赖、不崩溃的 stub
+          cat > drivers/kernelsu/susfs_stub.c << 'EOF'
+          // 稳定空实现，仅解决链接错误
+          void ksu_init_rc_hook_key_false(void) { }
+          void ksu_input_hook_key_false(void) { }
+          int ksu_is_input_hook_enabled(void) { return 0; }
+          int ksu_is_init_rc_hook_enabled(void) { return 0; }
+          EOF
+
+          # 加入编译
+          if ! grep -q "susfs_stub.o" drivers/kernelsu/Makefile; then
+            echo "obj-\$(CONFIG_KSU) += susfs_stub.o" >> drivers/kernelsu/Makefile
+          fi
 
       - name: Patch SuSFS
         if: env.SUSFS_ENABLE == 'true'
@@ -83,7 +95,7 @@ runs:
             echo "SUSFS_SKIP=true" >> $GITHUB_ENV
           else
             cp /tmp/Patches/Patch/susfs_patch_to_${{ env.KERNEL_VERSION }}.patch ./ || true
-            patch -p1 --no-backup-if-mismatch < susfs_patch_to_${{ env.KERNEL_VERSION }}.patch || true
+            patch -p1 --no-backup-if-m-mismatch < susfs_patch_to_${{ env.KERNEL_VERSION }}.patch || true
           fi
 
           # Patch .rej find
