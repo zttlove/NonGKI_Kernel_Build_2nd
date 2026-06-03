@@ -1,101 +1,107 @@
-name: 'Patch SuSFS for Kernel.'
+name: 'Patch SuSFS for Kernel'
 
 runs:
   using: 'composite'
   steps:
-      - name: Get SuSFS
-        if: env.SUSFS_ENABLE == 'true'
-        shell: bash
-        run: |
-          cd $GITHUB_WORKSPACE/device_kernel/
-          if [[ "${{ env.SUSFS_FIXED }}" == true ]]; then
-            if [ -z "${{ env.PATCHES_SOURCE }}" ] || [ -z "${{ env.PATCHES_BRANCH }}" ]; then
-              echo "Please input a vaild source and branch!"
-              false
-            elif [[ "${{ env.PATCHES_SOURCE }}" == *".git" ]]; then
-              echo "Please do not set a full URL in PATCH_SOURCE!"
-              false
-            else
-              git clone https://github.com/${{ env.PATCHES_SOURCE }}.git -b ${{ env.PATCHES_BRANCH }} NonGKI_Kernel_Patches --depth=1 || true
-            fi
-          fi
-
-      - name: Set KSU and SUSFS for DEFCONFIG (STABLE)
-        if: env.SUSFS_ENABLE == 'true'
-        shell: bash
-        run: |
-          cd $GITHUB_WORKSPACE/device_kernel
-          echo "CONFIG_KSU_SUSFS=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-
-          if grep -q "THREAD_INFO_IN_TASK" "drivers/kernelsu/Kconfig"; then
-            echo "CONFIG_THREAD_INFO_IN_TASK=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-          fi
-
-      - name: Fix SUSFS Headers & Stub
-        if: env.SUSFS_ENABLE == 'true'
-        shell: bash
-        run: |
-          cd $GITHUB_WORKSPACE/device_kernel
-          mkdir -p include/linux
-          find NonGKI_Kernel_Patches -name "susfs_def.h" -exec cp {} include/linux/ \; 2>/dev/null
-
-          cat > drivers/kernelsu/susfs_stub.c << 'EOF'
-          void ksu_init_rc_hook_key_false(void) { }
-          void ksu_input_hook_key_false(void) { }
-          int ksu_is_input_hook_enabled(void) { return 0; }
-          int ksu_is_init_rc_hook_enabled(void) { return 0; }
-          EOF
-
-          if ! grep -q "susfs_stub.o" drivers/kernelsu/Makefile; then
-            echo "obj-\$(CONFIG_KSU) += susfs_stub.o" >> drivers/kernelsu/Makefile
-          fi
-
-      - name: Patch SuSFS
-        if: env.SUSFS_ENABLE == 'true'
-        shell: bash
-        run: |
-          cd $GITHUB_WORKSPACE/device_kernel/
-          PACK_FILES(){
-            temp_dir=$(mktemp -d)
-            find . -name "*.rej" -exec cp --parents {} "$temp_dir" \;
-            find . -name "*.rej" | sed 's/\.rej$//' | xargs -I {} test -f {} && find . -name "*.rej" | sed 's/\.rej$//' | xargs -I {} cp --parents {} "$temp_dir"
-            tar -czf "rej_files_1.5.5.tar.gz" -C "$temp_dir" .
-            rm -rf "$temp_dir"
-            find . -type f \( -name "*.rej" -o -name "*.orig" \) -delete
-          }
-
-          if ! grep -q "CONFIG_KSU_SUSFS" "fs/namespace.c"; then
-            cp /tmp/Patches/Patch/susfs_patch_to_${{ env.KERNEL_VERSION }}.patch ./ || true
-            patch -p1 --no-backup-if-mismatch < susfs_patch_to_${{ env.KERNEL_VERSION }}.patch || true
+    - name: Get SuSFS
+      if: env.SUSFS_ENABLE == 'true'
+      shell: bash
+      run: |
+        cd "${GITHUB_WORKSPACE}/device_kernel/"
+        if [[ "${SUSFS_FIXED}" == "true" ]]; then
+          if [ -z "${PATCHES_SOURCE}" ] || [ -z "${PATCHES_BRANCH}" ]; then
+            echo "Please input a valid source and branch!"
+            exit 1
+          elif [[ "${PATCHES_SOURCE}" == *".git" ]]; then
+            echo "Please do not set a full URL in PATCH_SOURCE!"
+            exit 1
           else
-            echo "SUSFS already patched"
-            echo "SUSFS_SKIP=true" >> $GITHUB_ENV
+            git clone "https://github.com/${PATCHES_SOURCE}.git" \
+              -b "${PATCHES_BRANCH}" NonGKI_Kernel_Patches --depth=1 || true
           fi
-          PACK_FILES
+        fi
 
-      - name: SUSFS Patch Fixed
-        if: env.SUSFS_ENABLE == 'true' && env.SUSFS_SKIP != 'true'
-        shell: bash
-        run: |
-          cd $GITHUB_WORKSPACE/device_kernel/
-          if [[ -n "${{ env.SUSFS_PATCH_FIXED }}" ]]; then
-            IFS=',' read -ra FIXED_LIST <<< "${{ env.SUSFS_PATCH_FIXED }}"
-            for i in "${!FIXED_LIST[@]}"; do
-              PATCH_PATH=$(find NonGKI_Kernel_Patches -name "${FIXED_LIST[$i]}.patch" | head -1)
-              if [[ -f "$PATCH_PATH" ]]; then
-                cp "$PATCH_PATH" ./
-                patch -p1 --no-backup-if-mismatch < ${FIXED_LIST[$i]}.patch || true
-              fi
-            done
-          fi
+    - name: Set KSU and SUSFS for DEFCONFIG
+      if: env.SUSFS_ENABLE == 'true'
+      shell: bash
+      run: |
+        cd "${GITHUB_WORKSPACE}/device_kernel"
+        DEFCONFIG_PATH="./arch/${KERNEL_ARCH}/configs/${DEFCONFIG_NAME}"
+        
+        echo "CONFIG_KSU_SUSFS=y" >> "$DEFCONFIG_PATH"
+        echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> "$DEFCONFIG_PATH"
+        echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> "$DEFCONFIG_PATH"
+        echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> "$DEFCONFIG_PATH"
+        echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> "$DEFCONFIG_PATH"
 
-      - name: Upload Build Patch Rejected Files
-        if: env.BUILD_DEBUGGER == "true"
-        uses: actions/upload-artifact@v4
-        with:
-          name: patch_rejected_files
-          path: device_kernel/rej_files_*
+        if grep -q "THREAD_INFO_IN_TASK" "drivers/kernelsu/Kconfig"; then
+          echo "CONFIG_THREAD_INFO_IN_TASK=y" >> "$DEFCONFIG_PATH"
+        fi
+
+    - name: Fix SUSFS Headers & Stub
+      if: env.SUSFS_ENABLE == 'true'
+      shell: bash
+      run: |
+        cd "${GITHUB_WORKSPACE}/device_kernel"
+        mkdir -p include/linux
+        find NonGKI_Kernel_Patches -name "susfs_def.h" -exec cp {} include/linux/ \; 2>/dev/null || true
+
+        cat > drivers/kernelsu/susfs_stub.c <<'EOF'
+        void ksu_init_rc_hook_key_false(void) { }
+        void ksu_input_hook_key_false(void) { }
+        int ksu_is_input_hook_enabled(void) { return 0; }
+        int ksu_is_init_rc_hook_enabled(void) { return 0; }
+        EOF
+
+        if ! grep -q "susfs_stub.o" drivers/kernelsu/Makefile; then
+          echo 'obj-$(CONFIG_KSU) += susfs_stub.o' >> drivers/kernelsu/Makefile
+        fi
+
+    - name: Patch SuSFS
+      if: env.SUSFS_ENABLE == 'true'
+      shell: bash
+      run: |
+        cd "${GITHUB_WORKSPACE}/device_kernel/"
+        
+        PACK_FILES() {
+          local temp_dir=$(mktemp -d)
+          find . -name "*.rej" -exec cp --parents {} "$temp_dir" \;
+          find . -name "*.rej" | sed 's/\.rej$//' | xargs -I {} test -f {} && \
+            find . -name "*.rej" | sed 's/\.rej$//' | xargs -I {} cp --parents {} "$temp_dir"
+          
+          tar -czf "rej_files_1.5.5.tar.gz" -C "$temp_dir" .
+          rm -rf "$temp_dir"
+          find . -type f \( -name "*.rej" -o -name "*.orig" \) -delete
+        }
+
+        if ! grep -q "CONFIG_KSU_SUSFS" "fs/namespace.c"; then
+          cp "/tmp/Patches/Patch/susfs_patch_to_${KERNEL_VERSION}.patch" ./ || true
+          patch -p1 --no-backup-if-mismatch < "susfs_patch_to_${KERNEL_VERSION}.patch" || true
+        else
+          echo "SUSFS_SKIP=true" >> "$GITHUB_ENV"
+        fi
+        
+        PACK_FILES
+
+    - name: SUSFS Patch Fixed
+      if: env.SUSFS_ENABLE == 'true' && env.SUSFS_SKIP != 'true'
+      shell: bash
+      run: |
+        cd "${GITHUB_WORKSPACE}/device_kernel/"
+        if [[ -n "${SUSFS_PATCH_FIXED}" ]]; then
+          IFS=',' read -ra FIXED_LIST <<< "${SUSFS_PATCH_FIXED}"
+          for i in "${!FIXED_LIST[@]}"; do
+            PATCH_PATH=$(find NonGKI_Kernel_Patches -name "${FIXED_LIST[$i]}.patch" | head -1)
+            if [[ -f "$PATCH_PATH" ]]; then
+              cp "$PATCH_PATH" ./
+              patch -p1 --no-backup-if-mismatch < "${FIXED_LIST[$i]}.patch" || true
+            fi
+          done
+        fi
+
+    - name: Upload Build Patch Rejected Files
+      if: env.BUILD_DEBUGGER == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: patch_rejected_files
+        path: device_kernel/rej_files_*
