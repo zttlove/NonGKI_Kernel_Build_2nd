@@ -55,9 +55,9 @@ runs:
           mkdir -p drivers/kernelsu/hook/
           cat > drivers/kernelsu/hook/stub.c << 'EOF'
           // SPDX-License-Identifier: GPL-2.0
-         
+          #include <linux/init.h>
           #include <linux/module.h>
-          #include <linux/ksu.h>
+        
 
           // 提供弱符号的空实现，如果其他地方有真实定义，链接器会优先使用真实的
           void __weak ksu_init_rc_hook_key_false(void) {}
