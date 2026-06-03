@@ -46,24 +46,28 @@ runs:
           fi
 
       # ==============================
-      # 【最终】安全空实现，解决链接错误，不触发重启
+      # 【关键】自动复制 SUSFS 头文件 + 安全 stub
       # ==============================
-      - name: Add SAFE Stub to Fix Undefined Symbols (NO BOOTLOOP)
+      - name: Fix SUSFS Headers & Symbols
         if: env.SUSFS_ENABLE == 'true'
         shell: bash
         run: |
           cd $GITHUB_WORKSPACE/device_kernel
           
-          # 创建最安全、无依赖、不崩溃的 stub
+          # 1. 复制 SUSFS 头文件到 linux/ 目录（修复 #include <linux/susfs_def.h>）
+          mkdir -p include/linux
+          [ -f NonGKI_Kernel_Patches/susfs_def.h ] && cp NonGKI_Kernel_Patches/susfs_def.h include/linux/ || true
+          [ -f NonGKI_Kernel_Patches/linux/susfs_def.h ] && cp NonGKI_Kernel_Patches/linux/susfs_def.h include/linux/ || true
+
+          # 2. 安全空实现，解决未定义符号
           cat > drivers/kernelsu/susfs_stub.c << 'EOF'
-          // 稳定空实现，仅解决链接错误
           void ksu_init_rc_hook_key_false(void) { }
           void ksu_input_hook_key_false(void) { }
           int ksu_is_input_hook_enabled(void) { return 0; }
           int ksu_is_init_rc_hook_enabled(void) { return 0; }
           EOF
 
-          # 加入编译
+          # 3. 加入编译
           if ! grep -q "susfs_stub.o" drivers/kernelsu/Makefile; then
             echo "obj-\$(CONFIG_KSU) += susfs_stub.o" >> drivers/kernelsu/Makefile
           fi
@@ -95,7 +99,7 @@ runs:
             echo "SUSFS_SKIP=true" >> $GITHUB_ENV
           else
             cp /tmp/Patches/Patch/susfs_patch_to_${{ env.KERNEL_VERSION }}.patch ./ || true
-            patch -p1 --no-backup-if-m-mismatch < susfs_patch_to_${{ env.KERNEL_VERSION }}.patch || true
+            patch -p1 --no-backup-if-mismatch < susfs_patch_to_${{ env.KERNEL_VERSION }}.patch || true
           fi
 
           # Patch .rej find
@@ -138,7 +142,7 @@ runs:
             echo "<<<<<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>>>>>>>>>"
             for i in "${!FIXED_LIST[@]}"; do
               echo "Patching -> ${FIXED_LIST[$i]}"
-              PATCH_PATH=$(find NonGKI_Kernel_Patches -name "${FIXED_LIST[$i]}.patch" | head -1)
+              PATCH_PATH=$(find NonGKI_Kernel_Patches -name "${FIXED_LIST[$i]}.patch" | head=1)
               
               if [[ -f "$PATCH_PATH" ]]; then
                 cp "$PATCH_PATH" ./
@@ -151,7 +155,7 @@ runs:
           fi
 
       - name: Upload Build Patch Rejected Files
-        if: env.BUILD_DEBUGGER == 'true'
+        if: env.BUILD_DEBUGGER == "true"
         uses: actions/upload-artifact@v4
         with:
           name: patch_rejected_files
