@@ -43,6 +43,38 @@ runs:
             echo "CONFIG_THREAD_INFO_IN_TASK=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
           fi
 
+      # ==============================
+      # 自动修复所有 KernelSU 编译错误
+      # ==============================
+      - name: Auto Fix KernelSU Compile Errors
+        if: env.SUSFS_ENABLE == 'true'
+        shell: bash
+        run: |
+          cd $GITHUB_WORKSPACE/device_kernel
+          # 4. 创建 stub.c 修复未定义符号（链接错误）
+          mkdir -p drivers/kernelsu/hook/
+          cat > drivers/kernelsu/hook/stub.c << 'EOF'
+          // SPDX-License-Identifier: GPL-2.0
+          #include <linux/init.h>
+          #include <linux/module.h>
+          #include <linux/ksu.h>
+
+          void __weak ksu_init_rc_hook_key_false(void) {}
+          void __weak ksu_input_hook_key_false(void) {}
+          bool __weak ksu_is_input_hook_enabled(void) { return false; }
+          bool __weak ksu_is_init_rc_hook_enabled(void) { return false; }
+
+          EXPORT_SYMBOL_GPL(ksu_init_rc_hook_key_false);
+          EXPORT_SYMBOL_GPL(ksu_input_hook_key_false);
+          EXPORT_SYMBOL_GPL(ksu_is_input_hook_enabled);
+          EXPORT_SYMBOL_GPL(ksu_is_init_rc_hook_enabled);
+          EOF
+          
+          # 5. 加入编译
+          if ! grep -q "hook/stub.o" drivers/kernelsu/Makefile; then
+            echo "obj-\$(CONFIG_KSU) += hook/stub.o" >> drivers/kernelsu/Makefile
+          fi
+
       - name: Patch SuSFS
         if: env.SUSFS_ENABLE == 'true'
         shell: bash
@@ -92,7 +124,7 @@ runs:
                 echo "[+] SuSFS Patch Version: v2.0.00. "
                 echo "[+] SKIP_PATCH enabled or found SuSFS v2.0.00 Fixed Patch, skipping."
                 PACK_FILES
-            elif [[ "${{ env.SKIP_PATCH }}" != "true" ]] || [ -z "${{ env.SUSFS_PATCH_FIXED }}" ]]; then
+            elif [[ "${{ env.SKIP_PATCH }}" != "true" ]] || [ -z "${{ env.SUSFS_PATCH_FIXED }}" ]; then
                 echo "[+] SuSFS Patch Version: v2.0.00. "
                 echo "[+] Found .rej files, but continue build (fixed by script)"
                 PACK_FILES
