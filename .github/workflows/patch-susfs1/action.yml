@@ -42,20 +42,8 @@ runs:
           echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
 
           if grep -q "THREAD_INFO_IN_TASK" "drivers/kernelsu/Kconfig"; then
-            echo "CONFIG_THREAD_INFO_IN_TASK=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-          fi
-
-      # ==============================
-      # 【关键】删除导致重启的 stub.c，彻底清理
-      # ==============================
-      - name: REMOVE BROKEN STUB.C (FIX BOOTLOOP)
-        if: env.SUSFS_ENABLE == 'true'
-        shell: bash
-        run: |
-          cd $GITHUB_WORKSPACE/device_kernel
-          rm -f drivers/kernelsu/hook/stub.c
-          sed -i '/hook\/stub.o/d' drivers/kernelsu/Makefile
-
+            echo "CONFIG_THREAD_INFO_IN_TASK=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs
+            
       - name: Patch SuSFS
         if: env.SUSFS_ENABLE == 'true'
         shell: bash
