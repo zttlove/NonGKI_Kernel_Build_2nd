@@ -22,7 +22,7 @@ runs:
             fi
           fi
 
-      - name: Set KSU and SUSFS for DEFCONFIG
+      - name: Set KSU and SUSFS for DEFCONFIG (STABLE BOOT VERSION)
         if: env.SUSFS_ENABLE == 'true'
         shell: bash
         run: |
@@ -32,44 +32,29 @@ runs:
           echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
           echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
           echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
+          
+          # 以下全部关闭，防止无限重启
+          # echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
+          # echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
+          # echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
+          # echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
+          # echo "CONFIG_KSU_SUSFS_SUS_MAP=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
           echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_KSU_SUSFS_SUS_MAP=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
 
           if grep -q "THREAD_INFO_IN_TASK" "drivers/kernelsu/Kconfig"; then
             echo "CONFIG_THREAD_INFO_IN_TASK=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
           fi
 
       # ==============================
-      # 自动修复所有 KernelSU 编译错误
+      # 【关键】删除导致重启的 stub.c，彻底清理
       # ==============================
-      - name: Auto Fix KernelSU Compile Errors
+      - name: REMOVE BROKEN STUB.C (FIX BOOTLOOP)
         if: env.SUSFS_ENABLE == 'true'
         shell: bash
         run: |
           cd $GITHUB_WORKSPACE/device_kernel
-          # 4. 创建 stub.c 修复未定义符号（链接错误）
-          mkdir -p drivers/kernelsu/hook/
-          cat > drivers/kernelsu/hook/stub.c << 'EOF'
-          // SPDX-License-Identifier: GPL-2.0
-          #include <linux/init.h>
-          #include <linux/module.h>
-        
-
-          // 提供弱符号的空实现，如果其他地方有真实定义，链接器会优先使用真实的
-          void __weak ksu_init_rc_hook_key_false(void) {}
-          void __weak ksu_input_hook_key_false(void) {}
-          bool __weak ksu_is_input_hook_enabled(void) { return false; }
-          bool __weak ksu_is_init_rc_hook_enabled(void) { return false; }
-          EOF
-          
-          # 5. 加入编译
-          if ! grep -q "hook/stub.o" drivers/kernelsu/Makefile; then
-            echo "obj-\$(CONFIG_KSU) += hook/stub.o" >> drivers/kernelsu/Makefile
-          fi
+          rm -f drivers/kernelsu/hook/stub.c
+          sed -i '/hook\/stub.o/d' drivers/kernelsu/Makefile
 
       - name: Patch SuSFS
         if: env.SUSFS_ENABLE == 'true'
@@ -98,7 +83,6 @@ runs:
             echo "SUSFS_SKIP=true" >> $GITHUB_ENV
           else
             cp /tmp/Patches/Patch/susfs_patch_to_${{ env.KERNEL_VERSION }}.patch ./ || true
-
             patch -p1 --no-backup-if-mismatch < susfs_patch_to_${{ env.KERNEL_VERSION }}.patch || true
           fi
 
@@ -120,7 +104,7 @@ runs:
                 echo "[+] SuSFS Patch Version: v2.0.00. "
                 echo "[+] SKIP_PATCH enabled or found SuSFS v2.0.00 Fixed Patch, skipping."
                 PACK_FILES
-            elif [[ "${{ env.SKIP_PATCH }}" != "true" ]] || [ -z "${{ env.SUSFS_PATCH_FIXED }}" ]; then
+            elif [[ "${{ env.SKIP_PATCH }}" != "true" ]] || [ -z "${{ env.SUSFS_PATCH_FIXED }}" ]]; then
                 echo "[+] SuSFS Patch Version: v2.0.00. "
                 echo "[+] Found .rej files, but continue build (fixed by script)"
                 PACK_FILES
@@ -132,8 +116,6 @@ runs:
         shell: bash
         run: |
           cd $GITHUB_WORKSPACE/device_kernel/
-
-          # 调试：打印目录，防止文件不存在
           ls -la NonGKI_Kernel_Patches/ || true
           ls -la NonGKI_Kernel_Patches/"${{ env.SUSFS_FOLDER_FIXED }}"/ || true
 
@@ -144,8 +126,6 @@ runs:
             echo "<<<<<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>>>>>>>>>"
             for i in "${!FIXED_LIST[@]}"; do
               echo "Patching -> ${FIXED_LIST[$i]}"
-              
-              # 自动寻找补丁文件，防止路径错误
               PATCH_PATH=$(find NonGKI_Kernel_Patches -name "${FIXED_LIST[$i]}.patch" | head -1)
               
               if [[ -f "$PATCH_PATH" ]]; then
@@ -155,8 +135,6 @@ runs:
               else
                 echo "WARNING: Patch ${FIXED_LIST[$i]}.patch not found, skip it!"
               fi
-              
-              echo "<<<<<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>>>>>>>>>"
             done
           fi
 
