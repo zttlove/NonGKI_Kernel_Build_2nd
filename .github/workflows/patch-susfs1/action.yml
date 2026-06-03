@@ -55,21 +55,26 @@ runs:
           mkdir -p drivers/kernelsu/hook/
           cat > drivers/kernelsu/hook/stub.c << 'EOF'
           // SPDX-License-Identifier: GPL-2.0
-          #include <linux/init.h>
-          #include <linux/module.h>
-          #include <linux/ksu.h>
+          typedef unsigned int gfp_t;
+          typedef int uid_t;
+          typedef int bool;
+          #define false 0
 
-          void __weak ksu_init_rc_hook_key_false(void) {}
-          void __weak ksu_input_hook_key_false(void) {}
-          bool __weak ksu_is_input_hook_enabled(void) { return false; }
-          bool __weak ksu_is_init_rc_hook_enabled(void) { return false; }
+          void ksu_init_rc_hook_key_false(void) {}
+          void ksu_input_hook_key_false(void) {}
+          bool ksu_is_input_hook_enabled(void) { return false; }
+          bool ksu_is_init_rc_hook_enabled(void) { return false; }
 
+          extern void __attribute__((weak)) __exprot_symbol_gpl(const char *n);
+          void __attribute__((weak)) __exprot_symbol_gpl(const char *n) {}
+
+          #define EXPORT_SYMBOL_GPL(x) \
+              __exprot_symbol_gpl(#x)
           EXPORT_SYMBOL_GPL(ksu_init_rc_hook_key_false);
           EXPORT_SYMBOL_GPL(ksu_input_hook_key_false);
           EXPORT_SYMBOL_GPL(ksu_is_input_hook_enabled);
           EXPORT_SYMBOL_GPL(ksu_is_init_rc_hook_enabled);
           EOF
-          
           # 5. 加入编译
           if ! grep -q "hook/stub.o" drivers/kernelsu/Makefile; then
             echo "obj-\$(CONFIG_KSU) += hook/stub.o" >> drivers/kernelsu/Makefile
