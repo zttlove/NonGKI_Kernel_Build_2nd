@@ -142,7 +142,7 @@ jobs:
           echo "📦 开始打包 Star Hyper A16 内核卡刷包"
           echo "============================================="
 
-          TIME=$(TZ=Asia/Shanghai date +"(%Y-%m-%d)")
+          TIME=$(TZ=Asia/Shanghai date +"%Y-%m-%d")
           KERNEL_DIR="${GITHUB_WORKSPACE}/device_kernel"
           TMP_DIR="${KERNEL_DIR}/tmp"
           IMG_PATH="${KERNEL_DIR}/out/arch/arm64/boot/Image"
