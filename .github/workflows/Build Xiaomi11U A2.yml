@@ -38,7 +38,7 @@ env:
    
   SUSFS_ENABLE : false
   SUSFS_FIXED : false
-  AK3_SOURCE : "https://github.com/a460261925/KowSU-build.git"
+  AK3_SOURCE : "https://github.com/osm0sis/Anykernel3.git"
   AK3_BRANCH : "master"
 
   BOOT_SOURCE : ""
