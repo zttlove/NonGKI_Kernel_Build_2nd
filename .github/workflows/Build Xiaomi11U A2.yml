@@ -130,7 +130,7 @@ jobs:
         uses: ./.github/workflows/patch-hide-stuff
 
       - name: 🚀 Build Process
-        uses: ./.github/workflows/build-process
+        uses: ./.github/workflows/build-process1
 
       # 打包Anykernel3 仅Image内核专用
       - name: 📦 Package Anykernel3 Flash Zip
