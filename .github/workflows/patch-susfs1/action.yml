@@ -29,10 +29,7 @@ runs:
           cd $GITHUB_WORKSPACE/device_kernel
 
           echo "CONFIG_KSU_SUSFS=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
           echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-
 
           if grep -q "THREAD_INFO_IN_TASK" "drivers/kernelsu/Kconfig"; then
             echo "CONFIG_THREAD_INFO_IN_TASK=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
