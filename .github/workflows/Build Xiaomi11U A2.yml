@@ -31,7 +31,7 @@ env:
   DEFCONFIG_FROM_BOOT: false
 
   KERNELSU_SOURCE : "https://github.com/KernelSU-Next/KernelSU-Next.git"
-  KERNELSU_BRANCH : "main"
+  KERNELSU_BRANCH : "legacy-susfs"
 
   KERNELSU_AUTO_GET : "false"
   KERNELSU_AUTO_FORK : "" # xxksu, rsuntk , next, resukisu and sukisu
@@ -39,7 +39,7 @@ env:
   SUSFS_ENABLE : false
   SUSFS_FIXED : false
   AK3_SOURCE : "https://github.com/osm0sis/Anykernel3.git"
-  AK3_BRANCH : "legacy-susfs"
+  AK3_BRANCH : "mastr"
 
   BOOT_SOURCE : ""
 
