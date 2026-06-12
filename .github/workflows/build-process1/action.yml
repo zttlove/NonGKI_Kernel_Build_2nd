@@ -50,7 +50,13 @@ runs:
             echo "========================"
             echo "=Read Defconfig (Clang)="
             echo "========================"
-            sed -i '637 s/^/\/\//' kernel/sys.c
+            # 1. 添加 CONFIG_KERNELSU=y
+          sed -i '/^CONFIG_KERNELSU=/!$a CONFIG_KERNELSU=y' .config
+          # 2. 添加 CONFIG_SECURITY_KERNELSU=y
+          sed -i '/^CONFIG_SECURITY_KERNELSU=/!$a CONFIG_SECURITY_KERNELSU=y' .config
+          # 3. 添加 CONFIG_KERNELSU_SELINUX=y
+          sed -i '/^CONFIG_KERNELSU_SELINUX=/!$a CONFIG_KERNELSU_SELINUX=y' .config
+          sed -i '637 s/^/\/\//' kernel/sys.c
             make CC="ccache clang" O=out ARCH="${{ env.KERNEL_ARCH }}" ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} ${{ env.DEFCONFIG_NAME }}
           else
             echo "================"
