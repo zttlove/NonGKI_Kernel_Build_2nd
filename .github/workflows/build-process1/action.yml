@@ -51,14 +51,7 @@ runs:
             echo "=Read Defconfig (Clang)="
             echo "========================"
           
-          sed -i 's/^# CONFIG_KERNELSU=y/CONFIG_KERNELSU=y/' out/.config
-          sed -i 's/^CONFIG_KERNELSU=.*/CONFIG_KERNELSU=y/' out/.config
-
-          sed -i 's/^# CONFIG_SECURITY_KERNELSU=y/CONFIG_SECURITY_KERNELSU=y/' out/.config
-          sed -i 's/^CONFIG_SECURITY_KERNELSU=.*/CONFIG_SECURITY_KERNELSU=y/' out/.config
-
-          sed -i 's/^# CONFIG_KERNELSU_SELINUX=y/CONFIG_KERNELSU_SELINUX=y/' out/.config
-          sed -i 's/^CONFIG_KERNELSU_SELINUX=.*/CONFIG_KERNELSU_SELINUX=y/' out/.config
+          
           sed -i '637 s/^/\/\//' kernel/sys.c
 
             make CC="ccache clang" O=out ARCH="${{ env.KERNEL_ARCH }}" ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} ${{ env.DEFCONFIG_NAME }}
