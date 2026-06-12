@@ -15,7 +15,6 @@ runs:
 
           # Hook dtbo generate code to kernel
           cd $GITHUB_WORKSPACE/device_kernel
-          sed -i '637 s/^/\/\//' kernel/sys.c
           sed -i '/targets := Image Image.bz2 Image.gz Image.lz4 Image.lzma Image.lzo/s/$/ dtbo.img/' ./arch/"${{ env.KERNEL_ARCH }}"/boot/Makefile
           sed -i '/# Add RTIC DTB to the DTB list if RTIC MPGen is enabled/i \DTBO_OBJS := $(shell find $(obj)/dts/ -name \\*.dtbo)\n' arch/"${{ env.KERNEL_ARCH }}"/boot/Makefile
           sed -i '/$(obj)\/Image\.gz-dtb: $(obj)\/Image\.gz $(DTB_OBJS) FORCE/a \#DTBO\n$(obj)\/dtbo.img: $(DTBO_OBJS) FORCE\n\t$(call if_changed,mkdtimg)' ./arch/"${{ env.KERNEL_ARCH }}"/boot/Makefile
@@ -51,6 +50,7 @@ runs:
             echo "========================"
             echo "=Read Defconfig (Clang)="
             echo "========================"
+            sed -i '637 s/^/\/\//' kernel/sys.c
             make CC="ccache clang" O=out ARCH="${{ env.KERNEL_ARCH }}" ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} ${{ env.DEFCONFIG_NAME }}
           else
             echo "================"
