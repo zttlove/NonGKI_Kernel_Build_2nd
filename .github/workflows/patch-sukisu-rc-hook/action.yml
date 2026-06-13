@@ -1,32 +1,31 @@
-name: Fix SukiSU RC Hook
-description: Patch read_write.c and add kernelsu compile entry
-runs:
-  using: composite
-  steps:
-    - name: Apply patch & fix Makefile
-      shell: bash
-      run: |
-        cd "${GITHUB_WORKSPACE}/device_kernel"
+      - name: 🪝 Fix SukiSU RC Hook Symbol
+        shell: bash
+        run: |
+          cd "${GITHUB_WORKSPACE}/device_kernel"
 
-        # 给 read_write.c 增加条件编译
-        cat > suki_rc_hook.patch << 'EOF'
-        diff --git a/fs/read_write.c b/fs/read_write.c
-        index 0000000..1111111 100644
-        --- a/fs/read_write.c
-        +++ b/fs/read_write.c
-        @@ -594,6 +594,10 @@ SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
-         {
-        +#ifdef CONFIG_KERNELSU_RC_HOOK
-        +       ksu_init_rc_hook();
-        +#endif
-                return ksys_read(fd, buf, count);
-         }
-        EOF
-        patch -p1 --ignore-whitespace < suki_rc_hook.patch || true
-        rm -f suki_rc_hook.patch
+          echo "[SukiSU] Wrapping existing ksu_init_rc_hook call with #ifdef"
+          # 1. 给已有的 ksu_init_rc_hook 调用加上条件编译
+          # 假设调用行在 SYSCALL_DEFINE3(read) 内部
+          sed -i '/ksu_init_rc_hook/i\#ifdef CONFIG_KERNELSU_RC_HOOK' fs/read_write.c
+          sed -i '/ksu_init_rc_hook/a\#endif' fs/read_write.c
 
-        # 补全顶层 Makefile 编译入口
-        if ! grep -q 'obj-$(CONFIG_KERNELSU) += drivers/kernelsu/' Makefile; then
-          echo 'obj-$(CONFIG_KERNELSU) += drivers/kernelsu/' >> Makefile
-          echo "[+] Added drivers/kernelsu to Makefile"
-        fi
+          # 2. 确保顶层 Makefile 加载 drivers/kernelsu
+          if ! grep -q 'obj-$(CONFIG_KERNELSU) += drivers/kernelsu/' Makefile; then
+            echo 'obj-$(CONFIG_KERNELSU) += drivers/kernelsu/' >> Makefile
+            echo "[+] Added drivers/kernelsu to Makefile"
+          fi      - name: 🪝 Fix SukiSU RC Hook Symbol
+        shell: bash
+        run: |
+          cd "${GITHUB_WORKSPACE}/device_kernel"
+
+          echo "[SukiSU] Wrapping existing ksu_init_rc_hook call with #ifdef"
+          # 1. 给已有的 ksu_init_rc_hook 调用加上条件编译
+          # 假设调用行在 SYSCALL_DEFINE3(read) 内部
+          sed -i '/ksu_init_rc_hook/i\#ifdef CONFIG_KERNELSU_RC_HOOK' fs/read_write.c
+          sed -i '/ksu_init_rc_hook/a\#endif' fs/read_write.c
+
+          # 2. 确保顶层 Makefile 加载 drivers/kernelsu
+          if ! grep -q 'obj-$(CONFIG_KERNELSU) += drivers/kernelsu/' Makefile; then
+            echo 'obj-$(CONFIG_KERNELSU) += drivers/kernelsu/' >> Makefile
+            echo "[+] Added drivers/kernelsu to Makefile"
+          fi
