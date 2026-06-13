@@ -37,6 +37,8 @@ runs:
           
           echo "[Clean] Remove old out build dir"
           rm -rf out/
+          echo "[Fix] Removing ksu_init_rc_hook call from read_write.c"
+           sed -i '/ksu_init_rc_hook/d' fs/read_write.c
           # Function
           BUILD_PROCESS(){
           if [ -n "$1" ]; then
