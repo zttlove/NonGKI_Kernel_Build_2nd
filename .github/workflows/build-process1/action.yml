@@ -32,7 +32,11 @@ runs:
         shell: bash
         run: |
           cd $GITHUB_WORKSPACE/device_kernel/
-
+          echo "[Clean] Run make mrproper"
+          make mrproper
+          
+          echo "[Clean] Remove old out build dir"
+          rm -rf out/
           # Function
           BUILD_PROCESS(){
           if [ -n "$1" ]; then
