@@ -7,9 +7,9 @@
           echo "[1/3] Checking and wrapping ksu_init_rc_hook call..."
           # 给已有的 ksu_init_rc_hook 调用加上条件编译（避免重复补丁问题）
           if grep -q "ksu_init_rc_hook" fs/read_write.c; then
-            # 给调用前后加上 #ifdef / #endif
-            sed -i '/ksu_init_rc_hook/i\#ifdef CONFIG_KERNELSU_RC_HOOK' fs/read_write.c
-            sed -i '/ksu_init_rc_hook/a\#endif' fs/read_write.c
+            # 注意：sed 中的 # 需要转义为 \#，否则可能导致语法错误或未预期的替换
+            sed -i '/ksu_init_rc_hook/i\\#ifdef CONFIG_KERNELSU_RC_HOOK' fs/read_write.c
+            sed -i '/ksu_init_rc_hook/a\\#endif' fs/read_write.c
             echo "[+] Wrapped ksu_init_rc_hook with CONFIG_KERNELSU_RC_HOOK"
           else
             echo "[!] ksu_init_rc_hook not found in read_write.c, skipping..."
