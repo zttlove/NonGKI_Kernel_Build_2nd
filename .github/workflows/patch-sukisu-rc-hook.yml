@@ -1,0 +1,33 @@
+name: Patch SukiSU RC Hook Fix
+
+runs:
+  using: composite
+  steps:
+    - name: Apply RC Hook Patch & Config Fix
+      shell: bash
+      run: |
+        cd "${GITHUB_WORKSPACE}/device_kernel"
+
+        # 1. 给 fs/read_write.c 添加条件编译补丁（根治未定义符号）
+        cat > suki_rc_hook.patch << 'EOF'
+        diff --git a/fs/read_write.c b/fs/read_write.c
+        index 0000000..1111111 100644
+        --- a/fs/read_write.c
+        +++ b/fs/read_write.c
+        @@ -594,6 +594,10 @@ SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
+         {
+        +#ifdef CONFIG_KERNELSU_RC_HOOK
+        +       ksu_init_rc_hook();
+        +#endif
+                return ksys_read(fd, buf, count);
+         }
+        EOF
+        # 应用补丁，重复执行不报错
+        patch -p1 --ignore-whitespace < suki_rc_hook.patch || true
+        rm -f suki_rc_hook.patch
+
+        # 2. 确保顶层 Makefile 加载 drivers/kernelsu
+        if ! grep -q 'obj-$(CONFIG_KERNELSU) += drivers/kernelsu/' Makefile; then
+          echo 'obj-$(CONFIG_KERNELSU) += drivers/kernelsu/' >> Makefile
+          echo "[SukiSU] Added kernelsu compile entry"
+        fi
