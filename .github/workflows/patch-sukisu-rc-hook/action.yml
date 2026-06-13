@@ -1,26 +1,32 @@
-      - name: 🪝 Fix SukiSU RC Hook Symbol
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "${GITHUB_WORKSPACE}/device_kernel"
+# action.yml (必须放在 patch-sukisu-rc-hook/action.yml)
+name: 'Fix SukiSU RC Hook Symbol'
+description: 'Automatically patch SukiSU RC Hook symbol for Non-GKI Kernels'
+# runs 部分定义了该 Action 实际执行的逻辑
+runs:
+  using: "composite" # 推荐使用 composite，允许包含多个 shell 步骤
+  steps:
+    - name: 🪝 Fix SukiSU RC Hook Symbol
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd "${GITHUB_WORKSPACE}/device_kernel"
 
-          echo "[1/3] Checking and wrapping ksu_init_rc_hook call..."
-          # 给已有的 ksu_init_rc_hook 调用加上条件编译（避免重复补丁问题）
-          if grep -q "ksu_init_rc_hook" fs/read_write.c; then
-            # 注意：sed 中的 # 需要转义为 \#，否则可能导致语法错误或未预期的替换
-            sed -i '/ksu_init_rc_hook/i\\#ifdef CONFIG_KERNELSU_RC_HOOK' fs/read_write.c
-            sed -i '/ksu_init_rc_hook/a\\#endif' fs/read_write.c
-            echo "[+] Wrapped ksu_init_rc_hook with CONFIG_KERNELSU_RC_HOOK"
-          else
-            echo "[!] ksu_init_rc_hook not found in read_write.c, skipping..."
-          fi
+        echo "[1/3] Checking and wrapping ksu_init_rc_hook call..."
+        if grep -q "ksu_init_rc_hook" fs/read_write.c; then
+          sed -i '/ksu_init_rc_hook/i\\#ifdef CONFIG_KERNELSU_RC_HOOK' fs/read_write.c
+          sed -i '/ksu_init_rc_hook/a\\#endif' fs/read_write.c
+          echo "[+] Wrapped ksu_init_rc_hook with CONFIG_KERNELSU_RC_HOOK"
+        else
+          echo "[!] ksu_init_rc_hook not found in read_write.c, skipping..."
+        fi
 
-          echo "[2/3] Ensuring drivers/kernelsu is in Makefile..."
-          if ! grep -q 'obj-$(CONFIG_KERNELSU) += drivers/kernelsu/' Makefile; then
-            echo 'obj-$(CONFIG_KERNELSU) += drivers/kernelsu/' >> Makefile
-            echo "[+] Added drivers/kernelsu to top-level Makefile"
-          else
-            echo "[!] drivers/kernelsu already in Makefile, skipping..."
-          fi
+        echo "[2/3] Ensuring drivers/kernelsu is in Makefile..."
+        # 建议确认这里是根 Makefile 还是 drivers/Makefile
+        if ! grep -q 'obj-$(CONFIG_KSU) += kernelsu/' drivers/Makefile; then
+          echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
+          echo "[+] Added drivers/kernelsu to top-level Makefile"
+        else
+          echo "[!] drivers/kernelsu already in Makefile, skipping..."
+        fi
 
-          echo "[3/3] Done."
+        echo "[3/3] Done."
