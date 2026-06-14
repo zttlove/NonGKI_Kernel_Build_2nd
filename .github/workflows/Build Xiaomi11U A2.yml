@@ -130,7 +130,7 @@ jobs:
         uses: ./.github/workflows/patch-hide-stuff
         
       
-      - name: 🔧 Patch Hide Stuff
+      - name: 🔧 Fix SukiSU RC Hook Symbol
         uses: ./.github/workflows/patch-hide-stuff
 
       - name: 🚀 Build Process
@@ -144,7 +144,7 @@ jobs:
           set -euo pipefail
           echo "============================================="
           echo "📦 开始打包 Star Hyper A16 内核卡刷包"
-          echo "============================================="
+          echo "==========================================="
 
           TIME=$(TZ=Asia/Shanghai date +"%Y-%m-%d")
           KERNEL_DIR="${GITHUB_WORKSPACE}/device_kernel"
