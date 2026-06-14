@@ -1,9 +1,26 @@
-name: 'Fix SukiSU RC Hook Symbol'
-description: 'Automatically patch SukiSU RC Hook symbol for Non-GKI Kernels'
+name: Clean KSU RC Hook
+description: Remove ksu_init_rc_hook residual code and config
+
+# 核心：自定义 Action 必须用 runs + steps 结构
 runs:
   using: "composite"
   steps:
-    - name: Remove RC Hook code block & symbol reference
-  run: |
-    # 仅删除 ksu_init_rc_hook 单行引用，不操作条件编译块
-    find . -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i '/ksu_init_rc_hook/d' {} \;
+    - name: Check residual code
+      shell: bash
+      run: |
+        grep -rn --include='*.[ch]' 'ksu_init_rc_hook' . || true
+        grep -rn --include='*.[ch]' 'CONFIG_KERNELSU_RC_HOOK' . || true
+
+    - name: Clean RC Hook code
+      shell: bash
+      run: |
+        find . -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i '/ksu_init_rc_hook/d' {} \;
+        find . -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i '/^#ifdef CONFIG_KERNELSU_RC_HOOK/,/^#endif/d' {} \;
+        sed -i 's/^CONFIG_KERNELSU_RC_HOOK=y/# CONFIG_KERNELSU_RC_HOOK is not set/' .config
+        sed -i 's/^CONFIG_KSU_SUSFS_SUS_MOUNT=y/# CONFIG_KSU_SUSFS_SUS_MOUNT is not set/' .config
+        sed -i 's/^CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y/# CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT is not set/' .config
+
+    - name: Verify
+      shell: bash
+      run: |
+        grep -rn --include='*.[ch]' 'ksu_init_rc_hook' . || echo "✅ Clean completed"
