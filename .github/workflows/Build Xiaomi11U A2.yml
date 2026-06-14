@@ -129,7 +129,7 @@ jobs:
       - name: 🔧 Patch Hide Stuff
         uses: ./.github/workflows/patch-hide-stuff
         
-      - name: 🔧 Patch Hide Stuff
+      - name: 🔧 Fix SukiSU RC Hook Symbol
         uses: ./.github/workflows/patch-hide-stuff
       
 
