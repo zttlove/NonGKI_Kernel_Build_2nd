@@ -16,9 +16,6 @@ runs:
       run: |
         find . -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i '/ksu_init_rc_hook/d' {} \;
         find . -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i '/^#ifdef CONFIG_KERNELSU_RC_HOOK/,/^#endif/d' {} \;
-        sed -i 's/^CONFIG_KERNELSU_RC_HOOK=y/# CONFIG_KERNELSU_RC_HOOK is not set/' .config
-        sed -i 's/^CONFIG_KSU_SUSFS_SUS_MOUNT=y/# CONFIG_KSU_SUSFS_SUS_MOUNT is not set/' .config
-        sed -i 's/^CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y/# CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT is not set/' .config
 
     - name: Verify
       shell: bash
