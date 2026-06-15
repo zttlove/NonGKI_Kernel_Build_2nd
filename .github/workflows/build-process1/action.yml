@@ -52,7 +52,7 @@ runs:
             echo "========================"
           
           
-          sed -i '637 s/^/\/\//' kernel/sys.c
+          //sed -i '637 s/^/\/\//' kernel/sys.c
 
             make CC="ccache clang" O=out ARCH="${{ env.KERNEL_ARCH }}" ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} ${{ env.DEFCONFIG_NAME }}
           else
