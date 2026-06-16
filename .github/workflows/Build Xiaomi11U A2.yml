@@ -129,8 +129,8 @@ jobs:
       - name: 🔧 Patch Hide Stuff
         uses: ./.github/workflows/patch-hide-stuff
         
-      - name: 🔧 Fix SukiSU RC Hook Symbol
-        uses: ./.github/workflows/patch-sukisu-rc-hook
+      #- name: 🔧 Fix SukiSU RC Hook Symbol
+      #  uses: ./.github/workflows/patch-sukisu-rc-hook
       
 
       - name: 🚀 Build Process
