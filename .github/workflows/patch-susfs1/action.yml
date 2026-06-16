@@ -92,29 +92,37 @@ runs:
           fi
 
       - name: SUSFS Patch Fixed
-        if: env.SUSFS_ENABLE == 'true' && env.SUSFS_SKIP != 'true'
-        shell: bash
-        run: |
-          cd $GITHUB_WORKSPACE/device_kernel/
+  if: env.SUSFS_ENABLE == 'true' && env.SUSFS_SKIP != 'true' && env.SUSFS_FIXED == 'true'
+  shell: bash
+  run: |
+    cd $GITHUB_WORKSPACE/device_kernel/
 
-          if [[ -z "${{ env.SUSFS_PATCH_FIXED }}" ]]; then
-            echo "[-] You didn't provide any patch file."
-          else
-            IFS=',' read -ra FIXED_LIST <<< "${{ env.SUSFS_PATCH_FIXED }}"
-            echo "[+] =================================== "
-            for i in "${!FIXED_LIST[@]}"; do
-              echo "Patching -> ${FIXED_LIST[$i]}"
-              if [[ -z "${{ env.SUSFS_FOLDER_FIXED }}" ]]; then
-                cp NonGKI_Kernel_Patches/${FIXED_LIST[$i]}.patch ./
-              else
-                cp NonGKI_Kernel_Patches/"${{ env.SUSFS_FOLDER_FIXED }}"/${FIXED_LIST[$i]}.patch ./
-              fi
-              patch -p1 < ${FIXED_LIST[$i]}.patch || true
-              echo "[+] Patching successful!"
-              echo "[+] =================================== "
-            done
-          fi
+    if [[ -z "${{ env.SUSFS_PATCH_FIXED }}" ]]; then
+      echo "[-] You didn't provide any patch file."
+    else
+      IFS=',' read -ra FIXED_LIST <<< "${{ env.SUSFS_PATCH_FIXED }}"
+      echo "[+] =================================== "
+      for i in "${!FIXED_LIST[@]}"; do
+        patch_name=${FIXED_LIST[$i]}
+        if [[ -z "${{ env.SUSFS_FOLDER_FIXED }}" ]]; then
+          full_patch_path="NonGKI_Kernel_Patches/${patch_name}.patch"
+        else
+          full_patch_path="NonGKI_Kernel_Patches/${{ env.SUSFS_FOLDER_FIXED }}/${patch_name}.patch"
+        fi
+        echo "Patching -> $full_patch_path"
+        
+        # 新增：校验补丁文件是否存在
+        if [ ! -f "$full_patch_path" ]; then
+          echo "[FATAL] Fixed patch file not found: $full_patch_path"
+          exit 1
+        fi
 
+        cp "$full_patch_path" ./
+        patch -p1 < ${patch_name}.patch || true
+        echo "[+] Patching successful!"
+        echo "[+] =================================== "
+      done
+    fi
       - name: Upload Build Patch Rejected Files
         if: env.BUILD_DEBUGGER == 'true'
         uses: actions/upload-artifact@v4
