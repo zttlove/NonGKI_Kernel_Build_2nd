@@ -3,138 +3,130 @@ name: 'Patch SuSFS for Kernel.'
 runs:
   using: 'composite'
   steps:
-    # 【删除克隆外部补丁仓库的整个步骤，不再远程拉取】
+      - name: Get SuSFS
+        if: env.SUSFS_ENABLE == 'true'
+        shell: bash
+        run: |
+          cd $GITHUB_WORKSPACE/device_kernel/
 
-    - name: Set KSU and SUSFS for DEFCONFIG
-      if: env.SUSFS_ENABLE == 'true'
-      shell: bash
-      run: |
-        set -euo pipefail
-        cd $GITHUB_WORKSPACE/device_kernel
-        DEFCONFIG_FILE=arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-
-        echo "CONFIG_KSU_SUSFS=y" >> $DEFCONFIG_FILE
-        echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> $DEFCONFIG_FILE
-
-        if grep -q "THREAD_INFO_IN_TASK" drivers/kernelsu/Kconfig; then
-          echo "CONFIG_THREAD_INFO_IN_TASK=y" >> $DEFCONFIG_FILE
-        fi
-        echo "[+] Defconfig SUSFS 配置注入完成"
-
-    - name: Patch Base SuSFS Main Patch
-      if: env.SUSFS_ENABLE == 'true'
-      shell: bash
-      run: |
-        set -euo pipefail
-        cd $GITHUB_WORKSPACE/device_kernel/
-        export SUSFS_SKIP="false"
-        export REJ_COUNT=0
-
-        PACK_FILES(){
-          temp_dir=$(mktemp -d)
-          find . -name "*.rej" -exec cp --parents {} "$temp_dir" \;
-          find . -name "*.rej" | sed 's/\.rej$//' | xargs -I {} test -f {} && find . -name "*.rej" | sed 's/\.rej$//' | xargs -I {} cp --parents {} "$temp_dir"
-          tar -czf "rej_files_$(date +%s).tar.gz" -C "$temp_dir" .
-          rm -rf "$temp_dir"
-          echo "[+] 冲突文件打包完成"
-          find . -type f \( -name "*.rej" -o -name "*.orig" \) -delete
-          echo "[+] 清理全部 .rej / .orig 临时文件"
-        }
-
-        # 检测内核已存在SUSFS补丁
-        if grep -q "CONFIG_KSU_SUSFS" fs/namespace.c; then
-          echo "[INFO] 内核已预置SUSFS，跳过补丁流程"
-          echo "SUSFS_SKIP=true" >> $GITHUB_ENV
-          exit 0
-        fi
-
-        # 应用主SUSFS补丁
-        cp /tmp/Patches/Patch/susfs_patch_to_${{ env.KERNEL_VERSION }}.patch ./
-        echo "[+] 开始应用 SUSFS 主补丁 susfs_patch_to_${{ env.KERNEL_VERSION }}.patch"
-        patch_ret=0
-        patch -p1 < susfs_patch_to_${{ env.KERNEL_VERSION }}.patch || patch_ret=$?
-
-        # 统计冲突文件数量
-        mapfile -t REJ_FILE_LIST < <(find . -type f -name "*.rej")
-        export REJ_COUNT=${#REJ_FILE_LIST[@]}
-        echo "REJ_COUNT=$REJ_COUNT" >> $GITHUB_ENV
-        echo "[+] 主补丁执行完成，检测到冲突文件数量：$REJ_COUNT"
-
-        # 调试模式打印全部冲突内容
-        if [[ "${{ env.BUILD_DEBUGGER }}" == "true" && $REJ_COUNT -gt 0 ]]; then
-          echo "::warning::存在补丁冲突，详情如下："
-          for rej in "${REJ_FILE_LIST[@]}"; do
-            echo "===== $rej ====="
-            cat "$rej"
-          done
-        fi
-
-        # 存在冲突则提前打包留存
-        if [[ $REJ_COUNT -gt 0 ]]; then
-          PACK_FILES
-        fi
-
-        # 无冲突直接放行，跳过后续终止逻辑
-        if [[ $REJ_COUNT -eq 0 ]]; then
-          exit 0
-        fi
-
-        # 无自动修复补丁时直接终止构建
-        if [[ -z "${{ env.SUSFS_PATCH_FIXED }}" ]]; then
-          echo "::error::检测到补丁冲突且未配置修复补丁，终止构建"
-          PACK_FILES
-          false
-        fi
-
-    - name: SUSFS Patch Fixed Hotfix
-      if: env.SUSFS_ENABLE == 'true' && env.SUSFS_SKIP != 'true' && env.SUSFS_FIXED == 'true' && env.REJ_COUNT > 0
-      shell: bash
-      run: |
-        set -euo pipefail
-        cd $GITHUB_WORKSPACE/device_kernel/
-
-        if [[ -z "${{ env.SUSFS_PATCH_FIXED }}" ]]; then
-          echo "::error::SUSFS_FIXED 开启但未配置 SUSFS_PATCH_FIXED 补丁列表"
-          exit 1
-        fi
-
-        IFS=',' read -ra FIXED_LIST <<< "${{ env.SUSFS_PATCH_FIXED }}"
-        echo "[+] 开始应用修复补丁，共 ${#FIXED_LIST[@]} 个"
-
-        for patch_name in "${FIXED_LIST[@]}"; do
-          # 读取【构建脚本仓库】内置补丁，路径匹配 Patches/Patch/xxx.patch
-          full_patch_path="${GITHUB_WORKSPACE}/Patches/Patch/${patch_name}.patch"
-          echo "[+] 应用补丁：$full_patch_path"
-
-          if [ ! -f "$full_patch_path" ]; then
-            echo "::error::修复补丁文件不存在: $full_patch_path"
-            exit 1
+          # Core
+          if [[ "${{ env.SUSFS_FIXED }}" == true ]]; then
+            if [ -z "${{ env.PATCHES_SOURCE }}" ] || [ -z "${{ env.PATCHES_BRANCH }}" ]; then
+              echo "[-] Please input a vaild source and branch!"
+              false
+            elif [[ "${{ env.PATCHES_SOURCE }}" == *".git" ]]; then
+              echo "[-] Please do not set a full URL in PATCH_SOURCE!"
+              false
+            else
+              git clone https://github.com/${{ env.PATCHES_SOURCE }}.git -b ${{ env.PATCHES_BRANCH }} NonGKI_Kernel_Patches --depth=1 # It's not necessary.
+            fi
           fi
-          patch -p1 < "$full_patch_path" || true
-        done
 
-        # 二次校验冲突
-        mapfile -t NEW_REJ < <(find . -type f -name "*.rej")
-        if [[ ${#NEW_REJ[@]} -gt 0 ]]; then
-          echo "::error::修复补丁应用后仍存在 ${#NEW_REJ[@]} 处冲突，终止构建"
-          ls "${NEW_REJ[@]}"
+      - name: Set KSU and SUSFS for DEFCONFIG
+        if: env.SUSFS_ENABLE == 'true'
+        shell: bash
+        run: |
+          cd $GITHUB_WORKSPACE/device_kernel
+
+          echo "CONFIG_KSU_SUSFS=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
+          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
+          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
+          echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
+          echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
+          echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
+          echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
+          echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
+          echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
+          echo "CONFIG_KSU_SUSFS_SUS_MAP=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
+
+          if grep -q "THREAD_INFO_IN_TASK" "drivers/kernelsu/Kconfig"; then
+            echo "CONFIG_THREAD_INFO_IN_TASK=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
+          fi
+
+      - name: Patch SuSFS
+        if: env.SUSFS_ENABLE == 'true'
+        shell: bash
+        run: |
+          cd $GITHUB_WORKSPACE/device_kernel/
+
           PACK_FILES(){
             temp_dir=$(mktemp -d)
             find . -name "*.rej" -exec cp --parents {} "$temp_dir" \;
-            tar -czf "rej_files_fixed_fail.tar.gz" -C "$temp_dir" .
+            find . -name "*.rej" | sed 's/\.rej$//' | xargs -I {} test -f {} && find . -name "*.rej" | sed 's/\.rej$//' | xargs -I {} cp --parents {} "$temp_dir"
+            tar -czf "rej_files_1.5.5.tar.gz" -C "$temp_dir" .
             rm -rf "$temp_dir"
-            find . -type f \( -name "*.rej" -o -name "*.orig" \) -delete
-          }
-          PACK_FILES
-          false
-        fi
-        echo "[+] 全部修复补丁应用完成，无残留冲突"
+            echo "[+] Packed Successfully."
 
-    - name: Upload Patch Rejected Artifact
-      if: env.SUSFS_ENABLE == 'true'
-      uses: actions/upload-artifact@v4
-      with:
-        name: susfs_patch_reject_logs
-        retention-days: 7
-        path: device_kernel/rej_files_*.tar.gz
-        if-no-files-found: ignore
+            find . -type f \( -name "*.rej" -o -name "*.orig" \) -delete
+            echo "[+] Removed all .rej and .orig files."
+            echo "[+] =================================== "
+          }
+
+          # Check SuSFS
+          if grep -q "CONFIG_KSU_SUSFS" "fs/namespace.c"; then
+            echo "[-] SuSFS is already patched, Skipped."
+            echo "SUSFS_SKIP=true" >> $GITHUB_ENV
+          else
+            cp /tmp/Patches/Patch/susfs_patch_to_${{ env.KERNEL_VERSION }}.patch ./
+
+            patch -p1 < susfs_patch_to_${{ env.KERNEL_VERSION }}.patch || true
+            echo "[+] SuSFS Patch completed."
+          fi
+
+          # Patch .rej find
+          if [[ "${{ env.BUILD_DEBUGGER }}" == "true" ]]; then
+            echo "[+] Checking SuSFS v2.0.00 rej files..."
+            mapfile -t REJ_FILES < <(find . -type f -name "*.rej")
+            if [ ${#REJ_FILES[@]} -eq 0 ]; then
+                echo "[+] Your kernel have no any rej files, Skipped."
+            else
+                for CAT_REJ in "${REJ_FILES[@]}"; do
+                    echo "[-] Found .rej file: $CAT_REJ"
+                    cat $CAT_REJ
+                    echo "[+] =================================== "
+                done
+            fi
+
+            if [[ "${{ env.SKIP_PATCH }}" == "true" ]] || [ -n "${{ env.SUSFS_PATCH_FIXED }}" ]; then
+                echo "[+] SuSFS Patch Version: v2.1.00. "
+                echo "[+] SKIP_PATCH enabled or found SuSFS v2.1.00 Fixed Patch, skipping."
+                PACK_FILES
+            elif [[ "${{ env.SKIP_PATCH }}" != "true" ]] || [ -z "${{ env.SUSFS_PATCH_FIXED }}" ]; then
+                echo "[+] SuSFS Patch Version: v2.1.00. "
+                echo "[-] Found .rej files, Stopped! "
+                PACK_FILES
+                false
+            fi
+          fi
+
+      - name: SUSFS Patch Fixed
+        if: env.SUSFS_ENABLE == 'true' && env.SUSFS_SKIP != 'true'
+        shell: bash
+        run: |
+          cd $GITHUB_WORKSPACE/device_kernel/
+
+          if [[ -z "${{ env.SUSFS_PATCH_FIXED }}" ]]; then
+            echo "[-] You didn't provide any patch file."
+          else
+            IFS=',' read -ra FIXED_LIST <<< "${{ env.SUSFS_PATCH_FIXED }}"
+            echo "[+] =================================== "
+            for i in "${!FIXED_LIST[@]}"; do
+              echo "Patching -> ${FIXED_LIST[$i]}"
+              if [[ -z "${{ env.SUSFS_FOLDER_FIXED }}" ]]; then
+                cp NonGKI_Kernel_Patches/${FIXED_LIST[$i]}.patch ./
+              else
+                cp NonGKI_Kernel_Patches/"${{ env.SUSFS_FOLDER_FIXED }}"/${FIXED_LIST[$i]}.patch ./
+              fi
+              patch -p1 < ${FIXED_LIST[$i]}.patch || true
+              echo "[+] Patching successful!"
+              echo "[+] =================================== "
+            done
+          fi
+
+      - name: Upload Build Patch Rejected Files
+        if: env.BUILD_DEBUGGER == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: patch_rejected_files
+          path: |
+            device_kernel/rej_files_*
