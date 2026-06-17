@@ -1009,7 +1009,7 @@ index 15ee40d..3e2a811 100644
  #include <linux/ctype.h>
 +#if defined(CONFIG_KSU_SUSFS_SUS_KSTAT) || defined(CONFIG_KSU_SUSFS_SUS_MAP) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
 +#include <linux/susfs_def.h>
-+#endif // #if defined(CONFIG_KSU_SUSFS_SUS_KSTAT) || defined(CONFIG_KSU_SUSFS_SUS_MAP) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
++#endif
 
  #define SEQ_PAGE_SIZE	(PAGE_SIZE - 256)
 
@@ -1031,6 +1031,7 @@ index 15ee40d..3e2a811 100644
  	unsigned long size = mss->vm_size >> 10;
  	unsigned long rss = mss->rss >> 10;
  	unsigned long pss = mss->pss >> 10;
+  
  #include <asm/elf.h>
  #include <asm/tlb.h>
 @@ -349,6 +352,13 @@ static void show_vma_header_prefix(struct seq_file *m,
