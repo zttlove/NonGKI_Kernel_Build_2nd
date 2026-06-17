@@ -7,7 +7,7 @@ index 15ee40d........
 +	struct mem_size_stats tmp_mss = *mss;
 +
 +#ifdef CONFIG_KSU_SUSFS
-+	if (susfs_is_hide_current()) {
++	if (susfs_is_current_proc_umounted_app()) {
 +		tmp_mss.pss = 0;
 +		tmp_mss.pss_anon = 0;
 +		tmp_mss.pss_shmem = 0;
