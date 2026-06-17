@@ -122,11 +122,17 @@ runs:
               echo "[+] =================================== "
             done
           fi
-
-      - name: Upload Build Patch Rejected Files
+          echo "[+] SuSFS Patch completed."
+          # 收集所有打补丁失败的rej文件
+          echo "[DEBUG] Collect patch reject files..."
+          mkdir -p rej_files_all
+          find . -name "*.rej" -print0 | xargs -0 -I {} cp {} rej_files_all/
+          echo "Collected reject files:"
+          ls rej_files_all/
+          
+      - name: Upload Build Patch Rejected Artifact
         if: env.BUILD_DEBUGGER == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: patch_rejected_files
-          path: |
-            device_kernel/rej_files_*
+          path: device_kernel/rej_files_all/
