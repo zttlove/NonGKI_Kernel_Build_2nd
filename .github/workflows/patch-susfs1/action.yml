@@ -3,24 +3,7 @@ name: 'Patch SuSFS for Kernel.'
 runs:
   using: 'composite'
   steps:
-    - name: Get SuSFS Fixed Patches Repo
-      if: env.SUSFS_ENABLE == 'true' && env.SUSFS_FIXED == 'true'
-      shell: bash
-      run: |
-        set -euo pipefail
-        cd $GITHUB_WORKSPACE/device_kernel/
-
-        if [[ -z "${{ env.PATCHES_SOURCE }}" || -z "${{ env.PATCHES_BRANCH }}" ]]; then
-          echo "::error::必须配置 PATCHES_SOURCE 和 PATCHES_BRANCH 环境变量"
-          exit 1
-        fi
-        if [[ "${{ env.PATCHES_SOURCE }}" == *".git" ]]; then
-          echo "::error::PATCHES_SOURCE 仅填写 用户名/仓库名，不要完整.git链接"
-          exit 1
-        fi
-
-        git clone https://github.com/${{ env.PATCHES_SOURCE }}.git -b ${{ env.PATCHES_BRANCH }} NonGKI_Kernel_Patches --depth=1
-        echo "[+] 修复补丁仓库克隆完成"
+    # 【删除克隆外部补丁仓库的整个步骤，不再远程拉取】
 
     - name: Set KSU and SUSFS for DEFCONFIG
       if: env.SUSFS_ENABLE == 'true'
@@ -119,15 +102,17 @@ runs:
         echo "[+] 开始应用修复补丁，共 ${#FIXED_LIST[@]} 个"
 
         for patch_name in "${FIXED_LIST[@]}"; do
-        full_patch_path="./${{ env.SUSFS_FOLDER_FIXED }}/${patch_name}.patch"
-        echo "[+] 应用补丁：$full_patch_path"
+          # 读取【构建脚本仓库】内置补丁，路径匹配 Patches/Patch/xxx.patch
+          full_patch_path="${GITHUB_WORKSPACE}/Patches/Patch/${patch_name}.patch"
+          echo "[+] 应用补丁：$full_patch_path"
 
-        if [ ! -f "$full_patch_path" ]; then
-        echo "::error::修复补丁文件不存在: $full_patch_path"
-        exit 1
-        fi
-        patch -p1 < "$full_patch_path" || true
+          if [ ! -f "$full_patch_path" ]; then
+            echo "::error::修复补丁文件不存在: $full_patch_path"
+            exit 1
+          fi
+          patch -p1 < "$full_patch_path" || true
         done
+
         # 二次校验冲突
         mapfile -t NEW_REJ < <(find . -type f -name "*.rej")
         if [[ ${#NEW_REJ[@]} -gt 0 ]]; then
