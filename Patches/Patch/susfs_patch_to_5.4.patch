@@ -3826,22 +3826,4 @@ index 7e1e6bc..7b5c6a6 100644
  	audit_log_format(ab, " tclass=%s", secclass_map[sad->tclass-1].name);
  
  	if (sad->denied)
-diff --git a/fs/proc/task_mmu.c b/fs/proc/task_mmu.c
-index 15ee40d........
---- a/fs/proc/task_mmu.c
-+++ b/fs/proc/task_mmu.c
-@@ -1740,6 +1748,14 @@ static void __show_smap(struct seq_file *m, const struct mem_size_stats *mss,
- {
-+	struct mem_size_stats tmp_mss = *mss;
-+
-+#ifdef CONFIG_KSU_SUSFS
-+	if (susfs_is_hide_current()) {
-+		tmp_mss.pss = 0;
-+		tmp_mss.pss_anon = 0;
-+		tmp_mss.pss_shmem = 0;
-+		tmp_mss.swap_pss = 0;
-+		tmp_mss.anonymous = 0;
-+		tmp_mss.shmem_thp = 0;
-+		tmp_mss.swap = 0;
-+	}
-+#endif
+
