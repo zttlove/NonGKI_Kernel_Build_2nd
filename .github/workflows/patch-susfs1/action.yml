@@ -129,7 +129,11 @@ runs:
           find . -name "*.rej" -print0 | xargs -0 -I {} cp {} rej_files_all/
           echo "Collected reject files:"
           ls rej_files_all/
-          
+          if [[ "${SUSFS_CONFLICT_EXIT:-false}" == "true" ]]; then
+          echo "::error::[-] There are unresolved SUSFS patch conflicts, build abort."
+          exit 1
+          fi
+        
       - name: Upload Build Patch Rejected Artifact
         if: env.BUILD_DEBUGGER == 'true'
         uses: actions/upload-artifact@v4
