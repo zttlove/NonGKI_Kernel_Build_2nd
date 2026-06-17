@@ -119,21 +119,15 @@ runs:
         echo "[+] 开始应用修复补丁，共 ${#FIXED_LIST[@]} 个"
 
         for patch_name in "${FIXED_LIST[@]}"; do
-          if [[ -z "${{ env.SUSFS_FOLDER_FIXED }}" ]]; then
-            full_patch_path="NonGKI_Kernel_Patches/${patch_name}.patch"
-          else
-            full_patch_path="NonGKI_Kernel_Patches/${{ env.SUSFS_FOLDER_FIXED }}/${patch_name}.patch"
-          fi
-          echo "[+] 应用补丁：$full_patch_path"
+        full_patch_path="./${{ env.SUSFS_FOLDER_FIXED }}/${patch_name}.patch"
+        echo "[+] 应用补丁：$full_patch_path"
 
-          if [ ! -f "$full_patch_path" ]; then
-            echo "::error::修复补丁文件不存在: $full_patch_path"
-            exit 1
-          fi
-          # 直接读取原路径，不再拷贝到根目录
-          patch -p1 < "$full_patch_path" || true
+        if [ ! -f "$full_patch_path" ]; then
+        echo "::error::修复补丁文件不存在: $full_patch_path"
+        exit 1
+        fi
+        patch -p1 < "$full_patch_path" || true
         done
-
         # 二次校验冲突
         mapfile -t NEW_REJ < <(find . -type f -name "*.rej")
         if [[ ${#NEW_REJ[@]} -gt 0 ]]; then
