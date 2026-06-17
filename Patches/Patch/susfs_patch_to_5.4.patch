@@ -999,10 +999,6 @@ index 81882a1..4b63e53 100644
  		   (long long)file->f_pos, f_flags,
  		   real_mount(file->f_path.mnt)->mnt_id);
  
-+#endif // #if defined(CONFIG_KSU_SUSFS_SUS_MOUNT) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
- 	show_fd_locks(m, file, files);
- 	if (seq_has_overflowed(m))
- 		goto out;
 diff --git a/fs/proc/task_mmu.c b/fs/proc/task_mmu.c
 index 15ee40d..3e2a811 100644
 --- a/fs/proc/task_mmu.c
@@ -1015,9 +1011,8 @@ index 15ee40d..3e2a811 100644
 +#include <linux/susfs_def.h>
 +#endif // #if defined(CONFIG_KSU_SUSFS_SUS_KSTAT) || defined(CONFIG_KSU_SUSFS_SUS_MAP) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
 
+ #define SEQ_PAGE_SIZE	(PAGE_SIZE - 256)
 
---- a/fs/proc/task_mmu.c
-+++ b/fs/proc/task_mmu.c
 @@ -1740,6 +1748,14 @@ static void __show_smap(struct seq_file *m, const struct mem_size_stats *mss,
  {
 +	struct mem_size_stats tmp_mss = *mss;
@@ -1033,7 +1028,9 @@ index 15ee40d..3e2a811 100644
 +		tmp_mss.swap = 0;
 +	}
 +#endif
-
+ 	unsigned long size = mss->vm_size >> 10;
+ 	unsigned long rss = mss->rss >> 10;
+ 	unsigned long pss = mss->pss >> 10;
  #include <asm/elf.h>
  #include <asm/tlb.h>
 @@ -349,6 +352,13 @@ static void show_vma_header_prefix(struct seq_file *m,
