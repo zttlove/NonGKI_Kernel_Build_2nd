@@ -87,7 +87,7 @@ runs:
             echo "[+] SuSFS Patch Version: v2.1.00. "
             echo "[-] Found .rej files, Stopped! "
             PACK_FILES
-           
+            flase
           fi
         fi
 
