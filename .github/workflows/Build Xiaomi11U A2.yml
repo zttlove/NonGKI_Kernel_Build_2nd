@@ -117,17 +117,36 @@ jobs:
         run: |
           set -euo pipefail
           KERNEL_DIR="${GITHUB_WORKSPACE}/device_kernel"
-          # 分支改为 master，匹配仓库实际分支名
+          rm -rf ksu-tmp
+          # 拉取 master 分支
           git clone --depth=1 -b master https://github.com/backslashxx/KernelSU.git ksu-tmp
           cd ksu-tmp
+
+          # 源路径：仓库根目录下 security/ksu，不是 kernel/security/ksu
           mkdir -p "${KERNEL_DIR}/security/ksu"
-          rsync -av kernel/security/ksu/ "${KERNEL_DIR}/security/ksu/"
-          cp kernel/fs/ksu_fs_hook.c "${KERNEL_DIR}/fs/"
+          rsync -av security/ksu/ "${KERNEL_DIR}/security/ksu/"
+
+          # 复制 fs 钩子文件（确认仓库根目录是否有 fs/ksu_fs_hook.c）
+          if [ -f fs/ksu_fs_hook.c ]; then
+            cp fs/ksu_fs_hook.c "${KERNEL_DIR}/fs/"
+          else
+            echo "⚠️ 当前xxksu仓库无fs/ksu_fs_hook.c，跳过该文件复制"
+          fi
+
+          # 写入 security/Makefile 编译规则
           echo 'obj-$(CONFIG_KSU) += ksu/' >> "${KERNEL_DIR}/security/Makefile"
-          grep -q "ksu_fs_hook" "${KERNEL_DIR}/fs/Makefile" || echo 'obj-$(CONFIG_KSU_FILE_HOOKS) += ksu_fs_hook.o' >> "${KERNEL_DIR}/fs/Makefile"
+
+          # 写入 fs/Makefile 文件钩子编译项（文件存在才写入）
+          if [ -f "${KERNEL_DIR}/fs/ksu_fs_hook.c" ]; then
+            grep -q "ksu_fs_hook" "${KERNEL_DIR}/fs/Makefile" || echo 'obj-$(CONFIG_KSU_FILE_HOOKS) += ksu_fs_hook.o' >> "${KERNEL_DIR}/fs/Makefile"
+          fi
+
+          # 校验部署结果
           cd "${KERNEL_DIR}"
           test -d security/ksu && test -f security/ksu/Makefile && echo "✅ ksu目录部署成功"
-          test -f fs/ksu_fs_hook.c && echo "✅ ksu_fs_hook.c 文件存在"
+          test -f fs/ksu_fs_hook.c && echo "✅ ksu_fs_hook.c 文件存在" || echo "ℹ️ 未复制fs钩子文件，对应CONFIG_KSU_FILE_HOOKS可关闭"
+
+          # 清理临时目录
           rm -rf ../ksu-tmp
 
       - name: 🔗 Patch for no-kprobe
