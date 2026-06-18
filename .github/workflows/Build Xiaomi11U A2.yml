@@ -112,33 +112,22 @@ jobs:
 
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
+        
       - name: 📥 Pull full xxksu source & copy security/ksu
         run: |
           set -euo pipefail
           KERNEL_DIR="${GITHUB_WORKSPACE}/device_kernel"
-          # 克隆xxksu完整仓库（对应KERNELSU_AUTO_FORK=xxksu）
-          git clone --depth=1 -b main https://github.com/backslashxx/KernelSU.git ksu-tmp
+          # 分支改为 master，匹配仓库实际分支名
+          git clone --depth=1 -b master https://github.com/backslashxx/KernelSU.git ksu-tmp
           cd ksu-tmp
-
-          # 1. 同步完整 security/ksu 目录到内核
           mkdir -p "${KERNEL_DIR}/security/ksu"
           rsync -av kernel/security/ksu/ "${KERNEL_DIR}/security/ksu/"
-
-          # 2. 复制fs钩子文件
           cp kernel/fs/ksu_fs_hook.c "${KERNEL_DIR}/fs/"
-
-          # 3. 写入security/Makefile编译规则
           echo 'obj-$(CONFIG_KSU) += ksu/' >> "${KERNEL_DIR}/security/Makefile"
-
-          # 4. 写入fs/Makefile文件钩子编译规则
           grep -q "ksu_fs_hook" "${KERNEL_DIR}/fs/Makefile" || echo 'obj-$(CONFIG_KSU_FILE_HOOKS) += ksu_fs_hook.o' >> "${KERNEL_DIR}/fs/Makefile"
-
-          # 5. 校验文件是否复制成功
           cd "${KERNEL_DIR}"
-          test -d security/ksu && test -f security/ksu/Makefile && echo "✅ ksu完整目录部署完成"
-          test -f fs/ksu_fs_hook.c && echo "✅ ksu_fs_hook.c 存在"
-
-          # 清理临时ksu仓库
+          test -d security/ksu && test -f security/ksu/Makefile && echo "✅ ksu目录部署成功"
+          test -f fs/ksu_fs_hook.c && echo "✅ ksu_fs_hook.c 文件存在"
           rm -rf ../ksu-tmp
 
       - name: 🔗 Patch for no-kprobe
