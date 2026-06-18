@@ -110,7 +110,8 @@ jobs:
       - name: ⚙️ Get neccssary tools
         uses: ./.github/workflows/build-ready1
 
-      
+      - name: 🪝 Patch Kernel of SUSFS
+        uses: ./.github/workflows/patch-susfs1
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
@@ -135,8 +136,7 @@ jobs:
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process1
         
-      - name: 🪝 Patch Kernel of SUSFS
-        uses: ./.github/workflows/patch-susfs1
+      
 
       # 打包Anykernel3 仅Image内核专用
       - name: 📦 Package Anykernel3 Flash Zip
