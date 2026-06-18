@@ -113,7 +113,7 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
         
-            - name: 📥 Pull full xxksu source & copy ksu kernel code
+      - name: 📥 Pull full xxksu source & copy ksu kernel code
         run: |
           set -euo pipefail
           KERNEL_DIR="${GITHUB_WORKSPACE}/device_kernel"
