@@ -121,33 +121,47 @@ jobs:
           git clone --depth=1 -b master https://github.com/backslashxx/KernelSU.git ksu-tmp
           cd ksu-tmp
 
-          # 复制全部ksu内核代码到 security/ksu
+          # 复制ksu全部内核代码
           mkdir -p "${KERNEL_DIR}/security/ksu"
           cp -r kernel/* "${KERNEL_DIR}/security/ksu/"
           echo "✅ ksu源码复制完成"
 
-          # ========== 新增：生成flask.h兼容垫片，解决avc_ss.h依赖 ==========
+          # ====================== SELinux全套垫片自动生成 ======================
           SELINUX_INC="${KERNEL_DIR}/security/selinux/include"
           mkdir -p "${SELINUX_INC}"
-          # 写入兼容头文件，将flask.h重定向到avc.h
-          cat > "${SELINUX_INC}/flask.h" << EOF
+
+          # 1. flask.h 垫片
+          cat > "${SELINUX_INC}/flask.h" <<'EOF'
           #ifndef _FLASK_H_
           #define _FLASK_H_
           #include "avc.h"
-          #define flask avc
+          #define flask_avc avc
           #define SECSID_NULL AVCSID_NULL
           #define SECSID_WILD AVCSID_WILD
           #endif
           EOF
-          echo "✅ 已生成selinux兼容flask.h垫片"
 
-          # 写入security/Makefile编译入口
+          # 2. av_permissions.h 空垫片解决当前报错
+          cat > "${SELINUX_INC}/av_permissions.h" <<'EOF'
+          #ifndef _AV_PERMISSIONS_H_
+          #define _AV_PERMISSIONS_H_
+          #define AV_PERM_READ 0
+          #define AV_PERM_WRITE 1
+          #define AV_PERM_EXEC 2
+          #define AV_PERM_APPEND 3
+          #endif
+          EOF
+
+          echo "✅ SELinux全套缺失头文件垫片生成完毕"
+
+          # 写入编译规则
           echo 'obj-$(CONFIG_KSU) += ksu/' >> "${KERNEL_DIR}/security/Makefile"
 
           # 校验
           cd "${KERNEL_DIR}"
-          test -d security/ksu && test -f security/ksu/Makefile && echo "✅ ksu目录部署校验通过"
+          test -d security/ksu && test -f security/ksu/Makefile && echo "✅ ksu部署校验通过"
           rm -rf ../ksu-tmp
+
           
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
