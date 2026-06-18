@@ -130,21 +130,20 @@ jobs:
           SELINUX_INC="${KERNEL_DIR}/security/selinux/include"
           mkdir -p "${SELINUX_INC}"
 
-          # 1. flask.h 完整修复垫片（覆盖旧版本）
+          # 彻底不用AVCSID_NULL映射，直接硬编码标准SELinux SID常量
           cat > "${SELINUX_INC}/flask.h" <<'EOF'
           #ifndef _FLASK_H_
           #define _FLASK_H_
-
           #include "avc.h"
 
-          /* 补齐SID基础常量，解决SECINITSID_NUM、AVCSID_NULL未定义 */
-          #define SECSID_NULL AVCSID_NULL
-          #define SECSID_WILD AVCSID_WILD
-          #define SECINITSID_NUM 128
-
+          // 标准SELinux初始SID固定数值，5.4内核通用硬编码，不依赖AVCSID_NULL
+          #define SECSID_NULL      0
+          #define SECSID_WILD      1
+          #define SECINITSID_NUM   128
           #define flask_avc avc
           #endif
           EOF
+
 
 
           # 2. av_permissions.h 空垫片解决当前报错
