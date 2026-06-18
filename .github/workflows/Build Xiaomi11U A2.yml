@@ -113,45 +113,30 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
         
-      - name: 📥 Pull full xxksu source & copy security/ksu
+      - name: 📥 Pull full xxksu source & copy ksu kernel code
         run: |
           set -euo pipefail
           KERNEL_DIR="${GITHUB_WORKSPACE}/device_kernel"
           rm -rf ksu-tmp
-          # 克隆master分支仓库
           git clone --depth=1 -b master https://github.com/backslashxx/KernelSU.git ksu-tmp
           cd ksu-tmp
 
-          # 打印kernel内部目录确认
           echo "==== kernel目录内容 ===="
           ls -la kernel/
-          ls -la kernel/security/
           echo "========================"
 
-          # 固定标准路径：kernel/security/ksu
-          SRC_KSU=kernel/security/ksu
-          SRC_FS_HOOK=kernel/fs/ksu_fs_hook.c
-
-          # 复制完整ksu目录到内核
+          # 1. 创建内核 security/ksu 目录
           mkdir -p "${KERNEL_DIR}/security/ksu"
-          rsync -av "${SRC_KSU}/" "${KERNEL_DIR}/security/ksu/"
-          echo "✅ 已同步 security/ksu 完整源码"
 
-          # 复制fs钩子文件
-          if [ -f "${SRC_FS_HOOK}" ]; then
-            cp "${SRC_FS_HOOK}" "${KERNEL_DIR}/fs/"
-            echo "✅ 已复制 ksu_fs_hook.c"
-          else
-            echo "⚠️ 仓库无fs/ksu_fs_hook.c，文件读取钩子关闭"
-          fi
+          # 2. 复制xxksu kernel下全部源码到 security/ksu
+          cp -r kernel/* "${KERNEL_DIR}/security/ksu/"
+          echo "✅ 已复制全部ksu内核源码到 security/ksu"
 
-          # 写入security/Makefile编译入口
+          # 3. xxksu无独立fs/ksu_fs_hook.c，关闭文件钩子编译项
+          # 不添加fs/Makefile的ksu_fs_hook.o，同时后续defconfig关闭CONFIG_KSU_FILE_HOOKS
+
+          # 4. 写入security/Makefile编译入口
           echo 'obj-$(CONFIG_KSU) += ksu/' >> "${KERNEL_DIR}/security/Makefile"
-
-          # fs/Makefile 添加编译规则
-          if [ -f "${KERNEL_DIR}/fs/ksu_fs_hook.c" ]; then
-            grep -q "ksu_fs_hook" "${KERNEL_DIR}/fs/Makefile" || echo 'obj-$(CONFIG_KSU_FILE_HOOKS) += ksu_fs_hook.o' >> "${KERNEL_DIR}/fs/Makefile"
-          fi
 
           # 校验部署结果
           cd "${KERNEL_DIR}"
