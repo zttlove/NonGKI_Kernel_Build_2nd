@@ -169,7 +169,11 @@ jobs:
         
 
 
-
+      - name: Remove duplicate security ksu dir fix ld.lld duplicate symbol
+        run: |
+          cd $GITHUB_WORKSPACE/device_kernel
+          rm -rf security/kernelsu security/ksu
+          make mrproper
           
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
