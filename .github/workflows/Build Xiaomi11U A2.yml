@@ -121,41 +121,40 @@ jobs:
           git clone --depth=1 -b master https://github.com/backslashxx/KernelSU.git ksu-tmp
           cd ksu-tmp
 
-          # 打印仓库根目录所有文件，确认真实层级
           echo "==== KSU仓库根目录文件列表 ===="
           ls -la
           echo "=============================="
 
-          # 查找仓库内所有包含ksu的security文件夹
-          KSU_SRC=$(find . -path "*/security/ksu" -type d | head -n1)
+          # 修复find参数：递归查找所有子目录下的 security/ksu
+          KSU_SRC=$(find . -type d -path "*/security/ksu" | head -n1)
           if [ -z "${KSU_SRC}" ]; then
             echo "::error::仓库内未找到 security/ksu 文件夹，终止部署"
             exit 1
           fi
           echo "✅ 找到ksu源码路径: ${KSU_SRC}"
 
-          # 同步到内核security/ksu
+          # 同步ksu完整目录到内核
           mkdir -p "${KERNEL_DIR}/security/ksu"
           rsync -av "${KSU_SRC}/" "${KERNEL_DIR}/security/ksu/"
 
-          # 查找fs/ksu_fs_hook.c
+          # 查找fs钩子文件
           FS_HOOK=$(find . -name "ksu_fs_hook.c" -type f | head -n1)
           if [ -n "${FS_HOOK}" ]; then
             cp "${FS_HOOK}" "${KERNEL_DIR}/fs/"
             echo "✅ 复制fs钩子文件: ${FS_HOOK}"
           else
-            echo "⚠️ 仓库无 ksu_fs_hook.c，文件读取钩子将失效"
+            echo "⚠️ 仓库无 ksu_fs_hook.c，文件读取钩子失效"
           fi
 
-          # 写入security/Makefile
+          # 写入security/Makefile编译入口
           echo 'obj-$(CONFIG_KSU) += ksu/' >> "${KERNEL_DIR}/security/Makefile"
 
-          # 存在fs钩子文件才添加编译项
+          # 存在fs文件则添加fs编译项
           if [ -f "${KERNEL_DIR}/fs/ksu_fs_hook.c" ]; then
             grep -q "ksu_fs_hook" "${KERNEL_DIR}/fs/Makefile" || echo 'obj-$(CONFIG_KSU_FILE_HOOKS) += ksu_fs_hook.o' >> "${KERNEL_DIR}/fs/Makefile"
           fi
 
-          # 校验
+          # 校验文件是否复制成功
           cd "${KERNEL_DIR}"
           test -d security/ksu && test -f security/ksu/Makefile && echo "✅ ksu目录部署完成"
           rm -rf ../ksu-tmp
