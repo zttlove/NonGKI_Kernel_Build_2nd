@@ -57,6 +57,7 @@ runs:
             sed -i 's/ret = (int)copy_from_kernel_nofault(map, src, len);/ret = __copy_from_user(map, src, len);/g' drivers/kernelsu/hook/arm64/patch_memory.c
             sed -i '1a #ifndef SECCOMP_ARCH_NATIVE_NR\n#define SECCOMP_ARCH_NATIVE_NR __NR_syscalls\n#endif' drivers/kernelsu/infra/seccomp_cache.c
             sed -i '1i #include <asm/unistd.h>' drivers/kernelsu/infra/seccomp_cache.c
+            sed -i 's/handle_inode_event/handle_event/g' drivers/kernelsu/manager/pkg_observer.c
 
 
             make CC="ccache clang" O=out ARCH="${{ env.KERNEL_ARCH }}" ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} ${{ env.DEFCONFIG_NAME }}
