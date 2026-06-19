@@ -87,27 +87,28 @@ for i in "${patch_files[@]}"; do
 
         echo "======================================"
         ;;
-    ## read_write.c
     fs/read_write.c)
-        sed -i '/SYSCALL_DEFINE3(read,/i #ifdef CONFIG_KSU\nextern struct static_key_true ksu_is_init_rc_hook_enabled;\nextern __attribute__((cold)) int ksu_handle_sys_read(unsigned int fd);\n#endif' fs/read_write.c
+        # 移除已删除的static_key外部声明，只保留hook函数声明
+        sed -i '/SYSCALL_DEFINE3(read,/i #ifdef CONFIG_KSU\nextern __attribute__((cold)) int ksu_handle_sys_read(unsigned int fd);\n#endif' fs/read_write.c
+
         if grep -q "ksys_read" "fs/read_write.c" >/dev/null 2>&1; then
-            sed -i '/return ksys_read(fd, buf, count);/i #ifdef CONFIG_KSU\n\tif (static_branch_unlikely(\&ksu_is_init_rc_hook_enabled))\n\t\tksu_handle_sys_read(fd);\n#endif' fs/read_write.c
+            # 删除static_branch判断，直接调用hook
+            sed -i '/return ksys_read(fd, buf, count);/i #ifdef CONFIG_KSU\n\tksu_handle_sys_read(fd);\n#endif' fs/read_write.c
         else
-            sed -i '0,/if (f\.file) {/{s/if (f\.file) {/\n#ifdef CONFIG_KSU\n\tif (static_branch_unlikely(\&ksu_is_init_rc_hook_enabled))\n\t\tksu_handle_sys_read(fd);\n#endif\n\tif (f.file) {/}' fs/read_write.c
+            sed -i '0,/if (f\.file) {/{s/if (f\.file) {/\n#ifdef CONFIG_KSU\n\tksu_handle_sys_read(fd);\n#endif\n\tif (f.file) {/}' fs/read_write.c
         fi
 
-        if grep -q "ksu_init_rc_hook" "fs/read_write.c"; then
+        # 检测逻辑适配
+        if grep -q "ksu_handle_sys_read" fs/read_write.c; then
             echo "[+] fs/read_write.c Patched!"
-            echo "[+] Count: $(grep -c "ksu_init_rc_hook" "fs/read_write.c")"
-        elif grep -q "ksu_handle_sys_read" "fs/read_write.c"; then
-            echo "[+] fs/read_write.c Patched!"
-            echo "[+] Count: $(grep -c "ksu_handle_sys_read" "fs/read_write.c")"
+            echo "[+] Count: $(grep -c "ksu_handle_sys_read" fs/read_write.c)"
         else
             echo "[-] fs/read_write.c patch failed for unknown reasons, please provide feedback in time."
         fi
 
         echo "======================================"
         ;;
+
     ## stat.c
     fs/stat.c)
         if grep -q "unistd" "fs/stat.c" && ! grep -q "susfs_def.h" "fs/stat.c"; then
