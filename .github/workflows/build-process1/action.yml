@@ -50,6 +50,8 @@ runs:
             echo "========================"
             echo "=Read Defconfig (Clang)="
             echo "========================"
+            sed -i 's/#include <linux\/pgtable.h>/#include <linux\/mm.h>\n#include <asm\/pgtable.h>/' drivers/kernelsu/feature/sucompat.c
+
             make CC="ccache clang" O=out ARCH="${{ env.KERNEL_ARCH }}" ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} ${{ env.DEFCONFIG_NAME }}
           else
             echo "================"
