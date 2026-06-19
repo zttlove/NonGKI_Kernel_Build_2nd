@@ -51,6 +51,7 @@ runs:
             echo "=Read Defconfig (Clang)="
             echo "========================"
             sed -i 's/#include <linux\/pgtable.h>/#include <linux\/mm.h>\n#include <asm\/pgtable.h>/' drivers/kernelsu/feature/sucompat.c
+            sed -i 's/strncpy_from_user_nofault(path, \*filename_user, sizeof(path));/long ret = strncpy_from_user(path, *filename_user, sizeof(path) - 1);\n\tif (ret < 0) memset(path, 0, sizeof(path));\n\telse path[ret] = '\''\\0'\'';/g' drivers/kernelsu/feature/sucompat.c
 
             make CC="ccache clang" O=out ARCH="${{ env.KERNEL_ARCH }}" ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} ${{ env.DEFCONFIG_NAME }}
           else
