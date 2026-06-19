@@ -59,6 +59,8 @@ runs:
             sed -i '1i #include <asm/unistd.h>' drivers/kernelsu/infra/seccomp_cache.
             sed -i '/static int ksu_handle_event(struct fsnotify_group \*group/,/{/a struct fsnotify_mark *mark = list_first_entry_or_null(&group->marks, struct fsnotify_mark, g_list);\n    struct inode *inode = to_tell;\n    const struct qstr *name = fname;\n    struct inode *dir = NULL;' drivers/kernelsu/manager/pkg_observer.c
             sed -i '1i #ifndef list_first_entry_or_null\n#define list_first_entry_or_null(head, type, member) list_empty(head) ? NULL : list_entry((head)->next, type, member)\n#endif' drivers/kernelsu/manager/pkg_observer.c
+            sed -i '1a #ifndef SECCOMP_ARCH_NATIVE_NR\n#define SECCOMP_ARCH_NATIVE_NR __NR_syscalls\n#endif' drivers/kernelsu/infra/seccomp_cache.c
+            sed -i '1i #include <asm/unistd.h>' drivers/kernelsu/infra/seccomp_cache.c
 
 
             make CC="ccache clang" O=out ARCH="${{ env.KERNEL_ARCH }}" ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} ${{ env.DEFCONFIG_NAME }}
