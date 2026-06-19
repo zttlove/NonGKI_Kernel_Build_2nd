@@ -55,7 +55,9 @@ runs:
             sed -i 's/long ret = strncpy_from_user/ret = strncpy_from_user/g' drivers/kernelsu/feature/sucompat.c
             sed -i 's/copy_to_kernel_nofault(map, src, len)/copy_from_kernel_nofault(map, src, len)/g' drivers/kernelsu/hook/arm64/patch_memory.c
             sed -i 's/ret = (int)copy_from_kernel_nofault(map, src, len);/ret = __copy_from_user(map, src, len);/g' drivers/kernelsu/hook/arm64/patch_memory.c
-            sed -i 's/SECCOMP_ARCH_NATIVE_NR/__NR_syscalls/g' ../drivers/kernelsu/infra/seccomp_cache.c
+            sed -i '1a #ifndef SECCOMP_ARCH_NATIVE_NR\n#define SECCOMP_ARCH_NATIVE_NR __NR_syscalls\n#endif' drivers/kernelsu/infra/seccomp_cache.c
+            sed -i '1i #include <asm/unistd.h>' drivers/kernelsu/infra/seccomp_cache.c
+
 
             make CC="ccache clang" O=out ARCH="${{ env.KERNEL_ARCH }}" ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} ${{ env.DEFCONFIG_NAME }}
           else
