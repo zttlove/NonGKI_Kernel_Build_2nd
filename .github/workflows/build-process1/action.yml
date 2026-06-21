@@ -50,7 +50,7 @@ runs:
             echo "========================"
             echo "=Read Defconfig (Clang)="
             echo "========================"
-          make CC="ccache clang" O=out ARCH="${{ env.KERNEL_ARCH }}" ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} ${{ env.DEFCONFIG_NAME }}
+            make CC="ccache clang" O=out ARCH="${{ env.KERNEL_ARCH }}" ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} ${{ env.DEFCONFIG_NAME }}
           else
             echo "================"
             echo "=Read Defconfig="
