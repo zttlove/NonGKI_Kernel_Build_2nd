@@ -188,17 +188,34 @@ jobs:
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/device_kernel"
-          
-          # Note: We removed the destructive 'sed -i /ksu_/d' commands here 
-          # to prevent deleting valid KSU function definitions which causes 'undefined symbol' errors.
-          # We only keep the check to ensure no legacy inline calls remain.
-          
-          # Final Verification
-          if grep -n "ksu_" fs/read_write.c security/selinux/hooks.c; then
-            echo "::error::Patches injected old KSU calls, compilation will fail with undefined symbol."
-            exit 1
+
+          # ========== fs/read_write.c 整块清除 ==========
+          # 删除extern声明两行
+          sed -i '/extern struct static_key_true ksu_is_init_rc_hook_enabled;/,/ksu_handle_sys_read(unsigned int fd);/d' fs/read_write.c
+          # 删除if判断+函数调用两行
+          sed -i '/static_branch_unlikely(&ksu_is_init_rc_hook_enabled)/,/ksu_handle_sys_read(fd);/d' fs/read_write.c
+          # 兜底所有ksu_字符串行
+          sed -i '/ksu_/d' fs/read_write.c
+
+          # ========== security/selinux/hooks.c 整块清除 ==========
+          # 删除ksu_sid变量 + 读取su:s0整块代码
+          sed -i '/static u32 ksu_sid;/,/new_tsec->sid == ksu_sid/d' security/selinux/hooks.c
+          # 删除extern声明 + ksu_hide_setprocattr调用行
+          sed -i '/extern int ksu_hide_setprocattr/,/ksu_hide_setprocattr(name, value, size);/d' security/selinux/hooks.c
+          # 兜底全部ksu_匹配行
+          sed -i '/ksu_/d' security/selinux/hooks.c
+
+          # 校验
+          echo "===== read_write.c ksu残留 ====="
+          grep -n "ksu_" fs/read_write.c || echo "无残留"
+          echo "===== selinux hooks.c ksu残留 ====="
+          grep -n "ksu_" security/selinux/hooks.c || echo "无残留"
+
+          if grep -q "ksu_" fs/read_write.c security/selinux/hooks.c; then
+          echo "::error::补丁注入旧KSU调用，编译会报undefined symbol"
+          exit 1
           fi
-          echo "✅ Double clean verification passed."
+          echo "✅ 全部补丁二次清理完成，无ksu内联调用残留"
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process1
