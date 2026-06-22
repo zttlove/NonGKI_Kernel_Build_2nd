@@ -145,11 +145,11 @@ jobs:
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/device_kernel"
           # 删除CONFIG_KSU整块条件编译
-          sed -i '/#ifdef CONFIG_KSU/,/#endif/d' fs/read_write.c
-          sed -i '/#ifdef CONFIG_KSU/,/#endif/d' security/selinux/hooks.c
+          #sed -i '/#ifdef CONFIG_KSU/,/#endif/d' fs/read_write.c
+          #sed -i '/#ifdef CONFIG_KSU/,/#endif/d' security/selinux/hooks.c
           # 全局删除所有ksu_函数调用行
-          sed -i '/ksu_/d' fs/read_write.c
-          sed -i '/ksu_/d' security/selinux/hooks.c
+          #sed -i '/ksu_/d' fs/read_write.c
+          #sed -i '/ksu_/d' security/selinux/hooks.c
           # 校验残留，有残留直接终止构建
           RES_READ=$(grep -n "ksu_" fs/read_write.c || true)
           RES_SELINUX=$(grep -n "ksu_" security/selinux/hooks.c || true)
@@ -182,8 +182,8 @@ jobs:
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/device_kernel"
-          sed -i '/ksu_/d' fs/read_write.c
-          sed -i '/ksu_/d' security/selinux/hooks.c
+          #sed -i '/ksu_/d' fs/read_write.c
+          #sed -i '/ksu_/d' security/selinux/hooks.c
           # 最终校验
           if grep -n "ksu_" fs/read_write.c security/selinux/hooks.c; then
             echo "::error::补丁注入旧KSU调用，编译会报undefined symbol"
