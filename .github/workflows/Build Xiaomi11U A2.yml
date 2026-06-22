@@ -135,6 +135,18 @@ jobs:
           obj-y += syscall_table_hook_arm.o
           obj-y += syscall_table_hook_arm64.o
           EOF
+          # === 关键修复：创建 core 目录的 Makefile ===
+          # 这一步告诉编译器去编译 core 目录下的 .c 文件，这些文件里包含了 ksu_sid 等变量的定义
+          COREPATH=${KSUPATH}/core
+          mkdir -p ${COREPATH}
+          cat > ${COREPATH}/Makefile << 'EOF'
+          obj-y += manager.o
+          obj-y += sucompat.o
+          obj-y += core_hook.o
+          obj-y += throne_tracker.o
+          obj-y += kernel_compat.o
+          EOF
+          # ==========================================
           # 关键修复：内核顶层kernel/Makefile加入ksu编译入口，否则KSU完全不编译
           grep -q "obj-y += ksu/" kernel/Makefile || echo "obj-y += ksu/" >> kernel/Makefile
 
