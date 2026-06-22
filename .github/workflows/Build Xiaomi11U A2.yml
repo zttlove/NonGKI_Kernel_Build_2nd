@@ -140,7 +140,15 @@ jobs:
           obj-y += syscall_table_hook_arm.o
           obj-y += syscall_table_hook_arm64.o
           EOF  
-
+      - name: 🧹 Clean legacy KSU read_write hook code
+        run: |
+         set -e
+         cd "$GITHUB_WORKSPACE/device_kernel"
+         sed -i '/#ifdef CONFIG_KSU/,/#endif/d' fs/read_write.c
+         sed -i '/ksu_handle_sys_read/d' fs/read_write.c
+         sed -i '/ksu_is_init_rc_hook_enabled/d' fs/read_write.c
+         echo "✅ 清除read_write.c中未定义符号调用代码"
+         
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
 
