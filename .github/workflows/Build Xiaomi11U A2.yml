@@ -98,40 +98,25 @@ jobs:
       - name: ⚙️ Get necessary tools
         uses: ./.github/workflows/build-ready1
 
-      - name: 🔧 Fix KernelSU Makefile & Kernel Compile Entry
+      - name: 🔧 Prepare empty ksu dir only (no manual Makefile)
         run: |
-         set -euo pipefail
-         cd "$GITHUB_WORKSPACE/device_kernel"
-         KSUPATH=kernel/ksu
-         mkdir -p ${KSUPATH}
-         # KSU根目录Makefile
-         cat > ${KSUPATH}/Makefile << 'EOF'
-         obj-y += hook/
-         #obj-y += include/
-         #obj-y += core/
-         #obj-y += utils/
-         EOF
-         HOOKPATH=${KSUPATH}/hook
-         mkdir -p ${HOOKPATH}
-         # Hook子目录编译条目
-         cat > ${HOOKPATH}/Makefile << 'EOF'
-         obj-y += kp_ksud.o
-         obj-y += setuid_hook.o
-         obj-y += branch_link_hook_arm64.o
-         obj-y += lsm_hooks_list.o
-         obj-y += lsm_hooks_manual.o
-         obj-y += lsm_hooks_static.o
-         obj-y += lsm_hooks_ultralegacy.o
-         obj-y += syscall_table_hook_arm.o
-         obj-y += syscall_table_hook_arm64.o
-         EOF
-         # 仅创建空core目录，不生成Makefile，等KSU源码覆盖
-         COREPATH=${KSUPATH}/core
-         mkdir -p ${COREPATH}
-         # 删掉你之前手动生成core/Makefile的那段代码！！
-         # 顶层kernel/Makefile加载ksu模块
-         grep -q "obj-y += ksu/" kernel/Makefile || echo "obj-y += ksu/" >> kernel/Makefile
-
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/device_kernel"
+          KSUPATH=kernel/ksu
+          # 清空旧手动创建的残留文件
+          rm -rf ${KSUPATH}
+          # 仅新建空目录，不写入任何Makefile
+          mkdir -p ${KSUPATH}
+          # 根目录Makefile完全注释所有子目录，前期不编译ksu
+          cat > ${KSUPATH}/Makefile << 'EOF'
+          # obj-y += hook/
+          # obj-y += include/
+          # obj-y += core/
+          # obj-y += utils/
+          EOF
+          # 顶层kernel/Makefile加入ksu入口，仅占位
+          grep -q "obj-y += ksu/" kernel/Makefile || echo "obj-y += ksu/" >> kernel/Makefile
+          
       - name: 🧹 Purge Native Legacy KSU Inline Calls
         run: |
           set -euo pipefail
