@@ -4,12 +4,16 @@ on:
   workflow_call:
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   # Device env
   TZ: Asia/Shanghai
   DEVICE_NAME: "xiaomi_11U"
   DEVICE_CODENAME: "star"
-
+  KERNEL_ARCH: "aarch64"
   CUSTOM_CMDS: "CLANG_TRIPLE=aarch64-linux-gnu-"
   EXTRA_CMDS: 'LD=ld.lld LLVM=1 LLVM_IAS=1 EXTRA_CFLAGS="-Wno-unused-function -Wno-frame-larger-than"'
 
@@ -91,8 +95,7 @@ env:
 jobs:
   build-kernel:
     name: Xiaomi11u A2
-    runs-on: ubuntu-latest # u can changed to ubuntu 22.04, and need container set ubuntu-latest
-    # container: archlinux/archlinux:latest # if u need use arch linux -> archlinux/archlinux:latest or ubuntu 20.04 -> ubuntu:focal
+    runs-on: ubuntu-latest
     env:
       CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
       CCACHE_NOHASHDIR: "true"
@@ -107,12 +110,13 @@ jobs:
       - name: ⚙️ Get necessary tools
         uses: ./.github/workflows/build-ready1
 
-      - name: 🔧 Fix KernelSU Makefile & Defconfig Legacy Hook
+      - name: 🔧 Fix KernelSU Makefile & Kernel Compile Entry
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/device_kernel"
           KSUPATH=kernel/ksu
           mkdir -p ${KSUPATH}
+          # KSU根目录Makefile
           cat > ${KSUPATH}/Makefile << 'EOF'
           obj-y += hook/
           obj-y += include/
@@ -121,6 +125,7 @@ jobs:
           EOF
           HOOKPATH=${KSUPATH}/hook
           mkdir -p ${HOOKPATH}
+          # Hook子目录编译条目
           cat > ${HOOKPATH}/Makefile << 'EOF'
           obj-y += kp_ksud.o
           obj-y += setuid_hook.o
@@ -132,8 +137,29 @@ jobs:
           obj-y += syscall_table_hook_arm.o
           obj-y += syscall_table_hook_arm64.o
           EOF
+          # 关键修复：内核顶层kernel/Makefile加入ksu编译入口，否则KSU完全不编译
+          grep -q "obj-y += ksu/" kernel/Makefile || echo "obj-y += ksu/" >> kernel/Makefile
 
-     
+      - name: 🧹 Purge Native Legacy KSU Inline Calls
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/device_kernel"
+          # 删除CONFIG_KSU整块条件编译
+          sed -i '/#ifdef CONFIG_KSU/,/#endif/d' fs/read_write.c
+          sed -i '/#ifdef CONFIG_KSU/,/#endif/d' security/selinux/hooks.c
+          # 全局删除所有ksu_函数调用行
+          sed -i '/ksu_/d' fs/read_write.c
+          sed -i '/ksu_/d' security/selinux/hooks.c
+          # 校验残留，有残留直接终止构建
+          RES_READ=$(grep -n "ksu_" fs/read_write.c || true)
+          RES_SELINUX=$(grep -n "ksu_" security/selinux/hooks.c || true)
+          echo "read_write.c残留：$RES_READ"
+          echo "selinux hooks.c残留：$RES_SELINUX"
+          if [[ -n "$RES_READ" || -n "$RES_SELINUX" ]]; then
+            echo "::error::源码原生存在旧KSU内联调用，终止构建"
+            exit 1
+          fi
+          echo "✅ 源码原生旧KSU调用清理完成"
 
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
@@ -152,14 +178,18 @@ jobs:
       - name: 🔒 Patch Kernel of Baseband Guard
         uses: ./.github/workflows/patch-baseband-guard
 
-      # 兜底二次清理：防止任意补丁偷偷写入ksu调用
       - name: 🧹 Double Clean KSU Residue After All Patches
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/device_kernel"
           sed -i '/ksu_/d' fs/read_write.c
           sed -i '/ksu_/d' security/selinux/hooks.c
-          echo "补丁全部打完，二次清理ksu调用完成"
+          # 最终校验
+          if grep -n "ksu_" fs/read_write.c security/selinux/hooks.c; then
+            echo "::error::补丁注入旧KSU调用，编译会报undefined symbol"
+            exit 1
+          fi
+          echo "✅ 全部补丁二次清理完成，无ksu内联调用残留"
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process1
@@ -172,13 +202,11 @@ jobs:
           echo "============================================="
           echo "📦 开始打包 Star Hyper A16 内核卡刷包"
           echo "==========================================="
-
           TIME=$(TZ=Asia/Shanghai date +"%Y-%m-%d")
           KERNEL_DIR="${GITHUB_WORKSPACE}/device_kernel"
           TMP_DIR="${KERNEL_DIR}/tmp"
           IMG_PATH="${KERNEL_DIR}/out/arch/arm64/boot/Image"
           cd "${KERNEL_DIR}"
-
           # 严格校验内核文件存在
           if [[ ! -f "${IMG_PATH}" ]]; then
             echo "::error::❌ 编译失败，未找到 out/arch/arm64/boot/Image 内核文件"
@@ -186,71 +214,65 @@ jobs:
           fi
           IMG_SIZE=$(du -h "${IMG_PATH}" | awk '{print $1}')
           echo "✅ 检测到内核镜像 Image | 大小: ${IMG_SIZE}"
-
           # 清理重建临时目录
           rm -rf "${TMP_DIR}"
           mkdir -p "${TMP_DIR}"
-
-          # 自动修改Anykernel3机型适配参数
+          # 先下载新版anykernel.sh再修改参数，修复覆盖失效问题
           AK3_DIR="${KERNEL_DIR}/Anykernel3"
-          if [[ -d "${AK3_DIR}" && -f "${AK3_DIR}/anykernel.sh" ]]; then
+          if [[ -d "${AK3_DIR}" ]]; then
+            curl -fsL https://raw.githubusercontent.com/zttlove/NonGKI_Kernel_Build_2nd/mainline/Patches/anykernel.sh -o "${AK3_DIR}/anykernel.sh"
+            chmod +x "${AK3_DIR}/anykernel.sh"
             sed -i \
               -e 's/^name=.*/name="Star-HyperA16-NonGKI-Kernel"/' \
               -e 's/^do\.devicecheck=.*/do.devicecheck=0/' \
               -e 's/^IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=1/' \
               -e 's/^BLOCK=.*/BLOCK=boot/' \
               "${AK3_DIR}/anykernel.sh"
-            curl -L https://raw.githubusercontent.com/zttlove/NonGKI_Kernel_Build_2nd/mainline/Patches/anykernel.sh -o Anykernel3/anykernel.sh
-            chmod +x Anykernel3/anykernel.sh
           fi
-
           # 复制内核主镜像
           cp -v "${IMG_PATH}" "${TMP_DIR}/Image"
-
-          # 按需打包内核模块
-          if [[ "${{ env.PACK_KMODULES }}" == "true" ]]; then
+          # 按需打包内核模块（仅out目录ko）
+          if [[ "${PACK_KMODULES}" == "true" ]]; then
             MOD_DIR="${TMP_DIR}/modules/vendor/lib/modules"
             mkdir -p "${MOD_DIR}"
-            find . -name "*.ko" -type f -print0 | xargs -0 cp -t "${MOD_DIR}/" 2>/dev/null || true
+            find ./out -name "*.ko" -type f -print0 | xargs -0 cp -t "${MOD_DIR}/" 2>/dev/null || true
             module_count=$(find "${MOD_DIR}" -name "*.ko" | wc -l)
             echo "📦 打包内核模块: ${module_count} 个"
             [[ ${module_count} -eq 0 ]] && rm -rf "${TMP_DIR}/modules"
           else
             echo "ℹ️ 已关闭模块打包，跳过ko文件"
           fi
-
           # 合并Anykernel3刷机脚本全部文件
           [[ -d "${AK3_DIR}" ]] && cp -rp "${AK3_DIR}"/* "${TMP_DIR}/"
-
-          # 最高压缩率打包ZIP
+          # 最高压缩率打包ZIP，捕获压缩失败
           cd "${TMP_DIR}"
-          7za a -tzip -mx9 -mmt=on package.zip ./* >/dev/null
+          if ! 7za a -tzip -mx9 -mmt=on package.zip ./* >/dev/null; then
+            echo "::error::7zip打包失败"
+            exit 1
+          fi
           cd "${GITHUB_WORKSPACE}"
-
           # 生成唯一不重复文件名
-          FINAL_ZIP="${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-${TIME}-Ak3.zip"
+          FINAL_ZIP="${DEVICE_CODENAME}-${ROM_TEXT}-${TIME}-Ak3.zip"
           cp -fp "${TMP_DIR}/package.zip" "${FINAL_ZIP}"
           echo "PACK_NAME=${FINAL_ZIP}" >> "${GITHUB_ENV}"
           echo "✅ 刷机包打包完成: ${FINAL_ZIP}"
-
           # 彻底清理临时垃圾文件
           rm -rf "${TMP_DIR}"
 
-      # 自动发布到GitHub Releases页面（动态标签永不重复报错）
       - name: 🚀 Auto Upload To Github Release
         if: env.PACK_METHOD == 'Anykernel3'
         uses: softprops/action-gh-release@v3
         with:
           tag_name: Star-HyperA16-Kernel-${{ github.run_number }}
-          name: Xiaomi 11 Ultra Star HyperOS A16 NonGKI Kernel #构建号#${{ github.run_number }}
+          name: "Xiaomi 11 Ultra Star HyperOS A16 NonGKI Kernel #${{ github.run_number }}"
           body: |
             ## Xiaomi 11 Ultra Star HyperOS A16 内核刷机包
             - 适配 HyperOS A16 全版本
-            - SukiSU ResukiSU Root 完整适配
-            - SUSFS 隐藏文件系统免补丁
-            - NonGKI 通用免解boot补丁
-            - Osm0sis Anykernel3 官方卡刷格式
-            - Clang 20 最新编译
+            - xxksu Syscall Hook 无LSM内联冲突
+            - SUSFS 完整文件隐藏支持
+            - NonGKI 免解boot补丁
+            - Osm0sis Anykernel3 卡刷格式
+            - Clang 20.0.0git 编译
           files: ${{ env.PACK_NAME }}
           draft: false
           prerelease: false
