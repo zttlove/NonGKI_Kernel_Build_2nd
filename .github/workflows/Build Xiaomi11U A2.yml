@@ -133,27 +133,7 @@ jobs:
           obj-y += syscall_table_hook_arm64.o
           EOF
 
-      - name: 🧹 Purge all legacy KSU hardcode hook calls
-        run: |
-          set -euo pipefail
-          cd "$GITHUB_WORKSPACE/device_kernel"
-          # 删除整块CONFIG_KSU宏
-          sed -i '/#ifdef CONFIG_KSU/,/#endif/d' fs/read_write.c
-          sed -i '/#ifdef CONFIG_KSU/,/#endif/d' security/selinux/hooks.c
-          # 全局删除所有ksu_开头行，杜绝残留
-          sed -i '/ksu_/d' fs/read_write.c
-          sed -i '/ksu_/d' security/selinux/hooks.c
-
-          # 校验，有残留直接报错终止构建
-          RES_READ=$(grep -n "ksu_" fs/read_write.c || true)
-          RES_HOOK=$(grep -n "ksu_" security/selinux/hooks.c || true)
-          echo "read_write.c残留：$RES_READ"
-          echo "hooks.c残留：$RES_HOOK"
-          if [[ -n "$RES_READ" || -n "$RES_HOOK" ]]; then
-            echo "::error::存在旧KSU调用残留，终止构建"
-            exit 1
-          fi
-          echo "✅ 旧KSU硬编码清理完成"
+     
 
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
