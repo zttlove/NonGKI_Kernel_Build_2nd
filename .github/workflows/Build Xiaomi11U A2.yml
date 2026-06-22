@@ -108,7 +108,7 @@ jobs:
          cat > ${KSUPATH}/Makefile << 'EOF'
          obj-y += hook/
          obj-y += include/
-         obj-y += core/
+         #obj-y += core/
          obj-y += utils/
          EOF
          HOOKPATH=${KSUPATH}/hook
