@@ -107,9 +107,9 @@ jobs:
          # KSU根目录Makefile
          cat > ${KSUPATH}/Makefile << 'EOF'
          obj-y += hook/
-         obj-y += include/
+         #obj-y += include/
          #obj-y += core/
-         obj-y += utils/
+         #obj-y += utils/
          EOF
          HOOKPATH=${KSUPATH}/hook
          mkdir -p ${HOOKPATH}
