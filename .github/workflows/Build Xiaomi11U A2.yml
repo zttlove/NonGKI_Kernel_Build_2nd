@@ -113,20 +113,7 @@ jobs:
           obj-y += utils/
           EOF
           
-          HOOKPATH=${KSUPATH}/hook
-          mkdir -p ${HOOKPATH}
-          # Hook Subdirectory Makefile
-          cat > ${HOOKPATH}/Makefile << 'EOF'
-          obj-y += kp_ksud.o
-          obj-y += setuid_hook.o
-          obj-y += branch_link_hook_arm64.o
-          obj-y += lsm_hooks_list.o
-          obj-y += lsm_hooks_manual.o
-          obj-y += lsm_hooks_static.o
-          obj-y += lsm_hooks_ultralegacy.o
-          obj-y += syscall_table_hook_arm.o
-          obj-y += syscall_table_hook_arm64.o
-          EOF
+          
           
           # Ensure core directory exists (do not overwrite if exists)
           COREPATH=${KSUPATH}/core
