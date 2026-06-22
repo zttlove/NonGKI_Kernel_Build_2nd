@@ -113,11 +113,34 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
         
-                
+      - name: 🔧 Fix KernelSU Makefile & Defconfig Legacy Hook
+        run: |
+          set -e
+          cd "$GITHUB_WORKSPACE/device_kernel"
+          KSUPATH=kernel/ksu
+          mkdir -p ${KSUPATH}
+          # 重写ksu主目录Makefile
+          cat > ${KSUPATH}/Makefile << 'EOF'
+          obj-y += hook/
+          obj-y += include/
+          obj-y += core/
+          obj-y += utils/
+          EOF
+          HOOKPATH=${KSUPATH}/hook
+          mkdir -p ${HOOKPATH}
+          # 完整hook编译条目
+          cat > ${HOOKPATH}/Makefile << 'EOF'
+          obj-y += kp_ksud.o
+          obj-y += setuid_hook.o
+          obj-y += branch_link_hook_arm64.o
+          obj-y += lsm_hooks_list.o
+          obj-y += lsm_hooks_manual.o
+          obj-y += lsm_hooks_static.o
+          obj-y += lsm_hooks_ultralegacy.o
+          obj-y += syscall_table_hook_arm.o
+          obj-y += syscall_table_hook_arm64.o
+          EOF  
 
-
-      
-          
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
 
