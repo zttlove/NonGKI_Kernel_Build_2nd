@@ -142,14 +142,25 @@ jobs:
           EOF  
       - name: 🧹 Purge all legacy KSU hardcode hook calls
         run: |
-          set -e
+          set -euo pipefail
           cd "$GITHUB_WORKSPACE/device_kernel"
+          # 清理 fs/read_write.c 全部ksu相关代码与调用
           sed -i '/#ifdef CONFIG_KSU/,/#endif/d' fs/read_write.c
           sed -i '/ksu_handle_sys_read/d' fs/read_write.c
           sed -i '/ksu_is_init_rc_hook_enabled/d' fs/read_write.c
+
+          # 清理 selinux hooks.c 残留ksu调用
           sed -i '/#ifdef CONFIG_KSU/,/#endif/d' security/selinux/hooks.c
           sed -i '/ksu_hide_setprocattr/d' security/selinux/hooks.c
-          echo "✅ 清除全部旧KSU函数引用"
+          sed -i '/ksu_/d' security/selinux/hooks.c
+
+          # 校验是否清理干净
+          echo "【校验 read_write.c 残留】"
+          grep "ksu_" fs/read_write.c || echo "无残留"
+          echo "【校验 selinux hooks.c 残留】"
+          grep "ksu_" security/selinux/hooks.c || echo "无残留"
+
+          echo "✅ 清除全部旧KSU函数引用完成"
          
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
