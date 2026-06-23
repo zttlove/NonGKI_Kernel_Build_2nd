@@ -49,7 +49,7 @@ env:
   PACK_METHOD: "Anykernel3"
   PACK_KMODULES: "false"
   KERNELSU_METHOD: "shell"
-  KERNELSU_SUS_PATCH: "true" # 修复：开启KSU SUSFS兼容补丁
+  KERNELSU_SUS_PATCH: "true"
 
   PATCHES_SOURCE: "JackA1ltman/NonGKI_Kernel_Patches"
   PATCHES_BRANCH: "mi_kernel"
@@ -97,55 +97,59 @@ jobs:
       - name: ⚙️ Get necessary tools
         uses: ./.github/workflows/build-ready1
 
-      - name: 🔧 Prepare empty ksu dir only (no manual Makefile)
+      - name: 🔧 Prepare empty ksu dir only (Fix Makefile)
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/device_kernel"
           KSUPATH=kernel/ksu
           rm -rf ${KSUPATH}
           mkdir -p ${KSUPATH}
+          # 修复：使用 obj-$(CONFIG_KSU) 条件编译，不再全注释
           cat > ${KSUPATH}/Makefile << 'EOF'
-          # obj-y += hook/
-          # obj-y += include/
-          # obj-y += core/
-          # obj-y += utils/
+          obj-$(CONFIG_KSU) += hook/
+          obj-$(CONFIG_KSU) += include/
+          obj-$(CONFIG_KSU) += core/
+          obj-$(CONFIG_KSU) += utils/
           EOF
           grep -q "obj-y += ksu/" kernel/Makefile || echo "obj-y += ksu/" >> kernel/Makefile
 
-      
       - name: 🧹 Purge Native Legacy KSU Inline Calls
         run: |
-         set -euo pipefail
-         cd "$GITHUB_WORKSPACE/device_kernel"
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/device_kernel"
 
-         sed -i '/#ifdef CONFIG_KSU/,/#endif/d' fs/read_write.c
-         sed -i '/#ifdef CONFIG_KSU/,/#endif/d' security/selinux/hooks.c
+          sed -i '/#ifdef CONFIG_KSU/,/#endif/d' fs/read_write.c
+          sed -i '/#ifdef CONFIG_KSU/,/#endif/d' security/selinux/hooks.c
 
-         # sed -i '/extern struct static_key_true ksu_is_init_rc_hook_enabled;/d' fs/read_write.c
-         # sed -i '/extern __attribute__((cold)) int ksu_handle_sys_read/d' fs/read_write.c
-         # sed -i '/extern int ksu_hide_setprocattr/d' security/selinux/hooks.c
+          # 保留extern声明，不再删除
+          # sed -i '/extern struct static_key_true ksu_is_init_rc_hook_enabled;/d' fs/read_write.c
+          # sed -i '/extern __attribute__((cold)) int ksu_handle_sys_read/d' fs/read_write.c
+          # sed -i '/extern int ksu_hide_setprocattr/d' security/selinux/hooks.c
 
-         sed -i '/static u32 ksu_sid;/,/security_secctx_to_secid/d' security/selinux/hooks.c
-         sed -i '/if (rc == 0 && new_tsec->sid == ksu_sid)/d' security/selinux/hooks.c
-         sed -i '/static_branch_unlikely(&ksu_is_init_rc_hook_enabled)/,/ksu_handle_sys_read(fd);/d' fs/read_write.c
-         sed -i '/ksu_hide_setprocattr(name, value, size);/d' security/selinux/hooks.c
-         RES_READ=$(grep -n "ksu_" fs/read_write.c || true)
-         RES_SELINUX=$(grep -n "ksu_" security/selinux/hooks.c || true)
-         echo "read_write.c residue: $RES_READ"
-         echo "selinux hooks.c residue: $RES_SELINUX"
+          sed -i '/static u32 ksu_sid;/,/security_secctx_to_secid/d' security/selinux/hooks.c
+          sed -i '/if (rc == 0 && new_tsec->sid == ksu_sid)/d' security/selinux/hooks.c
+          sed -i '/static_branch_unlikely(&ksu_is_init_rc_hook_enabled)/,/ksu_handle_sys_read(fd);/d' fs/read_write.c
+          sed -i '/ksu_hide_setprocattr(name, value, size);/d' security/selinux/hooks.c
 
-         if [[ -n "$RES_READ" || -n "$RES_SELINUX" ]]; then
-         echo "::error::Native source contains old KSU inline calls, build aborted."
-         exit 1
-         fi
-         echo "✅ Native legacy KSU calls cleaned."
+          RES_READ=$(grep -n "ksu_" fs/read_write.c || true)
+          RES_SELINUX=$(grep -n "ksu_" security/selinux/hooks.c || true)
+          echo "read_write.c residue: $RES_READ"
+          echo "selinux hooks.c residue: $RES_SELINUX"
 
-     
-     
+          if [[ -n "$RES_READ" || -n "$RES_SELINUX" ]]; then
+            echo "::error::Native source contains old KSU inline calls, build aborted."
+            exit 1
+          fi
+          echo "✅ Native legacy KSU calls cleaned."
+
+      # 新增：先打KSU-SUSFS兼容补丁（必须在susfs主补丁前面）
+      - name: 🪝 Patch Kernel of SUSFS KSU Compat
+        if: env.KERNELSU_SUS_PATCH == 'true'
+        uses: ./.github/workflows/patch-susfs-ksu
+
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
 
-      
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
 
@@ -160,7 +164,18 @@ jobs:
       - name: 🔒 Patch Kernel of Baseband Guard
         uses: ./.github/workflows/patch-baseband-guard
 
-     
+      # 新增：强制开启KSU+SUSFS内核配置，解决符号缺失根源
+      - name: Force enable CONFIG_KSU & CONFIG_KSU_SUSFS
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/device_kernel"
+          make ARCH=aarch64 O=out ${DEFCONFIG_NAME}
+          echo "CONFIG_KSU=y" >> out/.config
+          echo "CONFIG_KSU_SUSFS=y" >> out/.config
+          echo "CONFIG_KALLSYMS=y" >> out/.config
+          echo "CONFIG_KALLSYMS_ALL=y" >> out/.config
+          make ARCH=aarch64 O=out savedefconfig
+          cp out/.config .config
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process1
