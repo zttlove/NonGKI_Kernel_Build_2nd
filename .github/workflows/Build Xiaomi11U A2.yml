@@ -164,7 +164,7 @@ jobs:
       - name: 🔒 Patch Kernel of Baseband Guard
         uses: ./.github/workflows/patch-baseband-guard
 
-      # 新增：强制开启KSU+SUSFS内核配置，解决符号缺失根源
+      
       - name: Force enable CONFIG_KSU & CONFIG_KSU_SUSFS
         run: |
           set -euo pipefail
