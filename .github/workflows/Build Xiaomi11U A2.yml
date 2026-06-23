@@ -150,20 +150,8 @@ jobs:
       - name: 🔒 Patch Kernel of Baseband Guard
         uses: ./.github/workflows/patch-baseband-guard
 
-      # 修复：重建out目录，完整初始化aarch64架构文件，解决arch/aarch64/Makefile缺失
-      - name: Force enable CONFIG_KSU & CONFIG_KSU_SUSFS
-        run: |
-          set -euo pipefail
-          cd "$GITHUB_WORKSPACE/device_kernel"
-          rm -rf out
-          mkdir -p out
-          make ARCH=aarch64 O=out ${DEFCONFIG_NAME}
-          echo "CONFIG_KSU=y" >> out/.config
-          echo "CONFIG_KSU_SUSFS=y" >> out/.config
-          echo "CONFIG_KALLSYMS=y" >> out/.config
-          echo "CONFIG_KALLSYMS_ALL=y" >> out/.config
-          make ARCH=aarch64 O=out savedefconfig
-          cp out/.config .config
+     
+      
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process1
