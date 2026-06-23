@@ -50,7 +50,7 @@ env:
   PACK_METHOD: "Anykernel3"
   PACK_KMODULES: "false"
   KERNELSU_METHOD: "shell"
-  KERNELSU_SUS_PATCH: "false"
+  KERNELSU_SUS_PATCH: "true" # 修复：开启KSU SUSFS兼容补丁
 
   PATCHES_SOURCE: "JackA1ltman/NonGKI_Kernel_Patches"
   PATCHES_BRANCH: "mi_kernel"
@@ -103,55 +103,52 @@ jobs:
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/device_kernel"
           KSUPATH=kernel/ksu
-          # 清空旧手动创建的残留文件
           rm -rf ${KSUPATH}
-          # 仅新建空目录，不写入任何Makefile
           mkdir -p ${KSUPATH}
-          # 根目录Makefile完全注释所有子目录，前期不编译ksu
           cat > ${KSUPATH}/Makefile << 'EOF'
           # obj-y += hook/
           # obj-y += include/
           # obj-y += core/
           # obj-y += utils/
           EOF
-          # 顶层kernel/Makefile加入ksu入口，仅占位
           grep -q "obj-y += ksu/" kernel/Makefile || echo "obj-y += ksu/" >> kernel/Makefile
-          
+
+      # 前置清理：仅清理内核原生残留，放在所有补丁之前
       - name: 🧹 Purge Native Legacy KSU Inline Calls
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/device_kernel"
-          
-          # Clean specific legacy lines in read_write.c
           sed -i '/extern struct static_key_true ksu_is_init_rc_hook_enabled;/d' fs/read_write.c
           sed -i '/extern __attribute__((cold)) int ksu_handle_sys_read/d' fs/read_write.c
           sed -i '/static_branch_unlikely(&ksu_is_init_rc_hook_enabled)/d' fs/read_write.c
           sed -i '/ksu_handle_sys_read(fd);/d' fs/read_write.c
           sed -i '/#ifdef CONFIG_KSU/,/#endif/d' fs/read_write.c
-          
-          # Clean specific legacy lines in selinux/hooks.c
           sed -i '/static u32 ksu_sid;/d' security/selinux/hooks.c
           sed -i '/if (!ksu_sid)/,/security_secctx_to_secid/d' security/selinux/hooks.c
           sed -i '/if (rc == 0 && new_tsec->sid == ksu_sid)/d' security/selinux/hooks.c
           sed -i '/extern int ksu_hide_setprocattr/d' security/selinux/hooks.c
           sed -i '/ksu_hide_setprocattr(name, value, size);/d' security/selinux/hooks.c
           sed -i '/#ifdef CONFIG_KSU/,/#endif/d' security/selinux/hooks.c
-          
-          # Verify native residue (Strict check)
           RES_READ=$(grep -n "ksu_" fs/read_write.c || true)
           RES_SELINUX=$(grep -n "ksu_" security/selinux/hooks.c || true)
           echo "read_write.c residue: $RES_READ"
           echo "selinux hooks.c residue: $RES_SELINUX"
-          
           if [[ -n "$RES_READ" || -n "$RES_SELINUX" ]]; then
             echo "::error::Native source contains old KSU inline calls, build aborted."
             exit 1
           fi
           echo "✅ Native legacy KSU calls cleaned."
 
+      # 1. 先打KSU-SUSFS兼容补丁（修复hooks.c结构关键）
+      - name: 🪝 Patch Kernel of SUSFS KSU Compat
+        if: env.KERNELSU_SUS_PATCH == 'true'
+        uses: ./.github/workflows/patch-susfs-ksu
+
+      # 2. 再打内核SUSFS主补丁
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
 
+      # 3. 无kprobe syscall钩子补丁
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
 
@@ -166,38 +163,7 @@ jobs:
       - name: 🔒 Patch Kernel of Baseband Guard
         uses: ./.github/workflows/patch-baseband-guard
 
-      - name: 🧹 Double Clean KSU Residue After All Patches
-        run: |
-          set -euo pipefail
-          cd "$GITHUB_WORKSPACE/device_kernel"
-
-          # ========== fs/read_write.c 整块清除 ==========
-          # 删除extern声明两行
-          sed -i '/extern struct static_key_true ksu_is_init_rc_hook_enabled;/,/ksu_handle_sys_read(unsigned int fd);/d' fs/read_write.c
-          # 删除if判断+函数调用两行
-          sed -i '/static_branch_unlikely(&ksu_is_init_rc_hook_enabled)/,/ksu_handle_sys_read(fd);/d' fs/read_write.c
-          # 兜底所有ksu_字符串行
-          sed -i '/ksu_/d' fs/read_write.c
-
-          # ========== security/selinux/hooks.c 整块清除 ==========
-          # 删除ksu_sid变量 + 读取su:s0整块代码
-          sed -i '/static u32 ksu_sid;/,/new_tsec->sid == ksu_sid/d' security/selinux/hooks.c
-          # 删除extern声明 + ksu_hide_setprocattr调用行
-          sed -i '/extern int ksu_hide_setprocattr/,/ksu_hide_setprocattr(name, value, size);/d' security/selinux/hooks.c
-          # 兜底全部ksu_匹配行
-          sed -i '/ksu_/d' security/selinux/hooks.c
-
-          # 校验
-          echo "===== read_write.c ksu残留 ====="
-          grep -n "ksu_" fs/read_write.c || echo "无残留"
-          echo "===== selinux hooks.c ksu残留 ====="
-          grep -n "ksu_" security/selinux/hooks.c || echo "无残留"
-
-          if grep -q "ksu_" fs/read_write.c security/selinux/hooks.c; then
-          echo "::error::补丁注入旧KSU调用，编译会报undefined symbol"
-          exit 1
-          fi
-          echo "✅ 全部补丁二次清理完成，无ksu内联调用残留"
+      # 移除了破坏代码的全局ksu_二次清理步骤
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process1
@@ -215,18 +181,18 @@ jobs:
           TMP_DIR="${KERNEL_DIR}/tmp"
           IMG_PATH="${KERNEL_DIR}/out/arch/arm64/boot/Image"
           cd "${KERNEL_DIR}"
-          
+
           if [[ ! -f "${IMG_PATH}" ]]; then
             echo "::error::❌ Build failed, Image not found at ${IMG_PATH}"
             exit 1
           fi
-          
+
           IMG_SIZE=$(du -h "${IMG_PATH}" | awk '{print $1}')
           echo "✅ Image detected | Size: ${IMG_SIZE}"
-          
+
           rm -rf "${TMP_DIR}"
           mkdir -p "${TMP_DIR}"
-          
+
           AK3_DIR="${KERNEL_DIR}/Anykernel3"
           if [[ -d "${AK3_DIR}" ]]; then
             curl -fsL https://raw.githubusercontent.com/zttlove/NonGKI_Kernel_Build_2nd/mainline/Patches/anykernel.sh -o "${AK3_DIR}/anykernel.sh"
@@ -238,9 +204,9 @@ jobs:
               -e 's/^BLOCK=.*/BLOCK=boot/' \
               "${AK3_DIR}/anykernel.sh"
           fi
-          
+
           cp -v "${IMG_PATH}" "${TMP_DIR}/Image"
-          
+
           if [[ "${PACK_KMODULES}" == "true" ]]; then
             MOD_DIR="${TMP_DIR}/modules/vendor/lib/modules"
             mkdir -p "${MOD_DIR}"
@@ -251,15 +217,15 @@ jobs:
           else
             echo "ℹ️ Module packing disabled."
           fi
-          
+
           [[ -d "${AK3_DIR}" ]] && cp -rp "${AK3_DIR}"/* "${TMP_DIR}/"
-          
+
           cd "${TMP_DIR}"
           if ! 7za a -tzip -mx9 -mmt=on package.zip ./* >/dev/null; then
             echo "::error::7zip packaging failed"
             exit 1
           fi
-          
+
           cd "${GITHUB_WORKSPACE}"
           FINAL_ZIP="${DEVICE_CODENAME}-${ROM_TEXT}-${TIME}-Ak3.zip"
           cp -fp "${TMP_DIR}/package.zip" "${FINAL_ZIP}"
