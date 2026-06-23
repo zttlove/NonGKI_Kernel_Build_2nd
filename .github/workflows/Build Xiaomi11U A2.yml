@@ -125,6 +125,7 @@ jobs:
          KSUPATH="$PWD/kernel/ksu"
          rm -rf "${KSUPATH}"
          git clone --depth 1 https://github.com/backslashxx/KernelSU.git "${KSUPATH}"
+
          KSU_MAKEFILE=$(find "${KSUPATH}" -maxdepth 2 -name "Makefile" -type f | head -1)
          if [[ -z "${KSU_MAKEFILE}" ]]; then
          echo "::error::xxksu clone failed, no Makefile found in repository"
@@ -137,6 +138,7 @@ jobs:
          REL_PATH="${KSU_MAKEFILE#${KSUPATH}/}"
          KSU_SUBDIR=$(dirname "${REL_PATH}")
          echo "KSU subdirectory containing Makefile: ${KSU_SUBDIR}"
+
          if [[ "${KSU_SUBDIR}" == "." ]]; then
          MOUNT_LINE="obj-y += ksu/"
          else
