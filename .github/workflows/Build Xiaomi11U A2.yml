@@ -5,7 +5,6 @@ on:
   workflow_dispatch:
 
 env:
-  # ================= Device env =================
   TZ: Asia/Shanghai
   DEVICE_NAME: "xiaomi_11U"
   DEVICE_CODENAME: "star"
@@ -139,16 +138,12 @@ jobs:
           fi
           echo "✅ Native legacy KSU calls cleaned."
 
-      # 1. 先打KSU-SUSFS兼容补丁（修复hooks.c结构关键）
-      - name: 🪝 Patch Kernel of SUSFS KSU Compat
-        if: env.KERNELSU_SUS_PATCH == 'true'
-        uses: ./.github/workflows/patch-susfs-ksu
-
-      # 2. 再打内核SUSFS主补丁
+     
+     
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
 
-      # 3. 无kprobe syscall钩子补丁
+      
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
 
@@ -163,7 +158,7 @@ jobs:
       - name: 🔒 Patch Kernel of Baseband Guard
         uses: ./.github/workflows/patch-baseband-guard
 
-      # 移除了破坏代码的全局ksu_二次清理步骤
+     
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process1
