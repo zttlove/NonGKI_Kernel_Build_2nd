@@ -126,7 +126,7 @@ jobs:
           KSUPATH=kernel/ksu
           rm -rf ${KSUPATH}
           # 拉取 xxksu 主仓库源码
-          git clone --depth 1https://github.com/backslashxx/KernelSU.git ${KSUPATH}
+          git clone --depth 1 https://github.com/backslashxx/KernelSU.git ${KSUPATH}
           # 校验必须存在 core/Makefile
           if [[ ! -f "${KSUPATH}/core/Makefile" ]]; then
             echo "::error::xxksu clone failed, missing kernel/ksu/core/Makefile"
