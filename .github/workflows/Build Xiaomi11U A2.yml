@@ -112,31 +112,33 @@ jobs:
           EOF
           grep -q "obj-y += ksu/" kernel/Makefile || echo "obj-y += ksu/" >> kernel/Makefile
 
-      # 前置清理：仅清理内核原生残留，放在所有补丁之前
+      
       - name: 🧹 Purge Native Legacy KSU Inline Calls
         run: |
-          set -euo pipefail
-          cd "$GITHUB_WORKSPACE/device_kernel"
-          sed -i '/extern struct static_key_true ksu_is_init_rc_hook_enabled;/d' fs/read_write.c
-          sed -i '/extern __attribute__((cold)) int ksu_handle_sys_read/d' fs/read_write.c
-          sed -i '/static_branch_unlikely(&ksu_is_init_rc_hook_enabled)/d' fs/read_write.c
-          sed -i '/ksu_handle_sys_read(fd);/d' fs/read_write.c
-          sed -i '/#ifdef CONFIG_KSU/,/#endif/d' fs/read_write.c
-          sed -i '/static u32 ksu_sid;/d' security/selinux/hooks.c
-          sed -i '/if (!ksu_sid)/,/security_secctx_to_secid/d' security/selinux/hooks.c
-          sed -i '/if (rc == 0 && new_tsec->sid == ksu_sid)/d' security/selinux/hooks.c
-          sed -i '/extern int ksu_hide_setprocattr/d' security/selinux/hooks.c
-          sed -i '/ksu_hide_setprocattr(name, value, size);/d' security/selinux/hooks.c
-          sed -i '/#ifdef CONFIG_KSU/,/#endif/d' security/selinux/hooks.c
-          RES_READ=$(grep -n "ksu_" fs/read_write.c || true)
-          RES_SELINUX=$(grep -n "ksu_" security/selinux/hooks.c || true)
-          echo "read_write.c residue: $RES_READ"
-          echo "selinux hooks.c residue: $RES_SELINUX"
-          if [[ -n "$RES_READ" || -n "$RES_SELINUX" ]]; then
-            echo "::error::Native source contains old KSU inline calls, build aborted."
-            exit 1
-          fi
-          echo "✅ Native legacy KSU calls cleaned."
+         set -euo pipefail
+         cd "$GITHUB_WORKSPACE/device_kernel"
+
+         sed -i '/#ifdef CONFIG_KSU/,/#endif/d' fs/read_write.c
+         sed -i '/#ifdef CONFIG_KSU/,/#endif/d' security/selinux/hooks.c
+
+         # sed -i '/extern struct static_key_true ksu_is_init_rc_hook_enabled;/d' fs/read_write.c
+         # sed -i '/extern __attribute__((cold)) int ksu_handle_sys_read/d' fs/read_write.c
+         # sed -i '/extern int ksu_hide_setprocattr/d' security/selinux/hooks.c
+
+         sed -i '/static u32 ksu_sid;/,/security_secctx_to_secid/d' security/selinux/hooks.c
+         sed -i '/if (rc == 0 && new_tsec->sid == ksu_sid)/d' security/selinux/hooks.c
+         sed -i '/static_branch_unlikely(&ksu_is_init_rc_hook_enabled)/,/ksu_handle_sys_read(fd);/d' fs/read_write.c
+         sed -i '/ksu_hide_setprocattr(name, value, size);/d' security/selinux/hooks.c
+         RES_READ=$(grep -n "ksu_" fs/read_write.c || true)
+         RES_SELINUX=$(grep -n "ksu_" security/selinux/hooks.c || true)
+         echo "read_write.c residue: $RES_READ"
+         echo "selinux hooks.c residue: $RES_SELINUX"
+
+         if [[ -n "$RES_READ" || -n "$RES_SELINUX" ]]; then
+         echo "::error::Native source contains old KSU inline calls, build aborted."
+         exit 1
+         fi
+         echo "✅ Native legacy KSU calls cleaned."
 
      
      
