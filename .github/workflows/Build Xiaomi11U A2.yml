@@ -44,8 +44,8 @@ env:
   NEED_SAFE_DTBO: false
   ROM_TEXT: "hyperos_a16"
 
- 
-  PYTHON_VERSION: "3" 
+  # ================= Other env =================
+  PYTHON_VERSION: "3"
   PACK_METHOD: "Anykernel3"
   PACK_KMODULES: "false"
   KERNELSU_METHOD: "shell"
@@ -87,7 +87,6 @@ jobs:
       CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
       CCACHE_NOHASHDIR: "true"
       CCACHE_HARDLINK: "true"
-      
     steps:
       - name: ⏰ Checkout repository
         uses: actions/checkout@v6
@@ -105,7 +104,6 @@ jobs:
           KSUPATH=kernel/ksu
           rm -rf ${KSUPATH}
           mkdir -p ${KSUPATH}
-          # 修复：使用 obj-$(CONFIG_KSU) 条件编译，不再全注释
           cat > ${KSUPATH}/Makefile << 'EOF'
           obj-$(CONFIG_KSU) += hook/
           obj-$(CONFIG_KSU) += include/
@@ -118,33 +116,23 @@ jobs:
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/device_kernel"
-
           sed -i '/#ifdef CONFIG_KSU/,/#endif/d' fs/read_write.c
           sed -i '/#ifdef CONFIG_KSU/,/#endif/d' security/selinux/hooks.c
-
-          # 保留extern声明，不再删除
-          # sed -i '/extern struct static_key_true ksu_is_init_rc_hook_enabled;/d' fs/read_write.c
-          # sed -i '/extern __attribute__((cold)) int ksu_handle_sys_read/d' fs/read_write.c
-          # sed -i '/extern int ksu_hide_setprocattr/d' security/selinux/hooks.c
-
+          # 保留extern函数声明，不删除
           sed -i '/static u32 ksu_sid;/,/security_secctx_to_secid/d' security/selinux/hooks.c
           sed -i '/if (rc == 0 && new_tsec->sid == ksu_sid)/d' security/selinux/hooks.c
           sed -i '/static_branch_unlikely(&ksu_is_init_rc_hook_enabled)/,/ksu_handle_sys_read(fd);/d' fs/read_write.c
           sed -i '/ksu_hide_setprocattr(name, value, size);/d' security/selinux/hooks.c
-
           RES_READ=$(grep -n "ksu_" fs/read_write.c || true)
           RES_SELINUX=$(grep -n "ksu_" security/selinux/hooks.c || true)
           echo "read_write.c residue: $RES_READ"
           echo "selinux hooks.c residue: $RES_SELINUX"
-
           if [[ -n "$RES_READ" || -n "$RES_SELINUX" ]]; then
             echo "::error::Native source contains old KSU inline calls, build aborted."
             exit 1
           fi
           echo "✅ Native legacy KSU calls cleaned."
 
-     
-     
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
 
@@ -162,11 +150,13 @@ jobs:
       - name: 🔒 Patch Kernel of Baseband Guard
         uses: ./.github/workflows/patch-baseband-guard
 
-      
+      # 修复：重建out目录，完整初始化aarch64架构文件，解决arch/aarch64/Makefile缺失
       - name: Force enable CONFIG_KSU & CONFIG_KSU_SUSFS
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/device_kernel"
+          rm -rf out
+          mkdir -p out
           make ARCH=aarch64 O=out ${DEFCONFIG_NAME}
           echo "CONFIG_KSU=y" >> out/.config
           echo "CONFIG_KSU_SUSFS=y" >> out/.config
