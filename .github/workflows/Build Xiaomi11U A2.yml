@@ -142,7 +142,7 @@ jobs:
           fi
           echo "✅ Native legacy KSU calls cleaned."
 
-      # 新增：先打KSU-SUSFS兼容补丁（必须在susfs主补丁前面）
+     
       - name: 🪝 Patch Kernel of SUSFS KSU Compat
         if: env.KERNELSU_SUS_PATCH == 'true'
         uses: ./.github/workflows/patch-susfs-ksu
