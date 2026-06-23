@@ -118,23 +118,35 @@ jobs:
           fi
           echo "✅ Native legacy KSU calls cleaned."
 
-      # 新增：拉取完整 xxksu 源码，解决 core/Makefile 缺失
+      # 修复版xxksu克隆步骤：移除core校验、增加镜像加速、使用绝对路径
       - name: 🧩 Download full xxksu source
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/device_kernel"
-          KSUPATH=kernel/ksu
-          rm -rf ${KSUPATH}
-          # 拉取 xxksu 主仓库源码
-          git clone --depth 1 https://github.com/backslashxx/KernelSU.git ${KSUPATH}
-          # 校验必须存在 core/Makefile
-          if [[ ! -f "${KSUPATH}/core/Makefile" ]]; then
-            echo "::error::xxksu clone failed, missing kernel/ksu/core/Makefile"
+          KSUPATH="$PWD/kernel/ksu"
+          rm -rf "${KSUPATH}"
+          # 主地址克隆失败自动切换ghproxy镜像
+          git clone --depth 1 https://github.com/backslashxx/KernelSU.git "${KSUPATH}" || \
+          git clone --depth 1 https://mirror.ghproxy.com/https://github.com/backslashxx/KernelSU.git "${KSUPATH}"
+          # xxksu无core目录，仅校验根目录Makefile
+          if [[ ! -f "${KSUPATH}/Makefile" ]]; then
+            echo "::error::xxksu clone failed, missing root Makefile"
             exit 1
           fi
-          # 内核主Makefile引入ksu编译
+          # 内核主Makefile挂载ksu总目录
           grep -q "obj-y += ksu/" kernel/Makefile || echo "obj-y += ksu/" >> kernel/Makefile
-          echo "✅ xxksu source deployed, core/Makefile verified"
+          echo "✅ xxksu source deployed, root Makefile verified"
+          # 打印目录用于调试
+          ls -la "${KSUPATH}/"
+
+      # 新增：清理原版KSU遗留的core/utils无效编译条目
+      - name: 🧹 Remove old core/utils reference in ksu Makefile
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/device_kernel/kernel/ksu"
+          sed -i '/obj-$(CONFIG_KSU) += core\//d' Makefile
+          sed -i '/obj-$(CONFIG_KSU) += utils\//d' Makefile
+          echo "✅ Removed incompatible core/utils compile entry"
 
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
