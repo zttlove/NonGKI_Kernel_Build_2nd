@@ -97,21 +97,6 @@ jobs:
       - name: ⚙️ Get necessary tools
         uses: ./.github/workflows/build-ready1
 
-      - name: 🔧 Prepare empty ksu dir only (Fix Makefile)
-        run: |
-          set -euo pipefail
-          cd "$GITHUB_WORKSPACE/device_kernel"
-          KSUPATH=kernel/ksu
-          rm -rf ${KSUPATH}
-          mkdir -p ${KSUPATH}
-          cat > ${KSUPATH}/Makefile << 'EOF'
-          obj-$(CONFIG_KSU) += hook/
-          obj-$(CONFIG_KSU) += include/
-          obj-$(CONFIG_KSU) += core/
-          obj-$(CONFIG_KSU) += utils/
-          EOF
-          grep -q "obj-y += ksu/" kernel/Makefile || echo "obj-y += ksu/" >> kernel/Makefile
-
       - name: 🧹 Purge Native Legacy KSU Inline Calls
         run: |
           set -euo pipefail
@@ -133,6 +118,24 @@ jobs:
           fi
           echo "✅ Native legacy KSU calls cleaned."
 
+      # 新增：拉取完整 xxksu 源码，解决 core/Makefile 缺失
+      - name: 🧩 Download full xxksu source
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/device_kernel"
+          KSUPATH=kernel/ksu
+          rm -rf ${KSUPATH}
+          # 拉取 xxksu 主仓库源码
+          git clone --depth 1https://github.com/backslashxx/KernelSU.git ${KSUPATH}
+          # 校验必须存在 core/Makefile
+          if [[ ! -f "${KSUPATH}/core/Makefile" ]]; then
+            echo "::error::xxksu clone failed, missing kernel/ksu/core/Makefile"
+            exit 1
+          fi
+          # 内核主Makefile引入ksu编译
+          grep -q "obj-y += ksu/" kernel/Makefile || echo "obj-y += ksu/" >> kernel/Makefile
+          echo "✅ xxksu source deployed, core/Makefile verified"
+
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
 
@@ -149,9 +152,6 @@ jobs:
 
       - name: 🔒 Patch Kernel of Baseband Guard
         uses: ./.github/workflows/patch-baseband-guard
-
-     
-      
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process1
