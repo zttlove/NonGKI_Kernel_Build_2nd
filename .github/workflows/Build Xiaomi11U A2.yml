@@ -150,13 +150,7 @@ jobs:
          echo "✅ xxksu source deployed"
          ls -la "${KSUPATH}/"
      
-      - name: 🧹 Remove old core/utils reference in ksu Makefile
-        run: |
-          set -euo pipefail
-          cd "$GITHUB_WORKSPACE/device_kernel/kernel/ksu"
-          sed -i '/obj-$(CONFIG_KSU) += core\//d' Makefile
-          sed -i '/obj-$(CONFIG_KSU) += utils\//d' Makefile
-          echo "✅ Removed incompatible core/utils compile entry"
+     
 
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
