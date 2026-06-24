@@ -192,7 +192,6 @@ jobs:
             ## Xiaomi 11 Ultra Star HyperOS A16 Kernel
             - Adapted for HyperOS A16
             - xxksu Syscall Hook
-            - SUSFS Support
             - NonGKI Format
             - Clang 20.0.0git
           files: ${{ env.PACK_NAME }}
