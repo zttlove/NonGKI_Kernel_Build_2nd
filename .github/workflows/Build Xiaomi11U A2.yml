@@ -108,7 +108,7 @@ jobs:
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/device_kernel"
           
-            - name: Fix all EpkeSU uapi relative include path
+      - name: Fix all EpkeSU uapi relative include path
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/device_kernel"
