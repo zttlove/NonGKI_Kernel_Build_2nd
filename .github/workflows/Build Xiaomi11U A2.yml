@@ -29,7 +29,7 @@ env:
   DEFCONFIG_ORIGIN_IMAGE: ""
   DEFCONFIG_FROM_BOOT: false
 
-  KERNELSU_SOURCE: "https://github.com/shengzimao/EpkeSU.git"
+  KERNELSU_SOURCE: "https://github.com/zttlove/EpkeSU.git"
   KERNELSU_BRANCH: "main"
   KERNELSU_AUTO_GET: "false"
   KERNELSU_AUTO_FORK: "xxksu" # xxksu, rsuntk, next, resukisu and sukisu
