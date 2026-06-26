@@ -102,12 +102,13 @@ jobs:
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
+      
       - name: Fix EpkeSU uapi header include path
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/device_kernel"
-          sed -i 's/#include "uapi\/app_profile.h"/#include "../uapi\/app_profile.h"/' drivers/kernelsu/policy/allowlist.h
-    
+          sed -i 's#"uapi/app_profile.h"#"../uapi/app_profile.h"#' drivers/kernelsu/policy/allowlist.h
+
       - name: 🪛 Extra Kernel Options
         run: |
           set -euo pipefail
