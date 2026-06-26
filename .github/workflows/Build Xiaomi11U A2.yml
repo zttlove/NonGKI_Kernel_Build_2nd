@@ -29,9 +29,9 @@ env:
   DEFCONFIG_ORIGIN_IMAGE: ""
   DEFCONFIG_FROM_BOOT: false
 
-  KERNELSU_SOURCE: ""
-  KERNELSU_BRANCH: ""
-  KERNELSU_AUTO_GET: "true"
+  KERNELSU_SOURCE: "https://github.com/shengzimao/EpkeSU.git"
+  KERNELSU_BRANCH: "main"
+  KERNELSU_AUTO_GET: "false"
   KERNELSU_AUTO_FORK: "xxksu" # xxksu, rsuntk, next, resukisu and sukisu
 
   SUSFS_ENABLE: false
@@ -48,7 +48,7 @@ env:
   PYTHON_VERSION: "3"
   PACK_METHOD: "Anykernel3"
   PACK_KMODULES: "false"
-  KERNELSU_METHOD: "shell"
+  KERNELSU_METHOD: "olay"
   KERNELSU_SUS_PATCH: "true"
 
   PATCHES_SOURCE: "JackA1ltman/NonGKI_Kernel_Patches"
