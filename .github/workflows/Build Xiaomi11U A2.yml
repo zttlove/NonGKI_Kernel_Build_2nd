@@ -108,7 +108,7 @@ jobs:
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/device_kernel"
           
-            - name: Copy EpkeSU uapi to kernel top include
+      - name: Copy EpkeSU uapi to kernel top include
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/device_kernel"
