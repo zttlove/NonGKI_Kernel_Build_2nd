@@ -116,7 +116,13 @@ jobs:
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process1
-      
+        
+      - name: Fix EpkeSU header relative path
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/device_kernel"
+          find drivers/kernelsu -type f -name "*.h" -exec sed -i 's/#include "uapi\//#include "../uapi\//' {} \;
+
       - name: Fix kernel include search path for EpkeSU
         run: |
           set -euo pipefail
