@@ -117,17 +117,15 @@ jobs:
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process1
         
-      - name: Fix EpkeSU header relative path
-        run: |
-          set -euo pipefail
-          cd "$GITHUB_WORKSPACE/device_kernel"
-          find drivers/kernelsu -type f -name "*.h" -exec sed -i 's/#include "uapi\//#include "../uapi\//' {} \;
-
+      
       - name: Fix kernel include search path for EpkeSU
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/device_kernel"
+          # 让 #include "uapi/xxx.h" 直接在 drivers/kernelsu 下查找
           echo 'ccflags-y += -I$(src)' >> drivers/kernelsu/Makefile
+          # 额外把 uapi 子目录加入搜索路径，彻底解决
+          echo 'ccflags-y += -I$(src)/uapi' >> drivers/kernelsu/Makefile
 
       - name: 📦 Package Anykernel3 Flash Zip
         if: env.PACK_METHOD == 'Anykernel3'
