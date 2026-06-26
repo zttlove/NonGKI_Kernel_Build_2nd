@@ -110,12 +110,14 @@ jobs:
           
       - name: Pull EpkeSU source to drivers/kernelsu
         run: |
-           set -euo pipefail
-           cd "$GITHUB_WORKSPACE/device_kernel"
-           git clone --depth=1 -b main https://github.com/shengzimao/EpkeSU.git epkesu_tmp
-           mkdir -p drivers/kernelsu
-           cp -r epkesu_tmp/kernel/drivers/kernelsu/* drivers/kernelsu/
-           rm -rf epkesu_tmp
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/device_kernel"
+          git clone --depth=1 -b main https://github.com/shengzimao/EpkeSU.git epkesu_tmp
+          mkdir -p drivers/kernelsu
+          # kernel/ 里面的全部内容直接丢进 drivers/kernelsu
+          cp -r epkesu_tmp/kernel/* drivers/kernelsu/
+          rm -rf epkesu_tmp
+
          
       - name: Fix all EpkeSU uapi relative include path
         run: |
