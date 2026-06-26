@@ -114,15 +114,14 @@ jobs:
            cd "$GITHUB_WORKSPACE/device_kernel"
            git clone --depth=1 -b main https://github.com/shengzimao/EpkeSU.git epkesu_tmp
            mkdir -p drivers/kernelsu
-           cp -r epkesu_tmp/kernel/* drivers/kernelsu/
+           cp -r epkesu_tmp/kernel/drivers/kernelsu/* drivers/kernelsu/
            rm -rf epkesu_tmp
-           
-      - name: Copy EpkeSU uapi to kernel top include
+         
+      - name: Fix all EpkeSU uapi relative include path
         run: |
-          set -euo pipefail
-          cd "$GITHUB_WORKSPACE/device_kernel"
-          cp -r drivers/kernelsu/uapi include/
-
+           set -euo pipefail
+           cd "$GITHUB_WORKSPACE/device_kernel"
+           find drivers/kernelsu -type f -name "*.h" -exec sed -i 's#"uapi/#"../uapi/#g' {} \;
       - name: 🧰 Patch Kernel of Re:Kernel
         uses: ./.github/workflows/patch-rekernel
 
