@@ -108,14 +108,11 @@ jobs:
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/device_kernel"
           
-      - name: Fix EpkeSU uapi header include path
+      - name: Fix EpkeSU uapi header search path
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/device_kernel"
-          # 修复 allowlist.h
-          sed -i 's#"uapi/app_profile.h"#"../uapi/app_profile.h"#' drivers/kernelsu/policy/allowlist.h
-          # 新增修复 app_profile.h
-          sed -i 's#"uapi/app_profile.h"#"../uapi/app_profile.h"#' drivers/kernelsu/policy/app_profile.h
+          echo 'ccflags-y += -I$(srctree)/drivers/kernelsu' >> drivers/kernelsu/Makefile
 
       - name: 🧰 Patch Kernel of Re:Kernel
         uses: ./.github/workflows/patch-rekernel
