@@ -118,20 +118,7 @@ jobs:
         uses: ./.github/workflows/build-process1
         
       
-      - name: Fix EpkeSU uapi relative include path
-        run: |
-          set -euo pipefail
-          cd "$GITHUB_WORKSPACE/device_kernel"
-          # 将所有 #include "uapi/xxx" 改为 #include "../uapi/xxx"
-          find drivers/kernelsu -type f \( -name "*.h" -o -name "*.c" \) -exec sed -i 's|#include "uapi/|#include "../uapi/|' {} \;
-
-      - name: Fix kernel include search path for EpkeSU
-        run: |
-          set -euo pipefail
-          cd "$GITHUB_WORKSPACE/device_kernel"
-          echo 'ccflags-y += -I$(src)' >> drivers/kernelsu/Makefile
-          echo 'ccflags-y += -I$(src)/uapi' >> drivers/kernelsu/Makefile
-
+      
       - name: 📦 Package Anykernel3 Flash Zip
         if: env.PACK_METHOD == 'Anykernel3'
         shell: bash
