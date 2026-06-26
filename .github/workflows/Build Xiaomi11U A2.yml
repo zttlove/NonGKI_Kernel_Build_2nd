@@ -108,12 +108,11 @@ jobs:
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/device_kernel"
           
-      - name: Fix all EpkeSU uapi relative include path
+            - name: Copy EpkeSU uapi to kernel top include
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/device_kernel"
-          # 递归查找所有 .h，替换 "uapi/ → "../uapi/
-          find drivers/kernelsu -type f -name "*.h" -exec sed -i 's#"uapi/#"../uapi/#g' {} \;
+          cp -r drivers/kernelsu/uapi include/
 
       - name: 🧰 Patch Kernel of Re:Kernel
         uses: ./.github/workflows/patch-rekernel
