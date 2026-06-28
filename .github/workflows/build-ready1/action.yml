@@ -108,7 +108,7 @@ runs:
                     KERNELSU_BRANCH="master"
                     
                 else
-                    KERNELSU_BRANCH="master"
+                    KERNELSU_BRANCH="staging"
                 fi
             elif [[ "${{ env.KERNELSU_AUTO_FORK }}" == "rsuntk" ]]; then
                 KERNELSU_AUTHOR="rsuntk"
