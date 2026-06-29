@@ -29,9 +29,9 @@ env:
   DEFCONFIG_ORIGIN_IMAGE: ""
   DEFCONFIG_FROM_BOOT: false
 
-  KERNELSU_SOURCE: ""
-  KERNELSU_BRANCH: ""
-  KERNELSU_AUTO_GET: "true"
+  KERNELSU_SOURCE: "https://github.com/zttlove/SukiSU-Ultra/"
+  KERNELSU_BRANCH: "dev"
+  KERNELSU_AUTO_GET: "false"
   KERNELSU_AUTO_FORK: "sukisu" # xxksu, rsuntk, next, resukisu and sukisu
 
   SUSFS_ENABLE: false
