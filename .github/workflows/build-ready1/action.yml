@@ -129,7 +129,7 @@ runs:
                 else
                     KERNELSU_BRANCH="dev"
                 # 全局替换所有硬编码linux/pgtable.h
-                sed -i 's|#include <linux/pgtable.h>|#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,10,0)\n#include <linux/pgtable.h>\n#else\n#include <asm/pgtable.h>\n#endif|g' drivers/kernelsu/**/*.c
+                sed -i 's|#include <linux/pgtable.h>|#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,10,0)\n#include <linux/pgtable.h>\n#else\n#include <asm/pgtable.h>\n#endif|g' $GITHUB_WORKSPACE/device_kernel/drivers/**/*.c
                 fi
             elif [[ "${{ env.KERNELSU_AUTO_FORK }}" == "next" ]]; then
                 KERNELSU_AUTHOR="KernelSU-Next"
