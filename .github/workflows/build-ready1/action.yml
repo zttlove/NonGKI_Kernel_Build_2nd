@@ -129,12 +129,16 @@ runs:
                 else
                     KERNELSU_BRANCH="dev"
                 # 全局替换所有硬编码linux/pgtable.h
-                sed -i '5c\#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,10,0)\
+                SUCOMPAT_FILE="feature/sucompat.c"
+                if [ -f "$SUCOMPAT_FILE" ]; then
+                sed -i '/#include.*pgtable\.h/c\#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,10,0)\
                 #include <linux/pgtable.h>\
                 #else\
                 #include <asm/pgtable.h>\
-                #endif' $GITHUB_WORKSPACE/device_kernel/drivers/feature/sucompat.c
+                #endif' "$SUCOMPAT_FILE"
                 fi
+            fi
+
             elif [[ "${{ env.KERNELSU_AUTO_FORK }}" == "next" ]]; then
                 KERNELSU_AUTHOR="KernelSU-Next"
                 KERNELSU_NAME="KernelSU-Next"
