@@ -351,6 +351,14 @@ runs:
             #if LINUX_VERSION_CODE < KERNEL_VERSION(5,10,0)\
             #define SECCOMP_ARCH_NATIVE_NR __NR_syscalls\
             #endif' drivers/kernelsu/infra/seccomp_cache.c
+            sed -i '38,42c\static const struct fsnotify_ops ksu_fsnotify_ops = {\
+            #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,10,0)\
+            .handle_inode_event = ksu_handle_inode_event,\
+           #else\
+           .handle_event = ksu_handle_inode_event,\
+           #endif\
+           };' drivers/kernelsu/manager/pkg_observer.c
+           sed -i '1i #include <linux/version.h>' drivers/kernelsu/manager/pkg_observer.c
 
                 echo "CONFIG_KSU_SUSFS=n" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
 
