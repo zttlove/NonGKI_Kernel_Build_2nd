@@ -327,6 +327,8 @@ runs:
 
           if [[ "${{ env.KERNELSU_SOURCE }}" == *SukiSU* ]] || [[ "${{ env.KERNELSU_AUTO_FORK }}" == "sukisu" ]] || [[ "${{ env.KERNELSU_SOURCE }}" == *ReSukiSU* ]] || [[ "${{ env.KERNELSU_AUTO_FORK }}" == "resukisu" ]]; then
             if [[ "${{ env.SUSFS_ENABLE }}" != "true" ]]; then
+            [ -f drivers/kernelsu/feature/sucompat.c ] && sed -i '/#include.*pgtable\.h/c\#include <asm/pgtable.h>' drivers/kernelsu/feature/sucompat.c
+
                 echo "CONFIG_KSU_SUSFS=n" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
 
             elif [[ "${{ env.SUSFS_ENABLE }}" == "true" ]]; then
