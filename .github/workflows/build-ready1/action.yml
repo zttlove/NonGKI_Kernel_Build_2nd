@@ -347,6 +347,10 @@ runs:
             return copy_to_user((void __user *)dst, src, size);\
             }\
             #endif' drivers/kernelsu/hook/arm64/patch_memory.c
+            sed -i '1i\#include <linux/version.h>\
+            #if LINUX_VERSION_CODE < KERNEL_VERSION(5,10,0)\
+            #define SECCOMP_ARCH_NATIVE_NR __NR_syscalls\
+            #endif' drivers/kernelsu/infra/seccomp_cache.c
 
                 echo "CONFIG_KSU_SUSFS=n" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
 
