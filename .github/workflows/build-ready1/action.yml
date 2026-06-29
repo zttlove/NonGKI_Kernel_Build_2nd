@@ -319,51 +319,7 @@ runs:
 
           if [[ "${{ env.KERNELSU_SOURCE }}" == *SukiSU* ]] || [[ "${{ env.KERNELSU_AUTO_FORK }}" == "sukisu" ]] || [[ "${{ env.KERNELSU_SOURCE }}" == *ReSukiSU* ]] || [[ "${{ env.KERNELSU_AUTO_FORK }}" == "resukisu" ]]; then
             if [[ "${{ env.SUSFS_ENABLE }}" != "true" ]]; then
-            [ -f drivers/kernelsu/feature/sucompat.c ] && sed -i '/#include.*pgtable\.h/c\#include <asm/pgtable.h>' drivers/kernelsu/feature/sucompat.c
-            sed -i '1,10d' drivers/kernelsu/feature/sucompat.c
-            sed -i '1i\#include <linux/version.h>\
-            #include <linux/uaccess.h>\
-            #if LINUX_VERSION_CODE < KERNEL_VERSION(5,10,0)\
-            static inline long strncpy_from_user_nofault(char *dst, const char __user *src, long size)\
-            {\
-            return strncpy_from_user(dst, src, size);\
-            }\
-            #endif\
-            #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,10,0)\
-            #include <linux/pgtable.h>\
-            #else\
-            #include <asm/pgtable.h>\
-            #endif' drivers/kernelsu/feature/sucompat.c
-            
-            sed -i '1i\#include <linux/version.h>\
-            #if LINUX_VERSION_CODE < KERNEL_VERSION(5,10,0)\
-            #include <linux/uaccess.h>\
-            static inline long copy_to_kernel_nofault(void *dst, const void *src, size_t size)\
-            {\
-            return copy_from_user(dst, (const void __user *)src, size);\
-            }\
-            static inline long copy_from_kernel_nofault(void *dst, const void *src, size_t size)\
-            {\
-            return copy_to_user((void __user *)dst, src, size);\
-            }\
-            #endif' drivers/kernelsu/hook/arm64/patch_memory.c
-            sed -i '1i\#include <linux/version.h>\
-            #if LINUX_VERSION_CODE < KERNEL_VERSION(5,10,0)\
-            #define SECCOMP_ARCH_NATIVE_NR __NR_syscalls\
-            #endif' drivers/kernelsu/infra/seccomp_cache.c
-            sed -i '38,42c\static const struct fsnotify_ops ksu_fsnotify_ops = {\
-            #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,10,0)\
-            .handle_inode_event = ksu_handle_inode_event,\
-           #else\
-           .handle_event = ksu_handle_inode_event,\
-           #endif\
-           };' drivers/kernelsu/manager/pkg_observer.c
-           
-          sed -i '42s/.*/\t.handle_event = ksu_handle_inode_event,/' drivers/kernelsu/manager/pkg_observer.c
-          sed -i '45i\static int ksu_handle_inode_event(struct fsnotify_group *group, struct inode *inode, u32 mask, const void *data, int data_type, const struct qstr *file_name, u32 cookie, struct fsnotify_iter_info *iter_info);' drivers/kernelsu/manager/pkg_observer.c
-          sed -i '73s/add_mark_on_inode/fsnotify_add_mark/' drivers/kernelsu/manager/pkg_observer.c
-          sed -i '112s/.*/\t.handle_event = ksu_handle_inode_event,/' drivers/kernelsu/manager/pkg_observer.c
-
+        
                 echo "CONFIG_KSU_SUSFS=n" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
 
             elif [[ "${{ env.SUSFS_ENABLE }}" == "true" ]]; then
