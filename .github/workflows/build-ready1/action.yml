@@ -358,7 +358,11 @@ runs:
            .handle_event = ksu_handle_inode_event,\
            #endif\
            };' drivers/kernelsu/manager/pkg_observer.c
-           sed -i '1i #include <linux/version.h>' drivers/kernelsu/manager/pkg_observer.c
+           sed -i '/fsnotify_alloc_group(&ksu_ops);/i\
+           static const struct fsnotify_ops ksu_ops = {\
+           .handle_event = ksu_handle_inode_event,\
+           };\
+           ' drivers/kernelsu/manager/pkg_observer.c
            sed -i 's/static int ksu_handle_inode_event(struct fsnotify_group \*group, struct inode \*inode, u32 mask, const void \*data, int data_type, const struct qstr \*file_name, u32 cookie, struct fsnotify_iter_info \*iter_info)/static int ksu_handle_inode_event(struct fsnotify_mark *mark, u32 mask, struct inode *inode, struct inode *dir, const struct qstr *file_name, u32 cookie)/g' drivers/kernelsu/manager/pkg_observer.c
 
                 echo "CONFIG_KSU_SUSFS=n" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
