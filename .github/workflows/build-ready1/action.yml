@@ -128,15 +128,7 @@ runs:
                     KERNELSU_BRANCH="builtin"
                 else
                     KERNELSU_BRANCH="dev"
-                # 全局替换所有硬编码linux/pgtable.h
-                SUCOMPAT_FILE="feature/sucompat.c"
-                if [ -f "$SUCOMPAT_FILE" ]; then
-                sed -i '/#include.*pgtable\.h/c\#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,10,0)\
-                #include <linux/pgtable.h>\
-                #else\
-                #include <asm/pgtable.h>\
-                #endif' "$SUCOMPAT_FILE"
-                fi
+                
             fi
 
             elif [[ "${{ env.KERNELSU_AUTO_FORK }}" == "next" ]]; then
