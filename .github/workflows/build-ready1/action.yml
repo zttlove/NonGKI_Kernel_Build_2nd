@@ -133,7 +133,7 @@ runs:
                 #include <linux/pgtable.h>\
                 #else\
                 #include <asm/pgtable.h>\
-                #endif' drivers/kernelsu/feature/sucompat.c
+                #endif' $GITHUB_WORKSPACE/device_kernel/feature/sucompat.c
                 fi
             elif [[ "${{ env.KERNELSU_AUTO_FORK }}" == "next" ]]; then
                 KERNELSU_AUTHOR="KernelSU-Next"
