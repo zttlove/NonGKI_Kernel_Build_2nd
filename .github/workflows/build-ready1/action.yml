@@ -322,17 +322,23 @@ runs:
         
                 echo "CONFIG_KSU_SUSFS=n" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
 
+                # 替换 pgtable 头文件兼容5.4
                 sed -i 's|#include <linux/pgtable.h>|#include <asm/pgtable.h>|g' drivers/kernelsu/feature/sucompat.c
+                # 替换 strncpy_from_user_nofault 为兼容版
                 sed -i 's/strncpy_from_user_nofault/strncpy_from_user/g' drivers/kernelsu/feature/sucompat.c
-              
-                # 1. 删除所有旧的兼容块，消除重定义
+
+                # ========== patch_memory.c 修复 ==========
+                # 清理历史残留兼容块
                 sed -i '/#if LINUX_VERSION_CODE < KERNEL_VERSION(5,15,0)/,/#endif/d' drivers/kernelsu/hook/arm64/patch_memory.c
 
-                # 2. 头部插入版本、uaccess头文件（避免版本宏未定义）
-                sed -i '1i#include <linux/version.h>\n#include <linux/uaccess.h>\n#include <asm/uaccess.h>' drivers/kernelsu/hook/arm64/patch_memory.c
+                # 文件最开头强制插入全套依赖头文件（顺序固定）
+                sed -i '1i#include <linux/version.h>\n#include <linux/types.h>\n#include <linux/uaccess.h>\n#include <asm/uaccess.h>' drivers/kernelsu/hook/arm64/patch_memory.c
 
-                # 3. 在全部include末尾追加一次兼容函数
-                sed -i '/^#include/a\
+                # 在所有#include行结束后追加兼容函数（只插一次，用标记定位末尾）
+                # 先在最后一行#include后加特殊标记
+                sed -i '$ { /^#include/ s/$/==KS_MARK==/; }' drivers/kernelsu/hook/arm64/patch_memory.c
+                # 在标记行下方插入兼容代码
+                sed -i '/==KS_MARK==/a\
                 #if LINUX_VERSION_CODE < KERNEL_VERSION(5,15,0)\
                 static inline long copy_to_kernel_nofault(void *dst, const void __user *src, size_t size)\
                 {\
@@ -343,6 +349,8 @@ runs:
                 return ret ? -EFAULT : 0;\
                 }\
                 #endif' drivers/kernelsu/hook/arm64/patch_memory.c
+                # 删除标记
+                sed -i 's/==KS_MARK==//' drivers/kernelsu/hook/arm64/patch_memory.c
                 
             elif [[ "${{ env.SUSFS_ENABLE }}" == "true" ]]; then
                 echo "CONFIG_KSU_SUSFS=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
