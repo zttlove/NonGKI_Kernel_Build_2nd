@@ -335,6 +335,7 @@ runs:
                 __ret = copy_from_user(map, src, len);\
                 pagefault_enable();\
                 ret = __ret ? -EFAULT : 0;|' drivers/kernelsu/hook/arm64/patch_memory.c
+                sed -i 's/SECCOMP_ARCH_NATIVE_NR/__NR_syscalls/g' drivers/kernelsu/infra/seccomp_cache.c
                                 
             elif [[ "${{ env.SUSFS_ENABLE }}" == "true" ]]; then
                 echo "CONFIG_KSU_SUSFS=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
