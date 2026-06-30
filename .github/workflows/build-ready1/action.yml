@@ -325,8 +325,13 @@ runs:
                 sed -i 's|#include <linux/pgtable.h>|#include <asm/pgtable.h>|g' drivers/kernelsu/feature/sucompat.c
                 sed -i 's/strncpy_from_user_nofault/strncpy_from_user/g' drivers/kernelsu/feature/sucompat.c
               
-                sed -i '1i#include <linux/uaccess.h>\n#include <asm/uaccess.h>' drivers/kernelsu/hook/arm64/patch_memory.c
+                # 1. 删除所有旧的兼容块，消除重定义
                 sed -i '/#if LINUX_VERSION_CODE < KERNEL_VERSION(5,15,0)/,/#endif/d' drivers/kernelsu/hook/arm64/patch_memory.c
+
+                # 2. 头部插入版本、uaccess头文件（避免版本宏未定义）
+                sed -i '1i#include <linux/version.h>\n#include <linux/uaccess.h>\n#include <asm/uaccess.h>' drivers/kernelsu/hook/arm64/patch_memory.c
+
+                # 3. 在全部include末尾追加一次兼容函数
                 sed -i '/^#include/a\
                 #if LINUX_VERSION_CODE < KERNEL_VERSION(5,15,0)\
                 static inline long copy_to_kernel_nofault(void *dst, const void __user *src, size_t size)\
@@ -338,7 +343,7 @@ runs:
                 return ret ? -EFAULT : 0;\
                 }\
                 #endif' drivers/kernelsu/hook/arm64/patch_memory.c
-
+                
             elif [[ "${{ env.SUSFS_ENABLE }}" == "true" ]]; then
                 echo "CONFIG_KSU_SUSFS=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
             fi
