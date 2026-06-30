@@ -324,7 +324,20 @@ runs:
 
                 sed -i 's|#include <linux/pgtable.h>|#include <asm/pgtable.h>|g' drivers/kernelsu/feature/sucompat.c
                 sed -i 's/strncpy_from_user_nofault/strncpy_from_user/g' drivers/kernelsu/feature/sucompat.c
-                sed -i '10i\#if LINUX_VERSION_CODE < KERNEL_VERSION(5,15,0)\nstatic inline long copy_to_kernel_nofault(void *dst, const void __user *src, size_t size)\n{\n    long ret;\n    pagefault_disable();\n    ret = copy_from_user(dst, src, size);\n    pagefault_enable();\n    return ret ? -EFAULT : 0;\n}\n#endif' drivers/kernelsu/hook/arm64/patch_memory.c
+              
+                sed -i '1i#include <linux/uaccess.h>\n#include <asm/uaccess.h>' drivers/kernelsu/hook/arm64/patch_memory.c
+                sed -i '/#if LINUX_VERSION_CODE < KERNEL_VERSION(5,15,0)/,/#endif/d' drivers/kernelsu/hook/arm64/patch_memory.c
+                sed -i '/^#include/a\
+                #if LINUX_VERSION_CODE < KERNEL_VERSION(5,15,0)\
+                static inline long copy_to_kernel_nofault(void *dst, const void __user *src, size_t size)\
+                {\
+                long ret;\
+                pagefault_disable();\
+                ret = copy_from_user(dst, src, size);\
+                pagefault_enable();\
+                return ret ? -EFAULT : 0;\
+                }\
+                #endif' drivers/kernelsu/hook/arm64/patch_memory.c
 
             elif [[ "${{ env.SUSFS_ENABLE }}" == "true" ]]; then
                 echo "CONFIG_KSU_SUSFS=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
