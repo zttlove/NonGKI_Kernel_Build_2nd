@@ -346,7 +346,7 @@ runs:
                 #define strncpy_from_user_nofault strncpy_from_user\
                 #endif\
                 ' drivers/kernelsu/sucompat.c
-                ls -l drivers/kernelsu/ksu_defs.h
+                
                                 
             elif [[ "${{ env.SUSFS_ENABLE }}" == "true" ]]; then
                 echo "CONFIG_KSU_SUSFS=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
