@@ -324,6 +324,7 @@ runs:
                 sed -i 's/TWA_RESUME/TWA_SIGNAL/g' drivers/kernelsu/allowlist.c
                 sed -i '1s/^/#include <linux\/sched\/task.h>\n/' drivers/kernelsu/allowlist.c
                 sed -i 's/TWA_SIGNAL/true/g' drivers/kernelsu/allowlist.c
+                sed -i '5,10s/#include <linux\/pgtable.h>/#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,10,0)\n#include <linux\/pgtable.h>\n#else\n#include <asm\/pgtable.h>\n#include <linux\/mm.h>\n#include <linux\/mmzone.h>\n#endif/' drivers/kernelsu/sucompat.c
                                 
             elif [[ "${{ env.SUSFS_ENABLE }}" == "true" ]]; then
                 echo "CONFIG_KSU_SUSFS=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
