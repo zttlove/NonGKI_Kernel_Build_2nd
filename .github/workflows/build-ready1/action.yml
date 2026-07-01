@@ -127,7 +127,7 @@ runs:
                 if [[ "${{ env.SUSFS_ENABLE }}" == "true" ]]; then
                     KERNELSU_BRANCH="builtin"
                 else
-                    KERNELSU_BRANCH="module_repository"
+                    KERNELSU_BRANCH="old"
                 
             fi
 
@@ -322,20 +322,7 @@ runs:
         
                 echo "CONFIG_KSU_SUSFS=n" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
 
-                # sucompat.c 原有兼容保留               
-                sed -i 's|#include <linux/pgtable.h>|#include <asm/pgtable.h>|g' drivers/kernelsu/feature/sucompat.c
-                sed -i 's/strncpy_from_user_nofault/strncpy_from_user/g' drivers/kernelsu/feature/sucompat.c
-                # 1. 清空所有旧的 copy_to_kernel_nofault 兼容代码块
-                sed -i '/#if LINUX_VERSION_CODE < KERNEL_VERSION(5,15,0)/,/#endif/d' drivers/kernelsu/hook/arm64/patch_memory.c
-                # 2. 头部补齐必须头文件（解决 size_t / pagefault / copy_from_user 各种未定义）
-                sed -i '1i#include <linux/version.h>\n#include <linux/types.h>\n#include <linux/uaccess.h>\n#include <asm/uaccess.h>' drivers/kernelsu/hook/arm64/patch_memory.c
-                # 3. 直接替换第154行 copy_to_kernel_nofault 整行调用，不用封装函数
-                sed -i 's|ret = (int)copy_to_kernel_nofault(map, src, len);|long __ret;\
-                pagefault_disable();\
-                __ret = copy_from_user(map, src, len);\
-                pagefault_enable();\
-                ret = __ret ? -EFAULT : 0;|' drivers/kernelsu/hook/arm64/patch_memory.c
-                sed -i 's/SECCOMP_ARCH_NATIVE_NR/__NR_syscalls/g' drivers/kernelsu/infra/seccomp_cache.c
+               
                                 
             elif [[ "${{ env.SUSFS_ENABLE }}" == "true" ]]; then
                 echo "CONFIG_KSU_SUSFS=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
