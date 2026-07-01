@@ -324,30 +324,28 @@ runs:
                 sed -i 's/TWA_RESUME/TWA_SIGNAL/g' drivers/kernelsu/allowlist.c
                 sed -i '1s/^/#include <linux\/sched\/task.h>\n/' drivers/kernelsu/allowlist.c
                 sed -i 's/TWA_SIGNAL/true/g' drivers/kernelsu/allowlist.c
-                # 清空原有前10行，写入修复后头部
+                cd $GITHUB_WORKSPACE/device_kernel
                 sed -i '1,10d' drivers/kernelsu/sucompat.c
-                cat > tmp_header.txt << 'EOF'
-                #include "ksu_defs.h"
-                #include <linux/version.h>
-                #include <linux/types.h>
-                #include <linux/sched.h>
-                #include <linux/fs.h>
-                #include <linux/file.h>
-                #include <linux/uaccess.h>
-                #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,10,0)
-                #include <linux/pgtable.h>
-                #else
-                #include <asm/pgtable.h>
-                #include <linux/mm.h>
-                #include <linux/mmzone.h>
-                #endif
-                #if LINUX_VERSION_CODE < KERNEL_VERSION(5,10,0)
-                #define strncpy_from_user_nofault strncpy_from_user
-                #endif
-                EOF
-                cat tmp_header.txt drivers/kernelsu/sucompat.c > new_sucompat.c
-                mv new_sucompat.c drivers/kernelsu/sucompat.c
-                rm tmp_header.txt
+                sed -i '1i#include "ksu_defs.h"\
+                #include <linux/version.h>\
+                #include <linux/types.h>\
+                #include <linux/sched.h>\
+                #include <linux/fs.h>\
+                #include <linux/file.h>\
+                #include <linux/uaccess.h>\
+                \
+                #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,10,0)\
+                #include <linux/pgtable.h>\
+                #else\
+                #include <asm/pgtable.h>\
+                #include <linux/mm.h>\
+                #include <linux/mmzone.h>\
+                #endif\
+                \
+                #if LINUX_VERSION_CODE < KERNEL_VERSION(5,10,0)\
+                #define strncpy_from_user_nofault strncpy_from_user\
+                #endif\
+                ' drivers/kernelsu/sucompat.c
                                 
             elif [[ "${{ env.SUSFS_ENABLE }}" == "true" ]]; then
                 echo "CONFIG_KSU_SUSFS=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
