@@ -324,7 +324,6 @@ runs:
                 sed -i 's/TWA_RESUME/TWA_SIGNAL/g' drivers/kernelsu/allowlist.c
                 sed -i '1s/^/#include <linux\/sched\/task.h>\n/' drivers/kernelsu/allowlist.c
                 sed -i 's/TWA_SIGNAL/true/g' drivers/kernelsu/allowlist.c
-                cd $GITHUB_WORKSPACE/device_kernel
                 sed -i '1,10d' drivers/kernelsu/sucompat.c
                 sed -i '1i#include "ksu_defs.h"\
                 #include <linux/version.h>\
