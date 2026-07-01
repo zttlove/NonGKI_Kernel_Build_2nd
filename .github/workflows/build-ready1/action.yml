@@ -321,10 +321,12 @@ runs:
             if [[ "${{ env.SUSFS_ENABLE }}" != "true" ]]; then
         
                 echo "CONFIG_KSU_SUSFS=n" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-                sed -i 's/TWA_RESUME/TWA_SIGNAL/g' drivers/kernelsu/allowlist.c
-                sed -i '1s/^/#include <linux\/sched\/task.h>\n/' drivers/kernelsu/allowlist.c
-                sed -i 's/TWA_SIGNAL/true/g' drivers/kernelsu/allowlist.c
+                # 修复 allowlist TWA_RESUME 兼容5.4内核
+                sed -i 's/TWA_RESUME/true/g' drivers/kernelsu/allowlist.c
+                sed -i '1i#include <linux/sched/task.h>' drivers/kernelsu/allowlist.c
+                # 清空sucompat前10行旧头部
                 sed -i '1,10d' drivers/kernelsu/sucompat.c
+                # 插入干净无空格的标准头部，使用 "" 引用同目录ksu_defs.h
                 sed -i '1i#include "ksu_defs.h"\
                 #include <linux/version.h>\
                 #include <linux/types.h>\
@@ -345,7 +347,8 @@ runs:
                 #define strncpy_from_user_nofault strncpy_from_user\
                 #endif\
                 ' drivers/kernelsu/sucompat.c
-                sed -i '1s/#include "ksu_defs.h"/#include <drivers\/kernelsu\/ksu_defs.h>/' drivers/kernelsu/sucompat.c
+                # 校验头文件是否存在
+                ls -l drivers/kernelsu/ksu_defs.h
                                 
             elif [[ "${{ env.SUSFS_ENABLE }}" == "true" ]]; then
                 echo "CONFIG_KSU_SUSFS=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
