@@ -322,10 +322,6 @@ runs:
         
                 echo "CONFIG_KSU_SUSFS=n" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
                 cd $GITHUB_WORKSPACE/device_kernel
-                # 清空旧残缺kernelsu
-                rm -rf drivers/kernelsu
-                # 拉取适配5.4的KernelSU源码（示例仓库，自行替换你用的分支）
-                git clone https://github.com/JingMatrix/KernelSU.git -b dev drivers/kernelsu
                 # 再执行之前的修复sed脚本
                 sed -i 's/TWA_RESUME/true/g' drivers/kernelsu/allowlist.c
                 sed -i '1i#include <linux/sched/task.h>' drivers/kernelsu/allowlist.c
