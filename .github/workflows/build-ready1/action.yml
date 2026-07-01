@@ -321,12 +321,15 @@ runs:
             if [[ "${{ env.SUSFS_ENABLE }}" != "true" ]]; then
         
                 echo "CONFIG_KSU_SUSFS=n" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-                # 修复 allowlist TWA_RESUME 兼容5.4内核
+                cd $GITHUB_WORKSPACE/device_kernel
+                # 清空旧残缺kernelsu
+                rm -rf drivers/kernelsu
+                # 拉取适配5.4的KernelSU源码（示例仓库，自行替换你用的分支）
+                git clone https://github.com/JingMatrix/KernelSU.git -b dev drivers/kernelsu
+                # 再执行之前的修复sed脚本
                 sed -i 's/TWA_RESUME/true/g' drivers/kernelsu/allowlist.c
                 sed -i '1i#include <linux/sched/task.h>' drivers/kernelsu/allowlist.c
-                # 清空sucompat前10行旧头部
                 sed -i '1,10d' drivers/kernelsu/sucompat.c
-                # 插入干净无空格的标准头部，使用 "" 引用同目录ksu_defs.h
                 sed -i '1i#include "ksu_defs.h"\
                 #include <linux/version.h>\
                 #include <linux/types.h>\
@@ -347,7 +350,6 @@ runs:
                 #define strncpy_from_user_nofault strncpy_from_user\
                 #endif\
                 ' drivers/kernelsu/sucompat.c
-                # 校验头文件是否存在
                 ls -l drivers/kernelsu/ksu_defs.h
                                 
             elif [[ "${{ env.SUSFS_ENABLE }}" == "true" ]]; then
