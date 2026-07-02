@@ -105,19 +105,20 @@ jobs:
           set -euo pipefail
           cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
 
-          # 1. 创建空 selinux hide 实现（<<-EOF 消除行首制表符，YAML用空格不影响）
+          # 1. 创建空 selinux hide 实现
           mkdir -p selinux
+    
           cat > selinux/hide.c <<-'EOF'
           void ksu_selinux_hide_handle_post_fs_data(void)
           {
-            return;
+           return;
           }
 
-            void ksu_selinux_hide_handle_second_stage(void)
+           void ksu_selinux_hide_handle_second_stage(void)
           {
-            return;
+           return;
           }
-            EOF
+           EOF
 
           cat > selinux/hide.h <<-'EOF'
           #ifndef KSU_SELINUX_HIDE_H
@@ -127,45 +128,44 @@ jobs:
           void ksu_selinux_hide_handle_second_stage(void);
 
           #endif
-           EOF
+          EOF
 
-          # 2. 修复 ksud.c 语法错误（核心改动）
+          # 2. 修复 ksud.c：将头文件插入到第一个 #include 之后，保证声明在调用前
           if [ -f "runtime/ksud.c" ]; then
-          # 先删除所有重复插入的 selinux/hide.h
+          # 清理所有旧的 selinux include
           sed -i '/#include "\.\.\/selinux\/hide.h"/d' runtime/ksud.c
+      
+          # 在第一个 #include 下方插入头文件，确保声明出现在函数调用上方
+          sed -i '/^#include /a\#include "../selinux/hide.h"' runtime/ksud.c
 
-          # 兼容通用sed：直接在文件末尾追加include（不会破坏头部函数语法，最简稳定方案）
-          echo '#include "../selinux/hide.h"' >> runtime/ksud.c
-
-          # 清理之前错误插入的宏、ifdef、行删除
+          # 清理之前错误插入的宏、行范围删除
           sed -i '/KSU_DUMMY_DISABLE_SELINUX/d' runtime/ksud.c
           sed -i '55,57d' runtime/ksud.c
           sed -i '215,217d' runtime/ksud.c
           sed -i '/\/\/ksu_selinux_hide_handle/d' runtime/ksud.c
           fi
 
-          # 3. strncpy：仅替换函数名，恢复被注释代码
+          # 3. 彻底替换 event.c 里 strncpy_from_user_nofault → __strncpy_from_user_nofault
           if [ -f "sulog/event.c" ]; then
           sed -i 's/\bstrncpy_from_user_nofault\b/__strncpy_from_user_nofault/g' sulog/event.c
-          sed -i 's/^\/\///' sulog/event.c
-          fi
+      
+           # 取消所有注释，保证内核驱动通信逻辑完整
+           sed -i 's/^\/\///' sulog/event.c
+           fi
 
-          # 4. 清理旧补丁，文件不存在则跳过
-          if [ -f "allowlist.c" ]; then
-          sed -i '/#include <linux\/task_work.h>/d' allowlist.c
-          sed -i '/#include <linux\/sched.h>/d' allowlist.c
-          fi
+           # 4. 清理历史残留补丁
+           if [ -f "allowlist.c" ]; then
+           sed -i '/#include <linux\/task_work.h>/d' allowlist.c
+           sed -i '/#include <linux\/sched.h>/d' allowlist.c
+           fi
 
-          if [ -f "ksu_defs.h" ]; then
-          sed -i '/#ifndef TWA_RESUME/,/#endif/d' ksu_defs.h
-          sed -i '/KSU_DUMMY_DISABLE_SELINUX/d' ksu_defs.h
-          fi
+           if [ -f "ksu_defs.h" ]; then
+           sed -i '/#ifndef TWA_RESUME/,/#endif/d' ksu_defs.h
+           sed -i '/KSU_DUMMY_DISABLE_SELINUX/d' ksu_defs.h
+           fi
 
-          echo "✅ Empty selinux stubs created, ksud.c include fixed to avoid syntax error"
+           echo "✅ Fixed include order & strncpy function name"
 
-          
-
-          
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
