@@ -101,7 +101,7 @@ jobs:
         
       
       - name: 🛠️ Emergency rollback allowlist & recheck strncpy
-       run: |
+        run: |
          set -euo pipefail
          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
 
