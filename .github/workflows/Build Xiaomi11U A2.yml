@@ -100,22 +100,25 @@ jobs:
         uses: ./.github/workflows/patch-susfs1
         
       
-      - name: 🛠️ Fix strncpy_from_user_nofault implicit declaration
+      - name: 🛠️ Fix strncpy_from_user_nofault implicit declaration & bootloop selinux
         run: |
           set -euo pipefail
           cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
 
-          # 修正 event.c 里错误的函数名 ksu___strncpy_from_user_nofault → ksu_strncpy_from_user_nofault
+          # 1. event.c 两处全部修正
           if [ -f "sulog/event.c" ]; then
+          # 修正多余下划线
           sed -i 's/ksu___strncpy_from_user_nofault/ksu_strncpy_from_user_nofault/g' sulog/event.c
+          # 把原生 strncpy_from_user_nofault 替换成内核兼容层 __strncpy_from_user_nofault
+          sed -i 's/\bstrncpy_from_user_nofault\b/__strncpy_from_user_nofault/g' sulog/event.c
           fi
 
-          # 之前残留的 strncpy 宏全部清理干净，避免冲突
+          # 清理之前残留的宏定义，杜绝冲突
           if [ -f "infra/kernel_compat.h" ]; then
           sed -i '/#define strncpy_from_user_nofault/d' infra/kernel_compat.h
           fi
 
-          # ========== SELinux 部分保持注释调用（防止无限重启） ==========
+          # 2. SELinux 相关：彻底注释两处调用，防止无限重启
           if [ -f "runtime/ksud.c" ]; then
           sed -i '/ksu_selinux_hide_handle_post_fs_data/d' runtime/ksud.c
           sed -i '/ksu_selinux_hide_handle_second_stage/d' runtime/ksud.c
@@ -124,7 +127,7 @@ jobs:
           sed -i '216s/^/\/\//' runtime/ksud.c
           fi
 
-          # TWA_RESUME 补丁保留
+          # 3. TWA_RESUME 兼容补丁保留
           if [ -f "allowlist.c" ]; then
           sed -i '1i #include <linux/task_work.h>\n#include <linux/sched.h>' allowlist.c
           if ! grep -q "TWA_RESUME" ksu_defs.h; then
@@ -134,7 +137,8 @@ jobs:
           echo "#endif" >> ksu_defs.h
           fi
           fi
-          echo "✅ strncpy & selinux patches applied"
+          echo "✅ All strncpy & selinux compile/bootloop patches applied"
+
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
