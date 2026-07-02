@@ -100,44 +100,38 @@ jobs:
         uses: ./.github/workflows/patch-susfs1
         
       
-      - name: 🛠️ Fix strncpy_from_user_nofault implicit declaration & bootloop selinux
-        run: |
-          set -euo pipefail
-          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
+      - name: 🛠️ Emergency rollback allowlist & recheck strncpy
+       run: |
+         set -euo pipefail
+         cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
 
-          # 1. event.c 两处全部修正
-          if [ -f "sulog/event.c" ]; then
-          # 修正多余下划线
-          sed -i 's/ksu___strncpy_from_user_nofault/ksu_strncpy_from_user_nofault/g' sulog/event.c
-          # 把原生 strncpy_from_user_nofault 替换成内核兼容层 __strncpy_from_user_nofault
-          sed -i 's/\bstrncpy_from_user_nofault\b/__strncpy_from_user_nofault/g' sulog/event.c
-          fi
+         # ========== 1. 回滚 allowlist.c 手动添加的头文件 ==========
+         if [ -f "allowlist.c" ]; then
+         sed -i '/#include <linux\/task_work.h>/d' allowlist.c
+         sed -i '/#include <linux\/sched.h>/d' allowlist.c
+         fi
 
-          # 清理之前残留的宏定义，杜绝冲突
-          if [ -f "infra/kernel_compat.h" ]; then
-          sed -i '/#define strncpy_from_user_nofault/d' infra/kernel_compat.h
-          fi
+         # ========== 2. 删除 ksu_defs.h 手动添加的 TWA_RESUME 定义 ==========
+         if [ -f "ksu_defs.h" ]; then
+         sed -i '/#ifndef TWA_RESUME/,/#endif/d' ksu_defs.h
+         fi
 
-          # 2. SELinux 相关：彻底注释两处调用，防止无限重启
-          if [ -f "runtime/ksud.c" ]; then
-          sed -i '/ksu_selinux_hide_handle_post_fs_data/d' runtime/ksud.c
-          sed -i '/ksu_selinux_hide_handle_second_stage/d' runtime/ksud.c
-          sed -i '/KSU_SELINUX_HIDE/d' runtime/ksud.c
-          sed -i '56s/^/\/\//' runtime/ksud.c
-          sed -i '216s/^/\/\//' runtime/ksud.c
-          fi
+         # ========== 3. strncpy 保持替换 __strncpy_from_user_nofault ==========
+         if [ -f "sulog/event.c" ]; then
+         sed -i 's/ksu___strncpy_from_user_nofault/ksu_strncpy_from_user_nofault/g' sulog/event.c
+         sed -i 's/\bstrncpy_from_user_nofault\b/__strncpy_from_user_nofault/g' sulog/event.c
+         fi
 
-          # 3. TWA_RESUME 兼容补丁保留
-          if [ -f "allowlist.c" ]; then
-          sed -i '1i #include <linux/task_work.h>\n#include <linux/sched.h>' allowlist.c
-          if ! grep -q "TWA_RESUME" ksu_defs.h; then
-          echo "" >> ksu_defs.h
-          echo "#ifndef TWA_RESUME" >> ksu_defs.h
-          echo "#define TWA_RESUME 1" >> ksu_defs.h
-          echo "#endif" >> ksu_defs.h
-          fi
-          fi
-          echo "✅ All strncpy & selinux compile/bootloop patches applied"
+         # ========== 4. SELinux 调用继续注释 ==========
+         if [ -f "runtime/ksud.c" ]; then
+         sed -i '/ksu_selinux_hide_handle_post_fs_data/d' runtime/ksud.c
+         sed -i '/ksu_selinux_hide_handle_second_stage/d' runtime/ksud.c
+         sed -i '/KSU_SELINUX_HIDE/d' runtime/ksud.c
+         sed -i '56s/^/\/\//' runtime/ksud.c
+         sed -i '216s/^/\/\//' runtime/ksud.c
+         fi
+
+         echo "✅ Allowlist TWA_RESUME patches rolled back"
 
 
       - name: 🔗 Patch for no-kprobe
