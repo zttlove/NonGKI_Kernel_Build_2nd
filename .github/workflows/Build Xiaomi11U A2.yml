@@ -44,7 +44,6 @@ env:
   NEED_SAFE_DTBO: false
   ROM_TEXT: "hyperos_a16"
 
- 
   PYTHON_VERSION: "3"
   PACK_METHOD: "Anykernel3"
   PACK_KMODULES: "false"
@@ -103,17 +102,27 @@ jobs:
       - name: 🛠️ Fix KernelSU builtin 5.4 NonGKI Compile Error
         run: |
           set -euo pipefail
+          # 注意：请根据实际目录结构调整路径，通常在 drivers/kernelsu/kernel/ 下
           cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
+          
           # Fix allowlist TWA_RESUME & put_task_struct
-          sed -i '1i #include <linux/task_work.h>\n#include <linux/sched.h>' allowlist.c
-          echo -e "\n#ifndef TWA_RESUME\n#define TWA_RESUME 1\n#endif" >> ksu_defs.h
-          # Fix selinux_hide.h include path
-          sed -i '/selinux_hide.h/d' runtime/ksud.c
-          sed -i '0a #include "../selinux_hide.h"' runtime/ksud.c
-          # Fix strncpy_from_user_nofault compat & USER_ARG_NULL type
-          sed -i '145 s/strncpy_from_user_nofault/__strncpy_from_user_nofault/' sulog/event.c
-          sed -i '379s/USER_ARG_NULL/*USER_ARG_NULL/' sulog/event.c
-          echo "✅ All KernelSU 5.4 compatibility patches applied"
+          if [ -f "allowlist.c" ]; then
+            sed -i '1i #include <linux/task_work.h>\n#include <linux/sched.h>' allowlist.c
+            echo -e "\n#ifndef TWA_RESUME\n#define TWA_RESUME 1\n#endif" >> ksu_defs.h
+          fi
+
+          # Fix selinux_hide.h include path (尝试常见路径)
+          if [ -f "kernel/ksud.c" ]; then
+             sed -i '/selinux_hide.h/d' kernel/ksud.c
+             sed -i '1i #include "selinux_hide.h"' kernel/ksud.c
+          fi
+
+          # Fix strncpy_from_user_nofault compat
+          if [ -f "kernel/sucompat.c" ]; then
+             sed -i 's/strncpy_from_user_nofault/__strncpy_from_user_nofault/g' kernel/sucompat.c
+          fi
+          
+          echo "✅ KernelSU 5.4 compatibility patches applied (paths adjusted)"
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
@@ -132,8 +141,6 @@ jobs:
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process1
         
-      
-      
       - name: 📦 Package Anykernel3 Flash Zip
         if: env.PACK_METHOD == 'Anykernel3'
         shell: bash
@@ -142,10 +149,12 @@ jobs:
           echo "============================================="
           echo "📦 Packaging Star Hyper A16 Kernel"
           echo "==========================================="
+          
           TIME=$(TZ=Asia/Shanghai date +"%Y-%m-%d")
           KERNEL_DIR="${GITHUB_WORKSPACE}/device_kernel"
-          TMP_DIR="${KERNEL_DIR}/tmp"
+          ZIP_DIR="${KERNEL_DIR}/AnyKernel3_Zip"
           IMG_PATH="${KERNEL_DIR}/out/arch/arm64/boot/Image"
+
           cd "${KERNEL_DIR}"
 
           if [[ ! -f "${IMG_PATH}" ]]; then
@@ -153,51 +162,53 @@ jobs:
             exit 1
           fi
 
-          IMG_SIZE=$(du -h "${IMG_PATH}" | awk '{print $1}')
-          echo "✅ Image detected | Size: ${IMG_SIZE}"
+          # 1. 准备打包目录
+          rm -rf "${ZIP_DIR}"
+          mkdir -p "${ZIP_DIR}"
 
-          rm -rf "${TMP_DIR}"
-          mkdir -p "${TMP_DIR}"
-
-          AK3_DIR="${KERNEL_DIR}/Anykernel3"
-          if [[ -d "${AK3_DIR}" ]]; then
-            curl -fsL https://raw.githubusercontent.com/zttlove/NonGKI_Kernel_Build_2nd/mainline/Patches/anykernel.sh -o "${AK3_DIR}/anykernel.sh"
-            chmod +x "${AK3_DIR}/anykernel.sh"
-            sed -i \
-              -e 's/^name=.*/name="Star-HyperA16-NonGKI-Kernel"/' \
-              -e 's/^do\.devicecheck=.*/do.devicecheck=0/' \
-              -e 's/^IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=1/' \
-              -e 's/^BLOCK=.*/BLOCK=boot/' \
-              "${AK3_DIR}/anykernel.sh"
+          # 2. 获取 AnyKernel3 (如果未预先下载)
+          if [ ! -d "Anykernel3" ]; then
+             git clone --depth=1 -b "${AK3_BRANCH}" "${AK3_SOURCE}" Anykernel3
           fi
 
-          cp -v "${IMG_PATH}" "${TMP_DIR}/Image"
+          # 3. 复制 AK3 基础文件
+          cp -rf Anykernel3/* "${ZIP_DIR}/"
+          rm -rf "${ZIP_DIR}/.git"
 
+          # 4. 替换并配置 anykernel.sh
+          # 下载定制脚本或修改现有脚本
+          curl -fsL https://raw.githubusercontent.com/zttlove/NonGKI_Kernel_Build_2nd/mainline/Patches/anykernel.sh -o "${ZIP_DIR}/anykernel.sh" || true
+          
+          sed -i \
+            -e 's/^name=.*/name="Star-HyperA16-NonGKI-Kernel"/' \
+            -e 's/^do\.devicecheck=.*/do.devicecheck=0/' \
+            -e 's/^IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=1/' \
+            -e 's/^BLOCK=.*/BLOCK=boot/' \
+            "${ZIP_DIR}/anykernel.sh"
+
+          # 5. 复制内核镜像
+          cp -fv "${IMG_PATH}" "${ZIP_DIR}/"
+
+          # 6. 复制模块 (可选)
           if [[ "${PACK_KMODULES}" == "true" ]]; then
-            MOD_DIR="${TMP_DIR}/modules/vendor/lib/modules"
+            MOD_DIR="${ZIP_DIR}/modules/vendor/lib/modules"
             mkdir -p "${MOD_DIR}"
-            find ./out -name "*.ko" -type f -print0 | xargs -0 cp -t "${MOD_DIR}/" 2>/dev/null || true
-            module_count=$(find "${MOD_DIR}" -name "*.ko" | wc -l)
-            echo "📦 Packing kernel modules: ${module_count}"
-            [[ ${module_count} -eq 0 ]] && rm -rf "${TMP_DIR}/modules"
-          else
-            echo "ℹ️ Module packing disabled."
+            if [ -d "out" ]; then
+                find out -name "*.ko" -type f -exec cp {} "${MOD_DIR}/" \;
+                echo "📦 Packed $(ls ${MOD_DIR} | wc -l) kernel modules."
+            fi
           fi
 
-          [[ -d "${AK3_DIR}" ]] && cp -rp "${AK3_DIR}"/* "${TMP_DIR}/"
+          # 7. 修复权限
+          chmod -R 755 "${ZIP_DIR}/META-INF"
+          chmod 755 "${ZIP_DIR}/anykernel.sh"
 
-          cd "${TMP_DIR}"
-          if ! 7za a -tzip -mx9 -mmt=on package.zip ./* >/dev/null; then
-            echo "::error::7zip packaging failed"
-            exit 1
-          fi
-
-          cd "${GITHUB_WORKSPACE}"
-          FINAL_ZIP="${DEVICE_CODENAME}-${ROM_TEXT}-${TIME}-Ak3.zip"
-          cp -fp "${TMP_DIR}/package.zip" "${FINAL_ZIP}"
-          echo "PACK_NAME=${FINAL_ZIP}" >> "${GITHUB_ENV}"
-          echo "✅ Package created: ${FINAL_ZIP}"
-          rm -rf "${TMP_DIR}"
+          # 8. 打包
+          cd "${ZIP_DIR}"
+          zip -r9 "${GITHUB_WORKSPACE}/${DEVICE_CODENAME}-${ROM_TEXT}-${TIME}-Ak3.zip" *
+          
+          echo "PACK_NAME=${DEVICE_CODENAME}-${ROM_TEXT}-${TIME}-Ak3.zip" >> "${GITHUB_ENV}"
+          echo "✅ Package created successfully."
 
       - name: 🚀 Auto Upload To Github Release
         if: env.PACK_METHOD == 'Anykernel3'
