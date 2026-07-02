@@ -99,41 +99,42 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
         
-      - name: 🛠️ Fix KernelSU selinux undefined symbol & boot loop
+      
+      - name: 🛠️ Fix strncpy_from_user_nofault implicit declaration
         run: |
-         set -euo pipefail
-         cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
 
-         # 清空之前添加的空宏、函数声明残留
-         if [ -f "runtime/ksud.c" ]; then
-         sed -i '/ksu_selinux_hide_handle_post_fs_data/d' runtime/ksud.c
-         sed -i '/ksu_selinux_hide_handle_second_stage/d' runtime/ksud.c
-         sed -i '/KSU_SELINUX_HIDE/d' runtime/ksud.c
-         # 注释第56行 post_fs_data 调用
-         sed -i '56s/^/\/\//' runtime/ksud.c
-         # 注释第216行 second_stage 调用
-         sed -i '216s/^/\/\//' runtime/ksud.c
-         echo "Commented selinux hide function calls completely"
-         fi
-         # strncpy_from_user_nofault 改用直接替换源码（放弃宏，避免全局兼容问题）
-         if [ -f "sulog/event.c" ]; then
-         sed -i 's/strncpy_from_user_nofault/__strncpy_from_user_nofault/g' sulog/event.c
-         fi
-         # 移除kernel_compat.h里的strncpy宏，防止全局冲突
-         if [ -f "infra/kernel_compat.h" ]; then
-         sed -i '/#define strncpy_from_user_nofault/d' infra/kernel_compat.h
-         fi
-         # 原有TWA_RESUME补丁保留，如仍重启可注释掉这段测试
-         if [ -f "allowlist.c" ]; then
-         sed -i '1i #include <linux/task_work.h>\n#include <linux/sched.h>' allowlist.c
-         if ! grep -q "TWA_RESUME" ksu_defs.h; then
-         echo "" >> ksu_defs.h
-         echo "#ifndef TWA_RESUME" >> ksu_defs.h
-         echo "#define TWA_RESUME 1" >> ksu_defs.h
-         echo "#endif" >> ksu_defs.h
-         fi
-         fi
-         echo "✅ Boot loop risk patches applied"
+          # 修正 event.c 里错误的函数名 ksu___strncpy_from_user_nofault → ksu_strncpy_from_user_nofault
+          if [ -f "sulog/event.c" ]; then
+          sed -i 's/ksu___strncpy_from_user_nofault/ksu_strncpy_from_user_nofault/g' sulog/event.c
+          fi
+
+          # 之前残留的 strncpy 宏全部清理干净，避免冲突
+          if [ -f "infra/kernel_compat.h" ]; then
+          sed -i '/#define strncpy_from_user_nofault/d' infra/kernel_compat.h
+          fi
+
+          # ========== SELinux 部分保持注释调用（防止无限重启） ==========
+          if [ -f "runtime/ksud.c" ]; then
+          sed -i '/ksu_selinux_hide_handle_post_fs_data/d' runtime/ksud.c
+          sed -i '/ksu_selinux_hide_handle_second_stage/d' runtime/ksud.c
+          sed -i '/KSU_SELINUX_HIDE/d' runtime/ksud.c
+          sed -i '56s/^/\/\//' runtime/ksud.c
+          sed -i '216s/^/\/\//' runtime/ksud.c
+          fi
+
+          # TWA_RESUME 补丁保留
+          if [ -f "allowlist.c" ]; then
+          sed -i '1i #include <linux/task_work.h>\n#include <linux/sched.h>' allowlist.c
+          if ! grep -q "TWA_RESUME" ksu_defs.h; then
+          echo "" >> ksu_defs.h
+          echo "#ifndef TWA_RESUME" >> ksu_defs.h
+          echo "#define TWA_RESUME 1" >> ksu_defs.h
+          echo "#endif" >> ksu_defs.h
+          fi
+          fi
+          echo "✅ strncpy & selinux patches applied"
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
