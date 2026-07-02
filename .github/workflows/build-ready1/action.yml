@@ -321,31 +321,7 @@ runs:
             if [[ "${{ env.SUSFS_ENABLE }}" != "true" ]]; then
         
                 echo "CONFIG_KSU_SUSFS=n" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-                cd $GITHUB_WORKSPACE/device_kernel
-                # 再执行之前的修复sed脚本
-                sed -i 's/TWA_RESUME/true/g' drivers/kernelsu/allowlist.c
-                sed -i '1i#include <linux/sched/task.h>' drivers/kernelsu/allowlist.c
-                sed -i '1,10d' drivers/kernelsu/sucompat.c
-                sed -i '1i#include "ksu_defs.h"\
-                #include <linux/version.h>\
-                #include <linux/types.h>\
-                #include <linux/sched.h>\
-                #include <linux/fs.h>\
-                #include <linux/file.h>\
-                #include <linux/uaccess.h>\
-                \
-                #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,10,0)\
-                #include <linux/pgtable.h>\
-                #else\
-                #include <asm/pgtable.h>\
-                #include <linux/mm.h>\
-                #include <linux/mmzone.h>\
-                #endif\
-                \
-                #if LINUX_VERSION_CODE < KERNEL_VERSION(5,10,0)\
-                #define strncpy_from_user_nofault strncpy_from_user\
-                #endif\
-                ' drivers/kernelsu/sucompat.c
+               
                 
                                 
             elif [[ "${{ env.SUSFS_ENABLE }}" == "true" ]]; then
