@@ -155,8 +155,7 @@ jobs:
           sed -i '/KSU_DUMMY_DISABLE_SELINUX/d' ksu_defs.h
           fi
 
-          echo "✅ Empty selinux stubs created, KSU driver init preserved"
-           , KSU driver init preserved"
+          echo "✅ Empty selinux stubs created, KSU driver init preserved, KSU driver init preserved"
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
