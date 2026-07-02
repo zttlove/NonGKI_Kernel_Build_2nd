@@ -99,26 +99,27 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
         
+      
       - name: 🛠️ Fix KSU driver missing / selinux undefined symbol
         run: |
           set -euo pipefail
           cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
 
-          # 1. 创建空 selinux hide 实现
+          # 1. 创建空 selinux hide 实现（<<-EOF 消除行首制表符，YAML用空格不影响）
           mkdir -p selinux
-          cat > selinux/hide.c <<'EOF'
+          cat > selinux/hide.c <<-'EOF'
           void ksu_selinux_hide_handle_post_fs_data(void)
           {
-          return;
+            return;
           }
 
-          void ksu_selinux_hide_handle_second_stage(void)
+            void ksu_selinux_hide_handle_second_stage(void)
           {
-          return;
+            return;
           }
-          EOF
+            EOF
 
-          cat > selinux/hide.h <<'EOF'
+          cat > selinux/hide.h <<-'EOF'
           #ifndef KSU_SELINUX_HIDE_H
           #define KSU_SELINUX_HIDE_H
 
@@ -126,15 +127,15 @@ jobs:
           void ksu_selinux_hide_handle_second_stage(void);
 
           #endif
-          EOF
+           EOF
 
           # 2. 修复 ksud.c 语法错误（核心改动）
           if [ -f "runtime/ksud.c" ]; then
           # 先删除所有重复插入的 selinux/hide.h
           sed -i '/#include "\.\.\/selinux\/hide.h"/d' runtime/ksud.c
 
-          # 在最后一个 #include 行之后插入头文件，不破坏文件顶部结构
-          sed -i '/^#include /{x;/./!{h;n;x;G;s/\n//;x};h};${x;/^#include/{a\#include "../selinux/hide.h"}}' runtime/ksud.c
+          # 兼容通用sed：直接在文件末尾追加include（不会破坏头部函数语法，最简稳定方案）
+          echo '#include "../selinux/hide.h"' >> runtime/ksud.c
 
           # 清理之前错误插入的宏、ifdef、行删除
           sed -i '/KSU_DUMMY_DISABLE_SELINUX/d' runtime/ksud.c
@@ -162,6 +163,9 @@ jobs:
 
           echo "✅ Empty selinux stubs created, ksud.c include fixed to avoid syntax error"
 
+          
+
+          
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
