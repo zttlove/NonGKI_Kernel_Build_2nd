@@ -100,42 +100,54 @@ jobs:
         uses: ./.github/workflows/patch-susfs1
         
       
-      - name: 🛠️ Fix strncpy compile & syntax error + selinux bootloop
+      - name: 🛠️ Fix KSU driver missing / selinux undefined symbol (no bootloop, keep driver init)
         run: |
-         set -euo pipefail
-         cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
 
-          # 1. 先替换函数名消除 implicit 报错
-          if [ -f "sulog/event.c" ]; then
-          sed -i 's/\bstrncpy_from_user_nofault\b/__strncpy_from_user_nofault/g' sulog/event.c
-          # 假设 __strncpy_from_user_nofault 在 145 行，if(copied) 在 146
-          # 注释从变量声明到if判断一整块，避免未定义变量
-          sed -i '144,147s/^/\/\//' sulog/event.c
-          fi
+          # 1. 创建空 selinux hide 实现，不再注释调用
+          mkdir -p selinux
+          cat > selinux/hide.c <<'EOF'
+          void ksu_selinux_hide_handle_post_fs_data(void)
+          {
+          return;
+          }
 
-          # 2. selinux 代码块ifdef隔离
-          if [ -f "runtime/ksud.c" ]; then
-          sed -i '/ksu_selinux_hide_handle_post_fs_data/d' runtime/ksud.c
-          sed -i '/ksu_selinux_hide_handle_second_stage/d' runtime/ksud.c
+          void ksu_selinux_hide_handle_second_stage(void)
+          {
+          return;
+          }
+          EOF
+
+          cat > selinux/hide.h <<'EOF'
+          #ifndef KSU_SELINUX_HIDE_H
+          #define KSU_SELINUX_HIDE_H
+
+          void ksu_selinux_hide_handle_post_fs_data(void);
+          void ksu_selinux_hide_handle_second_stage(void);
+
+          #endif
+          EOF
+
+          # 2. ksud.c 引入头文件，清理旧注释/ifdef
+          sed -i '/#include "\.\.\/selinux\/hide.h"/d' runtime/ksud.c
+          sed -i '1i #include "../selinux/hide.h"' runtime/ksud.c
           sed -i '/KSU_DUMMY_DISABLE_SELINUX/d' runtime/ksud.c
+          sed -i '55,57d' runtime/ksud.c
+          sed -i '215,217d' runtime/ksud.c
+          sed -i '/\/\/ksu_selinux_hide_handle/d' runtime/ksud.c
 
-          sed -i '55i #ifdef KSU_DUMMY_DISABLE_SELINUX' runtime/ksud.c
-          sed -i '57i #endif' runtime/ksud.c
-          sed -i '215i #ifdef KSU_DUMMY_DISABLE_SELINUX' runtime/ksud.c
-          sed -i '217i #endif' runtime/ksud.c
-          echo "#define KSU_DUMMY_DISABLE_SELINUX 1" >> ksu_defs.h
-          fi
+          # 3. strncpy：仅替换函数名，保留完整逻辑（不注释）
+          sed -i 's/\bstrncpy_from_user_nofault\b/__strncpy_from_user_nofault/g' sulog/event.c
+          sed -i 's/^\/\///' sulog/event.c
 
-          # 3. 清空 task_work 相关补丁
-         if [ -f "allowlist.c" ]; then
-         sed -i '/#include <linux\/task_work.h>/d' allowlist.c
-         sed -i '/#include <linux\/sched.h>/d' allowlist.c
-         fi
-         if [ -f "ksu_defs.h" ]; then
-         sed -i '/#ifndef TWA_RESUME/,/#endif/d' ksu_defs.h
-         fi
+          # 4. 清除旧 TWA_RESUME / task_work 补丁
+          sed -i '/#include <linux\/task_work.h>/d' allowlist.c
+          sed -i '/#include <linux\/sched.h>/d' allowlist.c
+          sed -i '/#ifndef TWA_RESUME/,/#endif/d' ksu_defs.h
+          sed -i '/KSU_DUMMY_DISABLE_SELINUX/d' ksu_defs.h
 
-         echo "✅ Fixed copied variable undefined syntax error"
+          echo "✅ Empty selinux stubs created, KSU driver init preserved"
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
