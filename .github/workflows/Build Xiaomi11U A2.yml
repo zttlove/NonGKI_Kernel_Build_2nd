@@ -101,47 +101,42 @@ jobs:
         
       - name: 🛠️ Fix KernelSU builtin 5.4 NonGKI Compile Error
         run: |
-          set -euo pipefail
-          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
-
-          # ========== 修复1：ksud.c 缺少 selinux hide 头文件，解决 ksu_selinux_hide_xxx 隐式声明 ==========
-          if [ -f "runtime/ksud.c" ]; then
-            # 删除已有错误的 selinux 头引入，在文件头部插入正确相对路径头
-            sed -i '/#include.*selinux\/hide.h/d' runtime/ksud.c
-            sed -i '1i #include "../selinux/hide.h"' runtime/ksud.c
-            echo "Patched runtime/ksud.c selinux header done"
-          fi
-
-          # 兜底：若 selinux/hide.h 缺少函数声明则追加
-          if [ -f "selinux/hide.h" ]; then
-            grep -q "ksu_selinux_hide_handle_post_fs_data" selinux/hide.h || cat >> selinux/hide.h <<EOF
-            void ksu_selinux_hide_handle_post_fs_data(void);
-            void ksu_selinux_hide_handle_second_stage(void);
-            EOF
-            echo "Check selinux/hide.h function prototype done"
-          fi
-
-          # ========== 修复2：strncpy_from_user_nofault 未定义，两种方案二选一（这里用全局宏兼容，不改业务代码） ==========
-          if [ -f "infra/kernel_compat.h" ]; then
-            # 避免重复定义宏
-            grep -q "#define strncpy_from_user_nofault" infra/kernel_compat.h || cat >> infra/kernel_compat.h <<EOF
-            #define strncpy_from_user_nofault __strncpy_from_user_nofault
-            EOF
-            echo "Added strncpy_from_user_nofault alias macro to kernel_compat.h"
-          fi
-
-          # 备选方案：直接替换 sulog/event.c 调用函数名（注释掉，二选一）
-          # if [ -f "sulog/event.c" ]; then
-          #   sed -i 's/strncpy_from_user_nofault/__strncpy_from_user_nofault/g' sulog/event.c
-          # fi
-
-          # ========== 原有兼容补丁保留 ==========
-          if [ -f "allowlist.c" ]; then
-            sed -i '1i #include <linux/task_work.h>\n#include <linux/sched.h>' allowlist.c
-            grep -q "TWA_RESUME" ksu_defs.h || echo -e "\n#ifndef TWA_RESUME\n#define TWA_RESUME 1\n#endif" >> ksu_defs.h
-          fi
-
-          echo "✅ All KernelSU 5.4 NonGKI compile patches applied successfully"
+         set -euo pipefail
+         cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
+         # ========== 修复1：ksud.c 缺少 selinux hide 头文件 ==========
+         if [ -f "runtime/ksud.c" ]; then
+         sed -i '/#include.*selinux\/hide.h/d' runtime/ksud.c
+         sed -i '1i #include "../selinux/hide.h"' runtime/ksud.c
+         echo "Patched runtime/ksud.c selinux header done"
+         fi
+         # 兜底补充 selinux/hide.h 函数声明（改用echo，不用EOF）
+         if [ -f "selinux/hide.h" ]; then
+         if ! grep -q "ksu_selinux_hide_handle_post_fs_data" selinux/hide.h; then
+         echo "" >> selinux/hide.h
+         echo "void ksu_selinux_hide_handle_post_fs_data(void);" >> selinux/hide.h
+         echo "void ksu_selinux_hide_handle_second_stage(void);" >> selinux/hide.h
+         fi
+         echo "Check selinux/hide.h function prototype done"
+         fi
+         # ========== 修复2：strncpy_from_user_nofault 兼容宏 ==========
+         if [ -f "infra/kernel_compat.h" ]; then
+         if ! grep -q "#define strncpy_from_user_nofault" infra/kernel_compat.h; then
+         echo "" >> infra/kernel_compat.h
+         echo "#define strncpy_from_user_nofault __strncpy_from_user_nofault" >> infra/kernel_compat.h
+         fi
+         echo "Added strncpy_from_user_nofault alias macro to kernel_compat.h"
+         fi
+         # ========== 原有 TWA_RESUME 兼容补丁保留 ==========
+         if [ -f "allowlist.c" ]; then
+         sed -i '1i #include <linux/task_work.h>\n#include <linux/sched.h>' allowlist.c
+         if ! grep -q "TWA_RESUME" ksu_defs.h; then
+         echo "" >> ksu_defs.h
+         echo "#ifndef TWA_RESUME" >> ksu_defs.h
+         echo "#define TWA_RESUME 1" >> ksu_defs.h
+         echo "#endif" >> ksu_defs.h
+         fi
+         fi
+         echo "✅ All KernelSU 5.4 NonGKI compile patches applied successfully"
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
