@@ -100,35 +100,34 @@ jobs:
         uses: ./.github/workflows/patch-susfs1
         
       
-      - name: 🛠️ Emergency bootloop fix
+      - name: 🛠️ Fix strncpy + selinux bootloop
         run: |
           set -euo pipefail
           cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
 
-          # 1. 彻底屏蔽 selinux hide 相关整块逻辑，不只是单行注释
-          if [ -f "runtime/ksud.c" ]; then
-          sed -i '/ksu_selinux_hide_handle_post_fs_data/d' runtime/ksud.c
-          sed -i '/ksu_selinux_hide_handle_second_stage/d' runtime/ksud.c
-          sed -i '/KSU_SELINUX_HIDE/d' runtime/ksud.c
-
-          # 第56行所在的 on_post_fs_data 内部调用：包裹整个分支
-          sed -i '55i #ifdef KSU_DUMMY_DISABLE_SELINUX' runtime/ksud.c
-          sed -i '57i #endif' runtime/ksud.c
-
-          # 第216行所在代码块包裹
-          sed -i '215i #ifdef KSU_DUMMY_DISABLE_SELINUX' runtime/ksud.c
-          sed -i '217i #endif' runtime/ksud.c
-
-          # 全局定义宏，禁用这两段
-          echo "#define KSU_DUMMY_DISABLE_SELINUX 1" >> ksu_defs.h
-          fi
-
-          # 2. 临时注释 event.c 所有 __strncpy_from_user_nofault 调用，规避Oops
+          # 1. 先把所有 strncpy_from_user_nofault 替换为 __strncpy_from_user_nofault
           if [ -f "sulog/event.c" ]; then
+          sed -i 's/\bstrncpy_from_user_nofault\b/__strncpy_from_user_nofault/g' sulog/event.c
+          # 再注释掉这一行，避免运行时Oops无限重启
           sed -i '/__strncpy_from_user_nofault/s/^/\/\//' sulog/event.c
           fi
 
-          # 3. 确认无残留 task_work / TWA_RESUME 补丁
+          # 2. 彻底隔离 selinux 相关代码块，而非仅注释单行
+          if [ -f "runtime/ksud.c" ]; then
+          sed -i '/ksu_selinux_hide_handle_post_fs_data/d' runtime/ksud.c
+          sed -i '/ksu_selinux_hide_handle_second_stage/d' runtime/ksud.c
+          sed -i '/KSU_DUMMY_DISABLE_SELINUX/d' runtime/ksud.c
+
+          # 包裹 post_fs_data 那一行
+          sed -i '55i #ifdef KSU_DUMMY_DISABLE_SELINUX' runtime/ksud.c
+          sed -i '57i #endif' runtime/ksud.c
+          # 包裹 second_stage 那一行
+          sed -i '215i #ifdef KSU_DUMMY_DISABLE_SELINUX' runtime/ksud.c
+          sed -i '217i #endif' runtime/ksud.c
+          echo "#define KSU_DUMMY_DISABLE_SELINUX 1" >> ksu_defs.h
+          fi
+
+          # 3. 清除旧的 task_work / TWA_RESUME 补丁
           if [ -f "allowlist.c" ]; then
           sed -i '/#include <linux\/task_work.h>/d' allowlist.c
           sed -i '/#include <linux\/sched.h>/d' allowlist.c
@@ -137,7 +136,7 @@ jobs:
           sed -i '/#ifndef TWA_RESUME/,/#endif/d' ksu_defs.h
           fi
 
-          echo "✅ Selinux blocks wrapped + strncpy calls commented"
+          echo "✅ strncpy replaced & commented, selinux wrapped with ifdef"
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
