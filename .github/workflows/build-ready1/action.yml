@@ -127,7 +127,7 @@ runs:
                 if [[ "${{ env.SUSFS_ENABLE }}" == "true" ]]; then
                     KERNELSU_BRANCH="builtin"
                 else
-                    KERNELSU_BRANCH="old"
+                    KERNELSU_BRANCH="builtin"
                 
             fi
 
