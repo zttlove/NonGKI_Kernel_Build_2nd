@@ -99,27 +99,31 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
         
-      - name: 🛠️ Fix KernelSU builtin 5.4 NonGKI Compile Error
+      - name: 🛠️ Fix KernelSU selinux undefined symbol & boot loop
         run: |
          set -euo pipefail
          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
-         # ========== 修复1：处理未定义 selinux hide 符号 ==========
+
+         # 清空之前添加的空宏、函数声明残留
          if [ -f "runtime/ksud.c" ]; then
-         # 清理之前添加的头文件、裸函数声明
          sed -i '/ksu_selinux_hide_handle_post_fs_data/d' runtime/ksud.c
          sed -i '/ksu_selinux_hide_handle_second_stage/d' runtime/ksud.c
-         # 在文件顶部添加空宏兜底，无selinux模块时调用等于空操作
-         sed -i '1i #ifndef KSU_SELINUX_HIDE\n#define ksu_selinux_hide_handle_post_fs_data() do{}while(0)\n#define ksu_selinux_hide_handle_second_stage() do{}while(0)\n#endif' runtime/ksud.c
-         echo "Patched runtime/ksud.c empty macro stub for selinux hide symbols"
+         sed -i '/KSU_SELINUX_HIDE/d' runtime/ksud.c
+         # 注释第56行 post_fs_data 调用
+         sed -i '56s/^/\/\//' runtime/ksud.c
+         # 注释第216行 second_stage 调用
+         sed -i '216s/^/\/\//' runtime/ksud.c
+         echo "Commented selinux hide function calls completely"
          fi
-         # ========== 修复2：strncpy_from_user_nofault 兼容宏 ==========
+         # strncpy_from_user_nofault 改用直接替换源码（放弃宏，避免全局兼容问题）
+         if [ -f "sulog/event.c" ]; then
+         sed -i 's/strncpy_from_user_nofault/__strncpy_from_user_nofault/g' sulog/event.c
+         fi
+         # 移除kernel_compat.h里的strncpy宏，防止全局冲突
          if [ -f "infra/kernel_compat.h" ]; then
-         if ! grep -q "#define strncpy_from_user_nofault" infra/kernel_compat.h; then
-         echo "" >> infra/kernel_compat.h
-         echo "#define strncpy_from_user_nofault __strncpy_from_user_nofault" >> infra/kernel_compat.h
+         sed -i '/#define strncpy_from_user_nofault/d' infra/kernel_compat.h
          fi
-         fi
-         # ========== TWA_RESUME 原有补丁 ==========
+         # 原有TWA_RESUME补丁保留，如仍重启可注释掉这段测试
          if [ -f "allowlist.c" ]; then
          sed -i '1i #include <linux/task_work.h>\n#include <linux/sched.h>' allowlist.c
          if ! grep -q "TWA_RESUME" ksu_defs.h; then
@@ -129,7 +133,7 @@ jobs:
          echo "#endif" >> ksu_defs.h
          fi
          fi
-         echo "✅ All KernelSU 5.4 NonGKI link & compile patches applied"
+         echo "✅ Boot loop risk patches applied"
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
