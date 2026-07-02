@@ -321,7 +321,8 @@ runs:
             if [[ "${{ env.SUSFS_ENABLE }}" != "true" ]]; then
         
                 echo "CONFIG_KSU_SUSFS=n" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-               
+                sed -i '1i #include "../selinux_hide.h"' drivers/kernelsu/runtime/ksud.c
+                sed -i '277s/#define USER_ARG_NULL user_arg_null_ptr()/#define USER_ARG_NULL (*user_arg_null_ptr())/' drivers/kernelsu/sulog/event.c
                 
                                 
             elif [[ "${{ env.SUSFS_ENABLE }}" == "true" ]]; then
