@@ -101,35 +101,35 @@ jobs:
         
       - name: 🛠️ Fix KernelSU builtin 5.4 NonGKI Compile Error
         run: |
-          set -euo pipefail
-          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
-          # ========== 修复1：删除之前错误添加的不存在头文件，改用函数前置声明 ==========
-          if [ -f "runtime/ksud.c" ]; then
-          # 删掉上一步加的 #include "../selinux/hide.h"
-          sed -i '/#include "\.\.\/selinux\/hide.h"/d' runtime/ksud.c
-          # 在文件最顶部添加两个函数声明，解决implicit declaration
-          sed -i '1i void ksu_selinux_hide_handle_post_fs_data(void);\nvoid ksu_selinux_hide_handle_second_stage(void);' runtime/ksud.c
-          echo "Patched runtime/ksud.c add function prototype done"
-          fi
-          # ========== 修复2：strncpy_from_user_nofault 兼容宏 ==========
-          if [ -f "infra/kernel_compat.h" ]; then
-          if ! grep -q "#define strncpy_from_user_nofault" infra/kernel_compat.h; then
-          echo "" >> infra/kernel_compat.h
-          echo "#define strncpy_from_user_nofault __strncpy_from_user_nofault" >> infra/kernel_compat.h
-          fi
-          echo "Added strncpy_from_user_nofault alias macro to kernel_compat.h"
-          fi
-          # ========== 原有 TWA_RESUME 兼容补丁保留 ==========
-          if [ -f "allowlist.c" ]; then
-          sed -i '1i #include <linux/task_work.h>\n#include <linux/sched.h>' allowlist.c
-          if ! grep -q "TWA_RESUME" ksu_defs.h; then
-          echo "" >> ksu_defs.h
-          echo "#ifndef TWA_RESUME" >> ksu_defs.h
-          echo "#define TWA_RESUME 1" >> ksu_defs.h
-          echo "#endif" >> ksu_defs.h
-          fi
-          fi
-          echo "✅ All KernelSU 5.4 NonGKI compile patches applied successfully"
+         set -euo pipefail
+         cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
+         # ========== 修复1：处理未定义 selinux hide 符号 ==========
+         if [ -f "runtime/ksud.c" ]; then
+         # 清理之前添加的头文件、裸函数声明
+         sed -i '/ksu_selinux_hide_handle_post_fs_data/d' runtime/ksud.c
+         sed -i '/ksu_selinux_hide_handle_second_stage/d' runtime/ksud.c
+         # 在文件顶部添加空宏兜底，无selinux模块时调用等于空操作
+         sed -i '1i #ifndef KSU_SELINUX_HIDE\n#define ksu_selinux_hide_handle_post_fs_data() do{}while(0)\n#define ksu_selinux_hide_handle_second_stage() do{}while(0)\n#endif' runtime/ksud.c
+         echo "Patched runtime/ksud.c empty macro stub for selinux hide symbols"
+         fi
+         # ========== 修复2：strncpy_from_user_nofault 兼容宏 ==========
+         if [ -f "infra/kernel_compat.h" ]; then
+         if ! grep -q "#define strncpy_from_user_nofault" infra/kernel_compat.h; then
+         echo "" >> infra/kernel_compat.h
+         echo "#define strncpy_from_user_nofault __strncpy_from_user_nofault" >> infra/kernel_compat.h
+         fi
+         fi
+         # ========== TWA_RESUME 原有补丁 ==========
+         if [ -f "allowlist.c" ]; then
+         sed -i '1i #include <linux/task_work.h>\n#include <linux/sched.h>' allowlist.c
+         if ! grep -q "TWA_RESUME" ksu_defs.h; then
+         echo "" >> ksu_defs.h
+         echo "#ifndef TWA_RESUME" >> ksu_defs.h
+         echo "#define TWA_RESUME 1" >> ksu_defs.h
+         echo "#endif" >> ksu_defs.h
+         fi
+         fi
+         echo "✅ All KernelSU 5.4 NonGKI link & compile patches applied"
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
