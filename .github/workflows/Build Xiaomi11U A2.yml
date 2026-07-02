@@ -100,7 +100,6 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
         
-        # 【这里插入上面新增的修复步骤】
       - name: 🛠️ Fix KernelSU builtin 5.4 NonGKI Compile Error
         run: |
           set -euo pipefail
