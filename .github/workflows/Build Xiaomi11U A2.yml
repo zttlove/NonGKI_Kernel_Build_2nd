@@ -104,11 +104,14 @@ jobs:
       - name: 🛠️ Fix KernelSU builtin 5.4 NonGKI Compile Error
         run: |
           set -euo pipefail
-          cd "$GITHUB_WORKSPACE/device_kernel/drivers/kernelsu"
+          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
+          # Fix allowlist TWA_RESUME & put_task_struct
           sed -i '1i #include <linux/task_work.h>\n#include <linux/sched.h>' allowlist.c
           echo -e "\n#ifndef TWA_RESUME\n#define TWA_RESUME 1\n#endif" >> ksu_defs.h
+          # Fix selinux_hide.h include path
           sed -i '/selinux_hide.h/d' runtime/ksud.c
           sed -i '0a #include "../selinux_hide.h"' runtime/ksud.c
+          # Fix strncpy_from_user_nofault compat & USER_ARG_NULL type
           sed -i '145 s/strncpy_from_user_nofault/__strncpy_from_user_nofault/' sulog/event.c
           sed -i '379s/USER_ARG_NULL/*USER_ARG_NULL/' sulog/event.c
           echo "✅ All KernelSU 5.4 compatibility patches applied"
