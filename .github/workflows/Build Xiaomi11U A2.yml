@@ -99,7 +99,7 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
         
-      - name: 🛠️ Fix KSU driver missing / selinux undefined symbol (no bootloop, keep driver init)
+      - name: 🛠️ Fix KSU driver missing / selinux undefined symbol
         run: |
           set -euo pipefail
           cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
