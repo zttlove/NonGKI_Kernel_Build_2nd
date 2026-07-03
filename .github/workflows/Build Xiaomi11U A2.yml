@@ -100,38 +100,38 @@ jobs:
         uses: ./.github/workflows/patch-susfs1
         
       
-      - name: 🛠️ Plan A Full Restore Native SELinux Module & KSU Init Flow (With git restore selinux)
+      - name: 🛠️ Fix selinux/Makefile missing error + Full restore native SELinux
         run: |
           set -euo pipefail
           cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
-          # 0. 恢复被rm删除的原生selinux完整源码目录
-          git restore selinux
-          # 1. 删除我们手动生成的所有占位文件（全局头+全局dummy.c）
-          rm -f global_selinux_dummy.h dummy_global.c
-          # Makefile 删除 dummy_global.o 编译条目
-          sed -i '/obj-y += dummy_global.o/d' Makefile
-          # 2. 恢复ksu.c内所有被注释的 selinux/ 头文件（取消//注释）
-          sed -i '/#\/\/#include "selinux\//s#^//##' ksu.c
-          # 3. 恢复原生selinux目录编译目标（还原Makefile selinux条目）
-          grep -q "obj-y += selinux/" Makefile || echo "obj-y += selinux/" >> Makefile
-          # 4. 重置runtime/ksud.c，完全恢复原始源码，取消所有selinux钩子注释
-          git restore runtime/ksud.c
-          # 5. 修复sulog/event.c：仅替换strncpy函数名，取消整段拷贝逻辑注释
-          if [ -f "sulog/event.c" ]; then
-          sed -i 's#\bstrncpy_from_user_nofault\b#__strncpy_from_user_nofault#g' sulog/event.c
-          sed -i '144,148s#^//##g' sulog/event.c
-          sed -i '132s#long copied;#long copied = 0;#' sulog/event.c
-          fi
-          # 6. 清理所有历史冲突补丁、宏定义
-          if [ -f "allowlist.c" ]; then
-          sed -i '/#include <linux\/task_work.h>/d' allowlist.c
-          fi
-          if [ -f "ksu_defs.h" ]; then
-          sed -i '/#ifndef TWA_RESUME/,/#endif/d' ksu_defs.h
-          sed -i '/KSU_SKIP_SELINUX_HOOKS/d' ksu_defs.h
-          sed -i '/KSU_DUMMY_DISABLE/d' ksu_defs.h
-          fi
-          echo "✅ 原生SELinux源码+编译配置全部恢复，完整KSU初始化时序，解决SukiSU检测不到内核驱动问题"
+          # 0. 彻底删除损坏的selinux目录，重新从git完整拉取
+          rm -rf selinux
+           git checkout HEAD -- selinux
+           # 1. 删除手动创建的占位文件
+           rm -f global_selinux_dummy.h dummy_global.c
+           sed -i '/obj-y += dummy_global.o/d' Makefile
+           # 2. 恢复ksu.c里被注释的selinux头文件
+           sed -i '/#\/\/#include "selinux\//s#^//##' ksu.c
+           # 3. 恢复根Makefile selinux编译条目
+           sed -i '/obj-y += selinux/d' Makefile
+           echo "obj-y += selinux/" >> Makefile
+           # 4. 重置ksud.c为原始版本，恢复全部selinux初始化钩子调用
+           git restore runtime/ksud.c
+           # 5. 修复event.c strncpy兼容逻辑，不屏蔽内核通信代码
+           if [ -f "sulog/event.c" ]; then
+           sed -i 's#\bstrncpy_from_user_nofault\b#__strncpy_from_user_nofault#g' sulog/event.c
+           sed -i '144,148s#^//##g' sulog/event.c
+           sed -i '132s#long copied;#long copied = 0;#' sulog/event.c
+           fi
+           # 6. 清理历史冲突补丁
+           if [ -f "allowlist.c" ]; then
+           sed -i '/#include <linux\/task_work.h>/d' allowlist.c
+           fi
+           if [ -f "ksu_defs.h" ]; then
+           sed -i '/#ifndef TWA_RESUME/,/#endif/d' ksu_defs.h
+           sed -i '/KSU_SKIP_SELINUX_HOOKS/d' ksu_defs.h
+           fi
+           echo "✅ selinux目录完整恢复，包含selinux/Makefile，编译路径修复完成"
     
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
