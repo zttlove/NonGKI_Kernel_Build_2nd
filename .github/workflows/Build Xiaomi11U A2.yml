@@ -120,8 +120,8 @@ jobs:
           sed -i '214s#^#//#' runtime/ksud.c
           # 强制校验ksu_dev_init调用，不存在则插入，保证/dev/ksu注册
           if ! grep -q "ksu_dev_init();" runtime/ksud.c; then
-              sed -i "/static int __init ksu_init(void)/a\        
-              ksu_dev_init();" runtime/ksud.c
+              sed -i 's/static int __init ksu_init(void)/static int __init ksu_init(void)\
+              ksu_dev_init();/' runtime/ksud.c
           fi
           # 5. 生成全局SELinux占位头，补齐所有缺失符号、SID、内联函数
           cat > ksu_mini_dummy.h <<-'EOF'
