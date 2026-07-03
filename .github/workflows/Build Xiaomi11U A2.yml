@@ -100,55 +100,32 @@ jobs:
         uses: ./.github/workflows/patch-susfs1
         
       
-      - name: 🛠️ Safe fix selinux symbol
+      - name: 🛠️ Fix selinux implicit declaration & type conflict
         run: |
           set -euo pipefail
           cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
-          # 1. 生成空selinux实现文件
-          mkdir -p selinu
-          cat > selinux/hide.c <<-'EOF'
-          void ksu_selinux_hide_handle_post_fs_data(void)
-          {
-          return;
-          }
-          void ksu_selinux_hide_handle_second_stage(void)
-          {
-          return;
-          }
-          EOF
-          cat > selinux/hide.h <<-'EOF'
-          #ifndef KSU_SELINUX_HIDE_H
-          #define KSU_SELINUX_HIDE_H
-          void ksu_selinux_hide_handle_post_fs_data(void);
-          void ksu_selinux_hide_handle_second_stage(void);
-          #endif
-          EOF
-          # 2. 安全处理 runtime/ksud.c：只在文件末尾追加头文件，不改动原有任何代码
+          # 1. 注释两处selinux函数调用，不再依赖外部头文件/实现
           if [ -f "runtime/ksud.c" ]; then
-          # 先清理之前错误插入的所有selinux头行
+          # 注释第54行 ksu_selinux_hide_handle_post_fs_data();
+          sed -i '54s#^#//#' runtime/ksud.c
+          # 注释第214行 ksu_selinux_hide_handle_second_stage();
+          sed -i '214s#^#//#' runtime/ksud.c
+          # 删除之前追加在文件末尾的selinux头文件行
           sed -i '/#include "\.\.\/selinux\/hide.h"/d' runtime/ksud.c
-          # 文件末尾追加，不会修改原有代码，不会丢#号
-          echo '#include "../selinux/hide.h"' >> runtime/ksud.c
           fi
-          # 3. 修复sulog/event.c strncpy函数名
+          # 2. 修复sulog/event.c strncpy函数名
           if [ -f "sulog/event.c" ]; then
           sed -i 's#\bstrncpy_from_user_nofault\b#__strncpy_from_user_nofault#g' sulog/event.c
           sed -i 's#^//##g' sulog/event.c
           fi
-          # 4. Makefile添加selinux/hide.o，防止链接undefined symbol
-          if [ -f "Makefile" ]; then
-          grep -q "selinux/hide.o" Makefile || echo "obj-y += selinux/hide.o" >> Makefile
-          fi
-          # 5. 清理历史失效补丁
+          # 3. 清理历史补丁
           if [ -f "allowlist.c" ]; then
           sed -i '/#include <linux\/task_work.h>/d' allowlist.c
-          sed -i '/#include <linux\/sched.h>/d' allowlist.c
           fi
           if [ -f "ksu_defs.h" ]; then
           sed -i '/#ifndef TWA_RESUME/,/#endif/d' ksu_defs.h
-          sed -i '/KSU_DUMMY_DISABLE_SELINUX/d' ksu_defs.h
           fi
-          echo "✅ Safe patch done, original source code untouched"
+          echo "✅ 直接注释selinux调用，消除声明顺序冲突"
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
