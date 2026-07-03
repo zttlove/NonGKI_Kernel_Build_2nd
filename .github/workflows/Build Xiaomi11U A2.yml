@@ -100,57 +100,63 @@ jobs:
         uses: ./.github/workflows/patch-susfs1
         
       
-      - name: 🛠️ Inject dummy SELinux macro & proto to fix all compile error
+      - name: 🛠️ Global dummy selinux header fix all macro & function error
         run: |
-         set -euo pipefail
-         cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
-         # 1. 全局注入全套SELinux占位宏、函数声明到ksu_defs.h（不存在则新建）
-         cat >> ksu_defs.h <<-'EOF'
-         // Dummy SELinux placeholder to fix compile error
-         #define KERNEL_SU_DOMAIN "kernel_su"
-         #define KERNEL_SU_CONTEXT "u:r:kernel_su:s0"
-         #define ZYGOTE_CONTEXT "u:r:zygote:s0"
-         #define INIT_CONTEXT "u:r:init:s0"
-         #define KSU_FILE_CONTEXT "u:object_r:kernel_su_file:s0"
-         #define KSU_DEFAULT_SELINUX_DOMAIN "u:r:" KERNEL_SU_DOMAIN ":s0"
-         #include <linux/cred.h>
-         #include <linux/types.h>
-         // Empty function prototype to eliminate implicit declaration
-         static inline bool is_ksu_domain(void) { return false; }
-         static inline void setup_selinux(const char *domain, struct cred *cred) { return; }
-         static inline int handle_sepolicy(void __user *buf, size_t len) { return 0; }
-         static inline bool susfs_is_current_ksu_domain(void) { return false; }
-         static inline bool susfs_is_sid_equal(const struct cred *cred, u32 sid) { return false; }
-         static inline void escape_to_root_for_adb_root(void) { return; }
-         static inline bool is_init(const struct cred *cred) { return false; }
-         static inline void ksu_selinux_hide_handle_post_fs_data(void) { return; }
-         static inline void ksu_selinux_hide_handle_second_stage(void) { return; }
-         static inline void apply_kernelsu_rules(void) { return; }
-         static inline void cache_sid(void) { return; }
-         static inline void setup_ksu_cred(void) { return; }
-         EOF
-         # 2. 注释ksu.c全部selinux目录头文件，不再加载selinux源码
-         sed -i '/#include "selinux\//s#^#//#' ksu.c
-         # 删除之前手动创建的selinux文件夹
-         rm -rf selinux
-         # Makefile清除selinux编译目标
-         sed -i '/obj-y += selinux\/hide.o/d' Makefile
-         # 3. 注释ksud.c两处selinux钩子调用，规避开机panic无限重启
-         if [ -f "runtime/ksud.c" ]; then
-         sed -i '54s#^#//#' runtime/ksud.c
-         sed -i '214s#^#//#' runtime/ksud.c
-         fi
-         # 4. 修复sulog/event.c：初始化copied变量 + 替换strncpy函数名 + 屏蔽崩溃拷贝段
-         if [ -f "sulog/event.c" ]; then
-         sed -i '132s#long copied;#long copied = 0;#' sulog/event.c
-         sed -i 's#\bstrncpy_from_user_nofault\b#__strncpy_from_user_nofault#g' sulog/event.c
-         sed -i '144,148s#^#//#' sulog/event.c
-         fi
-         # 5. 清理历史旧补丁（文件存在才执行）
-         if [ -f "allowlist.c" ]; then
-         sed -i '/#include <linux\/task_work.h>/d' allowlist.c
-         fi
-         echo "✅ 全局SELinux占位宏/函数注入完成，全部编译报错清除"
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
+          # 1. 创建全局占位头文件 global_selinux_dummy.h
+          cat > global_selinux_dummy.h <<-'EOF'
+          #ifndef GLOBAL_SELINUX_DUMMY_H
+          #define GLOBAL_SELINUX_DUMMY_H
+          #include <linux/cred.h>
+          #include <linux/types.h>
+          // 补齐所有缺失字符串宏，解决字符串拼接语法报错 expected ')'
+          #define KERNEL_SU_DOMAIN "kernel_su"
+          #define KERNEL_SU_CONTEXT "u:r:kernel_su:s0"
+          #define ZYGOTE_CONTEXT "u:r:zygote:s0"
+          #define INIT_CONTEXT "u:r:init:s0"
+          #define KSU_FILE_CONTEXT "u:object_r:kernel_su_file:s0"
+          #define KSU_DEFAULT_SELINUX_DOMAIN "u:r:" KERNEL_SU_DOMAIN ":s0"
+          // 所有缺失函数空内联原型，消除implicit declaration
+          static inline bool is_ksu_domain(void) { return false; }
+          static inline void setup_selinux(const char *domain, struct cred *cred) { return; }
+          static inline int handle_sepolicy(void __user *buf, size_t len) { return 0; }
+          static inline bool susfs_is_current_ksu_domain(void) { return false; }
+          static inline bool susfs_is_sid_equal(const struct cred *cred, u32 sid) { return false; }
+          static inline void escape_to_root_for_adb_root(void) { return; }
+          static inline bool is_init(const struct cred *cred) { return false; }
+          static inline void ksu_selinux_hide_handle_post_fs_data(void) { return; }
+          static inline void ksu_selinux_hide_handle_second_stage(void) { return; }
+          static inline void apply_kernelsu_rules(void) { return; }
+          static inline void cache_sid(void) { return; }
+          static inline void setup_ksu_cred(void) { return; }
+          #endif
+          EOF
+          # 2. 在ksu.c最顶部引入全局占位头，所有子文件通过ksu.c继承该头
+          sed -i '1i #include "global_selinux_dummy.h"' ksu.c
+          # 3. 注释ksu.c全部原生selinux目录头文件，不编译selinux源码
+          sed -i '/#include "selinux\//s#^#//#' ksu.c
+          rm -rf selinux
+          sed -i '/obj-y += selinux\/hide.o/d' Makefile
+          # 4. 注释ksud.c中SELINUX钩子调用，避免开机无限重启panic
+          if [ -f "runtime/ksud.c" ]; then
+          sed -i '54s#^#//#' runtime/ksud.c
+          sed -i '214s#^#//#' runtime/ksud.c
+          sed -i '215s#^#//#' runtime/ksud.c
+          sed -i '216s#^#//#' runtime/ksud.c
+          sed -i '217s#^#//#' runtime/ksud.c
+          fi
+          # 5. 修复sulog/event.c变量未初始化 + strncpy内核崩溃代码
+          if [ -f "sulog/event.c" ]; then
+          sed -i '132s#long copied;#long copied = 0;#' sulog/event.c
+          sed -i 's#\bstrncpy_from_user_nofault\b#__strncpy_from_user_nofault#g' sulog/event.c
+          sed -i '144,148s#^#//#' sulog/event.c
+          fi
+          # 6. 清理历史补丁
+          if [ -f "allowlist.c" ]; then
+          sed -i '/#include <linux\/task_work.h>/d' allowlist.c
+          fi
+          echo "✅ 全局SELINUX占位头注入完成，全部15条编译报错一次性消除"
     
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
