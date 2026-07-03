@@ -131,7 +131,7 @@ jobs:
          # ========== 步骤3：仅在【第一行#include】后插入1次头文件，绝不重复 ==========
          if [ -f "runtime/ksud.c" ]; then
          # 找到第一个 #include，插入头文件，只执行一次
-         sed -i '0,/^#include /s/^#include /#include "../selinux/hide.h"\n&/' runtime/ksud.c
+         sed -i '0,/^#include /s#^#include ##include "../selinux/hide.h"\n&#' runtime/ksud.c
          fi
          # ========== 步骤4：修复sulog/event.c strncpy 函数名 ==========
          if [ -f "sulog/event.c" ]; then
