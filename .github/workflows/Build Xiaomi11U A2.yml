@@ -133,7 +133,7 @@ jobs:
           # 3. 修复sulog/event.c strncpy函数名
           if [ -f "sulog/event.c" ]; then
           sed -i 's#\bstrncpy_from_user_nofault\b#__strncpy_from_user_nofault#g' sulog/event.c
-          sed -i 's#^\/\///#' sulog/event.c
+          sed -i 's#^//##g' sulog/event.c
           fi
           # 4. Makefile添加selinux/hide.o，防止链接undefined symbol
           if [ -f "Makefile" ]; then
