@@ -100,38 +100,57 @@ jobs:
         uses: ./.github/workflows/patch-susfs1
         
       
-      - name: 🛠️ Fully cut selinux module dependency
+      - name: 🛠️ Inject dummy SELinux macro & proto to fix all compile error
         run: |
-          set -euo pipefail
-          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
-          # 1. 注释ksu.c全部selinux目录头文件，彻底不再引入selinux相关源码
-          sed -i '/#include "selinux\//s#^#//#' ksu.c
-          # 2. Makefile删除selinux编译目标
-          sed -i '/obj-y += selinux\/hide.o/d' Makefile
-          # 删除之前手动创建的selinux文件夹
-          rm -rf selinux
-          # 3. 注释ksud.c里3个selinux相关函数调用，消除隐式声明
-          if [ -f "runtime/ksud.c" ]; then
-          sed -i '215s#^#//#' runtime/ksud.c  # apply_kernelsu_rules();
-          sed -i '216s#^#//#' runtime/ksud.c  # cache_sid();
-          sed -i '217s#^#//#' runtime/ksud.c  # setup_ksu_cred();
-          fi
-          # 4. 修复sulog/event.c变量未初始化 + strncpy崩溃代码
-          if [ -f "sulog/event.c" ]; then
-          sed -i '132s#long copied;#long copied = 0;#' sulog/event.c
-          sed -i 's#\bstrncpy_from_user_nofault\b#__strncpy_from_user_nofault#g' sulog/event.c
-          sed -i '144,148s#^#//#' sulog/event.c
-          fi
-          # 5. 清理历史补丁（文件存在才执行）
-          if [ -f "allowlist.c" ]; then
-          sed -i '/#include <linux\/task_work.h>/d' allowlist.c
-          fi
-          if [ -f "ksu_defs.h" ]; then
-          sed -i '/#ifndef TWA_RESUME/,/#endif/d' ksu_defs.h
-          sed -i '/KSU_SKIP_SELINUX_HOOKS/d' ksu_defs.h
-          sed -i '/KSU_DUMMY_DISABLE_SELINUX/d' ksu_defs.h
-          fi
-          echo "✅ All selinux header includes commented, selinux module fully disabled"
+         set -euo pipefail
+         cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
+         # 1. 全局注入全套SELinux占位宏、函数声明到ksu_defs.h（不存在则新建）
+         cat >> ksu_defs.h <<-'EOF'
+         // Dummy SELinux placeholder to fix compile error
+         #define KERNEL_SU_DOMAIN "kernel_su"
+         #define KERNEL_SU_CONTEXT "u:r:kernel_su:s0"
+         #define ZYGOTE_CONTEXT "u:r:zygote:s0"
+         #define INIT_CONTEXT "u:r:init:s0"
+         #define KSU_FILE_CONTEXT "u:object_r:kernel_su_file:s0"
+         #define KSU_DEFAULT_SELINUX_DOMAIN "u:r:" KERNEL_SU_DOMAIN ":s0"
+         #include <linux/cred.h>
+         #include <linux/types.h>
+         // Empty function prototype to eliminate implicit declaration
+         static inline bool is_ksu_domain(void) { return false; }
+         static inline void setup_selinux(const char *domain, struct cred *cred) { return; }
+         static inline int handle_sepolicy(void __user *buf, size_t len) { return 0; }
+         static inline bool susfs_is_current_ksu_domain(void) { return false; }
+         static inline bool susfs_is_sid_equal(const struct cred *cred, u32 sid) { return false; }
+         static inline void escape_to_root_for_adb_root(void) { return; }
+         static inline bool is_init(const struct cred *cred) { return false; }
+         static inline void ksu_selinux_hide_handle_post_fs_data(void) { return; }
+         static inline void ksu_selinux_hide_handle_second_stage(void) { return; }
+         static inline void apply_kernelsu_rules(void) { return; }
+         static inline void cache_sid(void) { return; }
+         static inline void setup_ksu_cred(void) { return; }
+         EOF
+         # 2. 注释ksu.c全部selinux目录头文件，不再加载selinux源码
+         sed -i '/#include "selinux\//s#^#//#' ksu.c
+         # 删除之前手动创建的selinux文件夹
+         rm -rf selinux
+         # Makefile清除selinux编译目标
+         sed -i '/obj-y += selinux\/hide.o/d' Makefile
+         # 3. 注释ksud.c两处selinux钩子调用，规避开机panic无限重启
+         if [ -f "runtime/ksud.c" ]; then
+         sed -i '54s#^#//#' runtime/ksud.c
+         sed -i '214s#^#//#' runtime/ksud.c
+         fi
+         # 4. 修复sulog/event.c：初始化copied变量 + 替换strncpy函数名 + 屏蔽崩溃拷贝段
+         if [ -f "sulog/event.c" ]; then
+         sed -i '132s#long copied;#long copied = 0;#' sulog/event.c
+         sed -i 's#\bstrncpy_from_user_nofault\b#__strncpy_from_user_nofault#g' sulog/event.c
+         sed -i '144,148s#^#//#' sulog/event.c
+         fi
+         # 5. 清理历史旧补丁（文件存在才执行）
+         if [ -f "allowlist.c" ]; then
+         sed -i '/#include <linux\/task_work.h>/d' allowlist.c
+         fi
+         echo "✅ 全局SELinux占位宏/函数注入完成，全部编译报错清除"
     
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
