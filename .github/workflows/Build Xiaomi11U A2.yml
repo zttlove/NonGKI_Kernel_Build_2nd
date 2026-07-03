@@ -100,63 +100,84 @@ jobs:
         uses: ./.github/workflows/patch-susfs1
         
       
-      - name: 🛠️ Fix missing selinux.h + bootloop + compile error
+      - name: 🛠️ Full dummy selinux header fix all macro & symbol error
         run: |
-          set -euo pipefail
-          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
-          # 1. 创建最小空selinux头文件，解决 'selinux/selinux.h' not found
-          mkdir -p selinux
-          cat > selinux/selinux.h <<-'EOF'
-          #ifndef KSU_DUMMY_SELINUX_H
-          #define KSU_DUMMY_SELINUX_H
-          // 空占位，仅解决头文件缺失，无实际selinux逻辑
-          static inline void ksu_selinux_set_enforce(int val) { return; }
-          static inline int ksu_selinux_get_enforce(void) { return 1; }
-          void ksu_selinux_hide_handle_post_fs_data(void);
-          void ksu_selinux_hide_handle_second_stage(void);
-          #endif
-          EOF
-          # 2. 空实现源文件，消除链接undefined符号
-          cat > selinux/hide.c <<-'EOF'
-          #include "selinux.h"
-          void ksu_selinux_hide_handle_post_fs_data(void)
-          {
-          return;
-          }
-          void ksu_selinux_hide_handle_second_stage(void)
-          {
-          return;
-          }
-          EOF
-          # 3. Makefile编译selinux/hide.o
-          if [ -f "Makefile" ]; then
-          grep -q "selinux/hide.o" Makefile || echo "obj-y += selinux/hide.o" >> Makefile
-          fi
-          # 4. 还原干净ksud.c，用宏整块隔离钩子调用（避免时序崩溃无限重启）
-          git restore runtime/ksud.c
-          sed -i '/#include "\.\.\/selinux\/hide.h"/d' runtime/ksud.c
-          # 包裹post_fs钩子
-          sed -i '53i #ifdef KSU_SKIP_SELINUX_HOOKS' runtime/ksud.c
-          sed -i '55i #endif' runtime/ksud.c
-          # 包裹second_stage钩子
-          sed -i '213i #ifdef KSU_SKIP_SELINUX_HOOKS' runtime/ksud.c
-          sed -i '215i #endif' runtime/ksud.c
-          # 定义宏关闭selinux钩子执行
-          echo "#define KSU_SKIP_SELINUX_HOOKS 1" >> ksu_defs.h
-          # 5. 处理sulog/event.c：替换函数名，整块屏蔽崩溃的拷贝逻辑
-          if [ -f "sulog/event.c" ]; then
-          sed -i 's#\bstrncpy_from_user_nofault\b#__strncpy_from_user_nofault#g' sulog/event.c
-          sed -i '144,148s#^#//#' sulog/event.c
-          fi
-          # 6. 清理全部旧冲突补丁
-          if [ -f "allowlist.c" ]; then
-          sed -i '/#include <linux\/task_work.h>/d' allowlist.c
-          fi
-          if [ -f "ksu_defs.h" ]; then
-          sed -i '/#ifndef TWA_RESUME/,/#endif/d' ksu_defs.h
-          sed -i '/KSU_DUMMY_DISABLE_SELINUX/d' ksu_defs.h
-          fi
-          echo "✅ selinux.h占位文件生成，钩子条件屏蔽，规避开机panic重启"
+         set -euo pipefail
+         cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
+         # 1. 生成完整兼容的selinux/selinux.h，补齐全部缺失宏、变量、函数声明
+         mkdir -p selinux
+         cat > selinux/selinux.h <<-'EOF'
+         #ifndef KSU_DUMMY_SELINUX_H
+         #define KSU_DUMMY_SELINUX_H
+         #include <linux/cred.h>
+         #include <linux/types.h>
+         // 补齐缺失字符串宏，解决字符串拼接语法报错
+         #define KERNEL_SU_DOMAIN "kernel_su"
+         #define KERNEL_SU_CONTEXT "u:r:kernel_su:s0"
+         #define KSU_DEFAULT_SELINUX_DOMAIN "u:r:" KERNEL_SU_DOMAIN ":s0"
+         // 全局变量补齐
+         extern int selinux_enforcing;
+         // 全部缺失函数前置声明，消除implicit declaration
+         static inline void ksu_selinux_set_enforce(int val) { selinux_enforcing = val; }
+         static inline int ksu_selinux_get_enforce(void) { return selinux_enforcing; }
+         void ksu_selinux_hide_handle_post_fs_data(void);
+         void ksu_selinux_hide_handle_second_stage(void);
+         bool is_ksu_domain(void);
+         void setup_selinux(const char *domain, struct cred *cred);
+         int handle_sepolicy(void __user *buf, size_t len);
+         bool susfs_is_current_ksu_domain(void);
+         bool susfs_is_sid_equal(struct cred *cred, u32 sid);
+         u32 susfs_zygote_sid;
+         bool transive_to_domain(const char *ctx, struct cred *cred, bool no_log);
+         void escape_to_root_for_adb_root(void);
+         bool is_init(const struct cred *cred);
+         #endif
+         EOF
+         # 2. selinux/hide.c 空实现
+         cat > selinux/hide.c <<-'EOF'
+         #include "selinux.h"
+         int selinux_enforcing = 1;
+         void ksu_selinux_hide_handle_post_fs_data(void)
+         {
+         return;
+         }
+         void ksu_selinux_hide_handle_second_stage(void)
+         {
+         return;
+         }
+         bool is_ksu_domain(void) { return false; }
+         void setup_selinux(const char *domain, struct cred *cred) { return; }
+         int handle_sepolicy(void __user *buf, size_t len) { return 0; }
+         bool susfs_is_current_ksu_domain(void) { return false; }
+         bool susfs_is_sid_equal(struct cred *cred, u32 sid) { return false; }
+         bool transive_to_domain(const char *ctx, struct cred *cred, bool no_log) { return false; }
+         void escape_to_root_for_adb_root(void) { return; }
+         bool is_init(const struct cred *cred) { return false; }
+         u32 susfs_zygote_sid = 0;
+         EOF
+         # 3. Makefile加入selinux编译目标
+         if [ -f "Makefile" ]; then
+         grep -q "selinux/hide.o" Makefile || echo "obj-y += selinux/hide.o" >> Makefile
+         fi
+         # 4. 重置runtime/ksud.c，删除之前插入的#ifdef条件块，避免代码语法断裂
+         git restore runtime/ksud.c
+         sed -i '/#define KSU_SKIP_SELINUX_HOOKS/d' ksu_defs.h
+         sed -i '/#include "\.\.\/selinux\/hide.h"/d' runtime/ksud.c
+         # 5. 修复event.c strncpy崩溃逻辑
+         if [ -f "sulog/event.c" ]; then
+         sed -i 's#\bstrncpy_from_user_nofault\b#__strncpy_from_user_nofault#g' sulog/event.c
+         sed -i '144,148s#^#//#' sulog/event.c
+         fi
+         # 6. 清理历史冲突补丁
+         if [ -f "allowlist.c" ]; then
+         sed -i '/#include <linux\/task_work.h>/d' allowlist.c
+         fi
+         if [ -f "ksu_defs.h" ]; then
+         sed -i '/#ifndef TWA_RESUME/,/#endif/d' ksu_defs.h
+         sed -i '/KSU_SKIP_SELINUX_HOOKS/d' ksu_defs.h
+         sed -i '/KSU_DUMMY_DISABLE_SELINUX/d' ksu_defs.h
+         fi
+         echo "✅ 完整selinux占位头生成，一次性修复全部宏/函数/标识符报错"
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
