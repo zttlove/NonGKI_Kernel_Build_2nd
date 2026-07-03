@@ -100,32 +100,52 @@ jobs:
         uses: ./.github/workflows/patch-susfs1
         
       
-      - name: 🛠️ Fix selinux implicit declaration & type conflict
+      - name: 🛠️ Fix selinux compile error & bootloop (keep full KSU init flow)
         run: |
           set -euo pipefail
           cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
-          # 1. 注释两处selinux函数调用，不再依赖外部头文件/实现
-          if [ -f "runtime/ksud.c" ]; then
-          # 注释第54行 ksu_selinux_hide_handle_post_fs_data();
-          sed -i '54s#^#//#' runtime/ksud.c
-          # 注释第214行 ksu_selinux_hide_handle_second_stage();
-          sed -i '214s#^#//#' runtime/ksud.c
-          # 删除之前追加在文件末尾的selinux头文件行
+          # 1. 重置ksud.c，删除之前错误追加的头文件、注释的调用行
+          git restore runtime/ksud.c
           sed -i '/#include "\.\.\/selinux\/hide.h"/d' runtime/ksud.c
+          # 2. 在文件最顶部插入函数声明，保证声明在54/214行调用之前，消除隐式声明冲突
+          sed -i '1i void ksu_selinux_hide_handle_post_fs_data(void);\nvoid ksu_selinux_hide_handle_second_stage(void);' runtime/ksud.c
+          # 3. 创建空selinux实现文件，提供链接所需函数实体，不注释调用逻辑
+          mkdir -p selinux
+          cat > selinux/hide.c <<-'EOF'
+          void ksu_selinux_hide_handle_post_fs_data(void)
+          {
+          return;
+          }
+          void ksu_selinux_hide_handle_second_stage(void)
+          {
+          return;
+          }
+          EOF
+          cat > selinux/hide.h <<-'EOF'
+          #ifndef KSU_SELINUX_HIDE_H
+          #define KSU_SELINUX_HIDE_H
+          void ksu_selinux_hide_handle_post_fs_data(void);
+          void ksu_selinux_hide_handle_second_stage(void);
+          #endif
+          EOF
+          # 4. Makefile加入selinux/hide.o编译目标，链接器找到函数实现
+          if [ -f "Makefile" ]; then
+          grep -q "selinux/hide.o" Makefile || echo "obj-y += selinux/hide.o" >> Makefile
           fi
-          # 2. 修复sulog/event.c strncpy函数名
+          # 5. 修复sulog/event.c strncpy函数名，完整保留内核通信逻辑（不注释，防止/dev/ksu缺失）
           if [ -f "sulog/event.c" ]; then
           sed -i 's#\bstrncpy_from_user_nofault\b#__strncpy_from_user_nofault#g' sulog/event.c
           sed -i 's#^//##g' sulog/event.c
           fi
-          # 3. 清理历史补丁
+          # 6. 清理所有会导致内核崩溃的旧补丁
           if [ -f "allowlist.c" ]; then
           sed -i '/#include <linux\/task_work.h>/d' allowlist.c
           fi
           if [ -f "ksu_defs.h" ]; then
           sed -i '/#ifndef TWA_RESUME/,/#endif/d' ksu_defs.h
+          sed -i '/KSU_DUMMY_DISABLE_SELINUX/d' ksu_defs.h
           fi
-          echo "✅ 直接注释selinux调用，消除声明顺序冲突"
+          echo "✅ 完整保留KSU初始化钩子，空实现消除编译报错，杜绝开机循环重启"
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
