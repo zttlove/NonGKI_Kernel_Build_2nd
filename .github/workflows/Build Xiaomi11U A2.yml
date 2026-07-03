@@ -100,58 +100,55 @@ jobs:
         uses: ./.github/workflows/patch-susfs1
         
       
-      - name: 🛠️ Reset ksud.c & Fix selinux header single insert
+      - name: 🛠️ Safe fix selinux symbol
         run: |
-         set -euo pipefail
-         cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
-         # ========== 步骤1：清理所有重复生成的 selinux 头文件行，还原文件语法 ==========
-         if [ -f "runtime/ksud.c" ]; then
-         # 删除所有存在的 #include "../selinux/hide.h" 重复行
-         sed -i '/#include "\.\.\/selinux\/hide.h"/d' runtime/ksud.c
-         fi
-         # ========== 步骤2：生成空selinux实现文件 ==========
-         mkdir -p selinux
-         cat > selinux/hide.c <<-'EOF'
-         void ksu_selinux_hide_handle_post_fs_data(void)
-         {
-         return;
-         }
-         void ksu_selinux_hide_handle_second_stage(void)
-         {
-         return;
-         }
-         EOF
-         cat > selinux/hide.h <<-'EOF'
-         #ifndef KSU_SELINUX_HIDE_H
-         #define KSU_SELINUX_HIDE_H
-         void ksu_selinux_hide_handle_post_fs_data(void);
-         void ksu_selinux_hide_handle_second_stage(void);
-         #endif
-         EOF
-         # ========== 步骤3：仅在【第一行#include】后插入1次头文件，绝不重复 ==========
-         if [ -f "runtime/ksud.c" ]; then
-         # 找到第一个 #include，插入头文件，只执行一次
-         sed -i '0,/^#include /s#^#include ##include "../selinux/hide.h"\n&#' runtime/ksud.c
-         fi
-         # ========== 步骤4：修复sulog/event.c strncpy 函数名 ==========
-         if [ -f "sulog/event.c" ]; then
-         sed -i 's/\bstrncpy_from_user_nofault\b/__strncpy_from_user_nofault/g' sulog/event.c
-         sed -i 's/^\/\///' sulog/event.c
-         fi
-         # ========== 步骤5：清理历史旧补丁残留 ==========
-         if [ -f "allowlist.c" ]; then
-         sed -i '/#include <linux\/task_work.h>/d' allowlist.c
-         sed -i '/#include <linux\/sched.h>/d' allowlist.c
-         fi
-         if [ -f "ksu_defs.h" ]; then
-         sed -i '/#ifndef TWA_RESUME/,/#endif/d' ksu_defs.h
-         sed -i '/KSU_DUMMY_DISABLE_SELINUX/d' ksu_defs.h
-         fi
-         # ========== 步骤6：自动添加selinux/hide.o进Makefile，防止链接undefined symbol ==========
-         if [ -f "Makefile" ]; then
-         grep -q "selinux/hide.o" Makefile || echo "obj-y += selinux/hide.o" >> Makefile
-         fi
-         echo "✅ ksud.c语法修复完成，仅单次插入selinux头文件，添加selinux编译目标"
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
+          # 1. 生成空selinux实现文件
+          mkdir -p selinu
+          cat > selinux/hide.c <<-'EOF'
+          void ksu_selinux_hide_handle_post_fs_data(void)
+          {
+          return;
+          }
+          void ksu_selinux_hide_handle_second_stage(void)
+          {
+          return;
+          }
+          EOF
+          cat > selinux/hide.h <<-'EOF'
+          #ifndef KSU_SELINUX_HIDE_H
+          #define KSU_SELINUX_HIDE_H
+          void ksu_selinux_hide_handle_post_fs_data(void);
+          void ksu_selinux_hide_handle_second_stage(void);
+          #endif
+          EOF
+          # 2. 安全处理 runtime/ksud.c：只在文件末尾追加头文件，不改动原有任何代码
+          if [ -f "runtime/ksud.c" ]; then
+          # 先清理之前错误插入的所有selinux头行
+          sed -i '/#include "\.\.\/selinux\/hide.h"/d' runtime/ksud.c
+          # 文件末尾追加，不会修改原有代码，不会丢#号
+          echo '#include "../selinux/hide.h"' >> runtime/ksud.c
+          fi
+          # 3. 修复sulog/event.c strncpy函数名
+          if [ -f "sulog/event.c" ]; then
+          sed -i 's#\bstrncpy_from_user_nofault\b#__strncpy_from_user_nofault#g' sulog/event.c
+          sed -i 's#^\/\///#' sulog/event.c
+          fi
+          # 4. Makefile添加selinux/hide.o，防止链接undefined symbol
+          if [ -f "Makefile" ]; then
+          grep -q "selinux/hide.o" Makefile || echo "obj-y += selinux/hide.o" >> Makefile
+          fi
+          # 5. 清理历史失效补丁
+          if [ -f "allowlist.c" ]; then
+          sed -i '/#include <linux\/task_work.h>/d' allowlist.c
+          sed -i '/#include <linux\/sched.h>/d' allowlist.c
+          fi
+          if [ -f "ksu_defs.h" ]; then
+          sed -i '/#ifndef TWA_RESUME/,/#endif/d' ksu_defs.h
+          sed -i '/KSU_DUMMY_DISABLE_SELINUX/d' ksu_defs.h
+          fi
+          echo "✅ Safe patch done, original source code untouched"
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
