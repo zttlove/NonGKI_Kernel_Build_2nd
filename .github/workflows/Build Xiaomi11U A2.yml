@@ -100,34 +100,35 @@ jobs:
         uses: ./.github/workflows/patch-susfs1
         
       
-      - name: 🛠️ Fix SELinux global variable undefined link error
+      - name: 🛠️ Fix global susfs & selinux link undefined symbol
         run: |
          set -euo pipefail
          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
-         # 1. 重写全局占位头，新增缺失全局SID变量定义（解决ld undefined symbol）
+         # 1. 生成全局占位头
          cat > global_selinux_dummy.h <<-'EOF'
          #ifndef GLOBAL_SELINUX_DUMMY_H
          #define GLOBAL_SELINUX_DUMMY_H
          #include <linux/cred.h>
          #include <linux/types.h>
          #include <linux/fs.h>
-         // SELinux 上下文宏，修复字符串拼接语法报错
+         // SELinux 上下文宏
          #define KERNEL_SU_DOMAIN "kernel_su"
          #define KERNEL_SU_CONTEXT "u:r:kernel_su:s0"
          #define ZYGOTE_CONTEXT "u:r:zygote:s0"
          #define INIT_CONTEXT "u:r:init:s0"
          #define KSU_FILE_CONTEXT "u:object_r:kernel_su_file:s0"
          #define KSU_DEFAULT_SELINUX_DOMAIN "u:r:" KERNEL_SU_DOMAIN ":s0"
-         // 全局SID变量空定义，解决ld undefined symbol
-         u32 ksu_file_sid = 0;
-         u32 susfs_ksu_sid = 0;
-         u32 susfs_priv_app_sid = 0;
-         u32 susfs_zygote_sid = 0;
-         // 全部缺失函数空内联原型，消除编译隐式声明
+         // 全局SID变量
+         extern u32 ksu_file_sid;
+         extern u32 susfs_ksu_sid;
+         extern u32 susfs_priv_app_sid;
+         extern u32 susfs_zygote_sid;
+         // 对外导出全局函数声明（供内核fs/susfs/proc调用）
+         bool susfs_is_current_ksu_domain(void);
+         void setup_selinux(const char *domain, struct cred *cred);
+         // 其余内联占位函数，仅KSU内部使用
          static inline bool is_ksu_domain(void) { return false; }
-         static inline void setup_selinux(const char *domain, struct cred *cred) { return; }
          static inline int handle_sepolicy(void __user *buf, size_t len) { return 0; }
-         static inline bool susfs_is_current_ksu_domain(void) { return false; }
          static inline bool susfs_is_sid_equal(const struct cred *cred, u32 sid) { return false; }
          static inline void escape_to_root_for_adb_root(void) { return; }
          static inline bool is_init(const struct cred *cred) { return false; }
@@ -138,14 +139,34 @@ jobs:
          static inline void setup_ksu_cred(void) { return; }
          #endif
          EOF
-         # 2. 确保ksu.c首行引入全局占位头
+         # 2. 创建dummy_global.c 存放全局变量+全局函数实体，导出符号给内核链接
+         cat > dummy_global.c <<-'EOF'
+         #include "global_selinux_dummy.h"
+         // 全局SID变量定义
+         u32 ksu_file_sid = 0;
+         u32 susfs_ksu_sid = 0;
+         u32 susfs_priv_app_sid = 0;
+         u32 susfs_zygote_sid = 0;
+         // 全局函数实体，解决fs/proc_namespace.c、fs/susfs.c链接缺失
+         bool susfs_is_current_ksu_domain(void)
+         {
+         return false;
+         }
+         void setup_selinux(const char *domain, struct cred *cred)
+         {
+         return;
+         }
+         EOF
+         # 3. 修改Makefile，编译dummy_global.c，导出全局符号
+         echo "obj-y += dummy_global.o" >> Makefile
+         # 4. ksu.c首行引入全局占位头
          sed -i '/#include "global_selinux_dummy.h"/d' ksu.c
          sed -i '1i #include "global_selinux_dummy.h"' ksu.c
-         # 3. 屏蔽原生selinux目录全部头文件，删除selinux文件夹
+         # 5. 屏蔽原生selinux所有头文件，删除selinux目录
          sed -i '/#include "selinux\//s#^#//#' ksu.c
          rm -rf selinux
          sed -i '/obj-y += selinux\/hide.o/d' Makefile
-         # 4. 注释ksud.c SELinux初始化钩子，杜绝开机无限重启panic
+         # 6. 注释ksud.c SELinux钩子，避免开机无限重启panic
          if [ -f "runtime/ksud.c" ]; then
          sed -i '54s#^#//#' runtime/ksud.c
          sed -i '214s#^#//#' runtime/ksud.c
@@ -153,17 +174,17 @@ jobs:
          sed -i '216s#^#//#' runtime/ksud.c
          sed -i '217s#^#//#' runtime/ksud.c
          fi
-         # 5. 修复sulog/event.c崩溃与未初始化变量
+         # 7. 修复sulog/event.c
          if [ -f "sulog/event.c" ]; then
          sed -i '132s#long copied;#long copied = 0;#' sulog/event.c
          sed -i 's#\bstrncpy_from_user_nofault\b#__strncpy_from_user_nofault#g' sulog/event.c
          sed -i '144,148s#^#//#' sulog/event.c
          fi
-         # 6. 清理历史冲突补丁
+         # 8. 清理旧补丁
          if [ -f "allowlist.c" ]; then
          sed -i '/#include <linux\/task_work.h>/d' allowlist.c
          fi
-         echo "✅ 全局SELINUX变量+函数占位完成，编译+链接双阶段报错全部修复"
+         echo "✅ 全局函数+变量实体创建完成，解决susfs/proc链接未定义符号"
     
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
