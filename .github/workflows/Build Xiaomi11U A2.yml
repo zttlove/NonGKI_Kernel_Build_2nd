@@ -161,14 +161,13 @@ jobs:
          fi
          # 4. 重置runtime/ksud.c，删除之前插入的#ifdef条件块，避免代码语法断裂
          git restore runtime/ksud.c
-         sed -i '/#define KSU_SKIP_SELINUX_HOOKS/d' ksu_defs.h
          sed -i '/#include "\.\.\/selinux\/hide.h"/d' runtime/ksud.c
          # 5. 修复event.c strncpy崩溃逻辑
          if [ -f "sulog/event.c" ]; then
          sed -i 's#\bstrncpy_from_user_nofault\b#__strncpy_from_user_nofault#g' sulog/event.c
          sed -i '144,148s#^#//#' sulog/event.c
          fi
-         # 6. 清理历史冲突补丁
+         # 6. 清理历史冲突补丁（文件存在才执行）
          if [ -f "allowlist.c" ]; then
          sed -i '/#include <linux\/task_work.h>/d' allowlist.c
          fi
