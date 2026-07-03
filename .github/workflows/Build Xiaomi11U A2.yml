@@ -100,28 +100,29 @@ jobs:
         uses: ./.github/workflows/patch-susfs1
         
       
-      - name: 🛠️ Disable full selinux module to fix all symbol/type/bootloop error
+      - name: 🛠️ Fully cut selinux module dependency
         run: |
           set -euo pipefail
           cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
-          # 1. 注释ksu.c里引入selinux模块的代码，彻底不编译selinux目录下所有文件
-          sed -i '/#include "selinux\/selinux.h"/s#^#//#' ksu.c
+          # 1. 注释ksu.c全部selinux目录头文件，彻底不再引入selinux相关源码
+          sed -i '/#include "selinux\//s#^#//#' ksu.c
+          # 2. Makefile删除selinux编译目标
           sed -i '/obj-y += selinux\/hide.o/d' Makefile
-          # 2. 直接删除我们手动创建的selinux占位文件夹，消除自定义头文件冲突
+          # 删除之前手动创建的selinux文件夹
           rm -rf selinux
-          # 3. 修复runtime/ksud.c三处新增隐式声明函数：直接注释调用行，不再依赖selinux实现
+          # 3. 注释ksud.c里3个selinux相关函数调用，消除隐式声明
           if [ -f "runtime/ksud.c" ]; then
           sed -i '215s#^#//#' runtime/ksud.c  # apply_kernelsu_rules();
           sed -i '216s#^#//#' runtime/ksud.c  # cache_sid();
           sed -i '217s#^#//#' runtime/ksud.c  # setup_ksu_cred();
           fi
-          # 4. 修复sulog/event.c：初始化copied变量消除未初始化警告，同时规避strncpy内核Oops
+          # 4. 修复sulog/event.c变量未初始化 + strncpy崩溃代码
           if [ -f "sulog/event.c" ]; then
           sed -i '132s#long copied;#long copied = 0;#' sulog/event.c
           sed -i 's#\bstrncpy_from_user_nofault\b#__strncpy_from_user_nofault#g' sulog/event.c
           sed -i '144,148s#^#//#' sulog/event.c
           fi
-          # 5. 清理历史残留补丁（文件存在才执行，防止不存在报错）
+          # 5. 清理历史补丁（文件存在才执行）
           if [ -f "allowlist.c" ]; then
           sed -i '/#include <linux\/task_work.h>/d' allowlist.c
           fi
@@ -130,7 +131,8 @@ jobs:
           sed -i '/KSU_SKIP_SELINUX_HOOKS/d' ksu_defs.h
           sed -i '/KSU_DUMMY_DISABLE_SELINUX/d' ksu_defs.h
           fi
-          echo "✅ 整套SELinux模块禁用，全部符号/类型/宏冲突清除，杜绝开机无限重启"
+          echo "✅ All selinux header includes commented, selinux module fully disabled"
+    
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
       
