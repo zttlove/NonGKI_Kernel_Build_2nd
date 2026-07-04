@@ -99,6 +99,21 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
         
+      - name: 🛠️ Fix implicit function declaration errors for full selinux branch
+        run: |
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
+          # 1. 修复ksud.c缺失selinux函数头文件，消除ksu_selinux_hide_*隐式声明报错
+          # 在ksud.c顶部引入selinux模块公共头
+          if ! grep -q '#include "selinux/selinux_hide.h"' runtime/ksud.c; then
+          sed -i '1i#include "selinux/selinux_hide.h"' runtime/ksud.c
+          fi
+          # 2. 全局替换strncpy_from_user_nofault → __strncpy_from_user_nofault，适配5.4内核
+          sed -i 's/\bstrncpy_from_user_nofault\b/__strncpy_from_user_nofault/g' sulog/event.c
+          # 3. 初始化copied变量，消除未初始化警告（可选，避免-Werror告警）
+          sed -i '132s/long copied;/long copied = 0;/' sulog/event.c
+          echo "✅ 修复完成：selinux函数头引入 + strncpy内核兼容替换"
+        
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
       
