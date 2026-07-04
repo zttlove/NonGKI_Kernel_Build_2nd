@@ -99,20 +99,29 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
         
-      - name: 🛠️ Fix implicit function declaration errors for full selinux branch
+      - name: 🛠️ Fix implicit function & missing header error (Full SELinux branch)
         run: |
           set -euo pipefail
           cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
-          # 1. 修复ksud.c缺失selinux函数头文件，消除ksu_selinux_hide_*隐式声明报错
-          # 在ksud.c顶部引入selinux模块公共头
-          if ! grep -q '#include "selinux/selinux_hide.h"' runtime/ksud.c; then
-          sed -i '1i#include "selinux/selinux_hide.h"' runtime/ksud.c
+
+          # ========== 1. 修复ksud.c隐式selinux函数，不硬引入不存在的头文件 ==========
+          # 先删除之前错误添加的 #include "selinux/selinux_hide.h"
+          sed -i '/#include "selinux\/selinux_hide.h"/d' runtime/ksud.c
+
+          # 在ksud.c文件最顶部前置声明缺失的两个selinux隐藏函数，规避implicit报错
+          if ! grep -q "void ksu_selinux_hide_handle_post_fs_data(void);" runtime/ksud.c; then
+          sed -i '1i\
+          void ksu_selinux_hide_handle_post_fs_data(void);\
+          void ksu_selinux_hide_handle_second_stage(void);
+          ' runtime/ksud.c
           fi
-          # 2. 全局替换strncpy_from_user_nofault → __strncpy_from_user_nofault，适配5.4内核
+
+          # ========== 2. 5.4内核 strncpy_from_user_nofault 兼容修复 ==========
           sed -i 's/\bstrncpy_from_user_nofault\b/__strncpy_from_user_nofault/g' sulog/event.c
-          # 3. 初始化copied变量，消除未初始化警告（可选，避免-Werror告警）
           sed -i '132s/long copied;/long copied = 0;/' sulog/event.c
-          echo "✅ 修复完成：selinux函数头引入 + strncpy内核兼容替换"
+
+          echo "✅ 修复完成：函数前置声明替代缺失头文件 + 内核拷贝函数兼容"
+
         
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
