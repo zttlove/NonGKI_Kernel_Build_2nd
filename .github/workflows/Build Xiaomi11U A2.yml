@@ -99,30 +99,42 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
         
-      - name: 🛠️ Fix implicit function & missing header error (Full SELinux branch)
-        run: |
-          set -euo pipefail
-          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
+      - name: 🛠️ Fix implicit & undefined selinux symbol (Full SELinux branch)
+  run: |
+    set -euo pipefail
+    cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
 
-          # ========== 1. 修复ksud.c隐式selinux函数，不硬引入不存在的头文件 ==========
-          # 先删除之前错误添加的 #include "selinux/selinux_hide.h"
-          sed -i '/#include "selinux\/selinux_hide.h"/d' runtime/ksud.c
+    # 1. 清理之前错误插入的头文件、函数声明
+    sed -i '/#include "selinux\/selinux_hide.h"/d' runtime/ksud.c
+    sed -i '/void ksu_selinux_hide_handle_post_fs_data(void);/d' runtime/ksud.c
+    sed -i '/void ksu_selinux_hide_handle_second_stage(void);/d' runtime/ksud.c
 
-          # 在ksud.c文件最顶部前置声明缺失的两个selinux隐藏函数，规避implicit报错
-          if ! grep -q "void ksu_selinux_hide_handle_post_fs_data(void);" runtime/ksud.c; then
-          sed -i '1i\
-          void ksu_selinux_hide_handle_post_fs_data(void);\
-          void ksu_selinux_hide_handle_second_stage(void);
-          ' runtime/ksud.c
-          fi
+    # 2. 检测selinux目录是否存在这两个函数实现
+    HAS_FUNC_POST=$(grep -l "ksu_selinux_hide_handle_post_fs_data" selinux/* || true)
+    HAS_FUNC_SECOND=$(grep -l "ksu_selinux_hide_handle_second_stage" selinux/* || true)
 
-          # ========== 2. 5.4内核 strncpy_from_user_nofault 兼容修复 ==========
-          sed -i 's/\bstrncpy_from_user_nofault\b/__strncpy_from_user_nofault/g' sulog/event.c
-          sed -i '132s/long copied;/long copied = 0;/' sulog/event.c
+    if [[ -z "$HAS_FUNC_POST" || -z "$HAS_FUNC_SECOND" ]]; then
+        # 源码无函数实体，注释两处调用，彻底解决undefined symbol链接报错
+        sed -i '54s/^/\/\//' runtime/ksud.c
+        sed -i '214s/^/\/\//' runtime/ksud.c
+        echo "⚠️ selinux模块无对应隐藏函数，已注释ksud.c内两处调用"
+    else
+        # 存在函数实现，保留调用，补充头文件/声明正常编译
+        if ! grep -q '#include "selinux/selinux_hide.h"' runtime/ksud.c; then
+            sed -i '1i#include "selinux/selinux_hide.h"' runtime/ksud.c
+        fi
+        echo "✅ selinux函数存在，正常保留调用逻辑"
+    fi
 
-          echo "✅ 修复完成：函数前置声明替代缺失头文件 + 内核拷贝函数兼容"
+    # 3. 5.4内核 strncpy_from_user_nofault 兼容修复（不变）
+    sed -i 's/\bstrncpy_from_user_nofault\b/__strncpy_from_user_nofault/g' sulog/event.c
+    sed -i '132s/long copied;/long copied = 0;/' sulog/event.c
 
-        
+    echo "================ Fix Complete ================"
+    echo "1. 自动检测selinux函数存在性，无实现则注释调用"
+    echo "2. 修复5.4内核strncpy接口隐式声明报错"
+    echo "3. selinux目录完整保留，不阉割原生SELinux模块"
+
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
       
