@@ -113,17 +113,21 @@ jobs:
           # 3. 注释所有selinux内部头文件引入
           sed -i '/#include "selinux\//s#^#//#' ksu.c
           sed -i '/#include "selinux\//s#^#//#' runtime/ksud.c
-          # 4. 重置ksud.c并强制保留字符设备初始化ksu_dev_init
+          # 4. 重置ksud.c，仅注释2个panic钩子
           git restore runtime/ksud.c
-          # 仅注释两条危险selinux钩子，不动设备初始化代码
           sed -i '54s#^#//#' runtime/ksud.c
           sed -i '214s#^#//#' runtime/ksud.c
-          # 强制校验ksu_dev_init调用，不存在则插入，保证/dev/ksu注册
-          if ! grep -q "ksu_dev_init();" runtime/ksud.c; then
-              sed -i 's/static int __init ksu_init(void)/static int __init ksu_init(void)\
-              ksu_dev_init();/' runtime/ksud.c
-          fi
-          # 5. 生成全局SELinux占位头，补齐所有缺失符号、SID、内联函数
+          # ========== 修复：改用awk稳定插入ksu_dev_init，彻底规避sed换行转义报错 ==========
+          cat runtime/ksud.c | awk '
+          BEGIN{flag=0}
+          {print $0}
+          /static int __init ksu_init(void)/{flag=1;next}
+          flag==1 && /\{/{
+          print "    ksu_dev_init();"
+          flag=0
+          }
+          ' > tmp_ksud.c && mv tmp_ksud.c runtime/ksud.c
+          # 5. 全局SELinux占位头
           cat > ksu_mini_dummy.h <<-'EOF'
           #ifndef KSU_MINI_DUMMY_H
           #define KSU_MINI_DUMMY_H
@@ -132,22 +136,18 @@ jobs:
           #include <linux/fs.h>
           #include <linux/cdev.h>
           #include <linux/device.h>
-          // SELinux上下文宏定义
           #define KERNEL_SU_DOMAIN "kernel_su"
           #define KERNEL_SU_CONTEXT "u:r:kernel_su:s0"
           #define ZYGOTE_CONTEXT "u:r:zygote:s0"
           #define INIT_CONTEXT "u:r:init:s0"
           #define KSU_FILE_CONTEXT "u:object_r:kernel_su_file:s0"
           #define KSU_DEFAULT_SELINUX_DOMAIN "u:r:" KERNEL_SU_DOMAIN ":s0"
-          // 全局SID变量，解决链接undefined
           u32 ksu_file_sid = 0;
           u32 susfs_ksu_sid = 0;
           u32 susfs_priv_app_sid = 0;
           u32 susfs_zygote_sid = 0;
-          // 外部导出全局函数（供susfs调用）
           bool susfs_is_current_ksu_domain(void) { return false; }
           void setup_selinux(const char *domain, struct cred *cred) { return; }
-          // 模块内联占位函数
           static inline bool is_ksu_domain(void) { return false; }
           static inline int handle_sepolicy(void __user *buf, size_t len) { return 0; }
           static inline bool susfs_is_sid_equal(const struct cred *cred, u32 sid) { return false; }
@@ -158,30 +158,26 @@ jobs:
           static inline void setup_ksu_cred(void) { return; }
           #endif
           EOF
-          # 6. 全文件注入占位头：ksu.c + runtime/ksud.c，两处都引入杜绝隐式声明
+          # 6. 两处源码引入占位头
           sed -i '/#include "ksu_mini_dummy.h"/d' ksu.c
-          sed -i '1i #include "ksu_mini_dummy.h"' ksu.c
+          sed -i '1i#include "ksu_mini_dummy.h"' ksu.c
           sed -i '/#include "ksu_mini_dummy.h"/d' runtime/ksud.c
-          sed -i '1i #include "ksu_mini_dummy.h"' runtime/ksud.c
-          # 7. Makefile添加头文件依赖，防止增量编译丢失
+          sed -i '1i#include "ksu_mini_dummy.h"' runtime/ksud.c
+          # 7. Makefile头文件依赖
           sed -i '/ksu.o /s/$/ ksu_mini_dummy.h/' Makefile
-          # 8. sulog/event.c 5.4内核兼容修复，修复strncpy_from_user_nofault未定义
+          # 8. event.c 5.4内核兼容修复
           if [ -f "sulog/event.c" ]; then
-              sed -i 's#\bstrncpy_from_user_nofault\b#__strncpy_from_user_nofault#g' sulog/event.c
-              sed -i '144,148s#^//##g' sulog/event.c
-              sed -i '132s#long copied;#long copied = 0;#' sulog/event.c
+          sed -i 's/\bstrncpy_from_user_nofault\b/__strncpy_from_user_nofault/g' sulog/event.c
+          sed -i '144,148s/^\/\///' sulog/event.c
+          sed -i '132s/long copied;/long copied = 0;/' sulog/event.c
           fi
-          # 9. 清理旧冲突宏与头文件
+          # 9. 清理旧冲突宏
           [ -f allowlist.c ] && sed -i '/#include <linux\/task_work.h>/d' allowlist.c
           if [ -f ksu_defs.h ]; then
-              sed -i '/#ifndef TWA_RESUME/,/#endif/d' ksu_defs.h
-              sed -i '/KSU_SKIP_SELINUX_HOOKS/d' ksu_defs.h
+          sed -i '/#ifndef TWA_RESUME/,/#endif/d' ksu_defs.h
+          sed -i '/KSU_SKIP_SELINUX_HOOKS/d' ksu_defs.h
           fi
-          echo "===================== Fix Complete ====================="
-          echo "1. Selinux子目录已移除，编译报错消除"
-          echo "2. ksu_dev_init() 强制保留，内核将注册 /dev/ksu 字符设备"
-          echo "3. 全局占位头注入ksu.c + ksud.c，所有SELinux符号补齐"
-          echo "========================================================"
+          echo "✅ 已使用awk稳定插入ksu_dev_init，消除sed换行语法错误"
 
       
     
