@@ -137,11 +137,36 @@ jobs:
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
-      
+
       - name: 🪛 Extra Kernel Options
         run: |
+         set -euo pipefail
+         cd "$GITHUB_WORKSPACE/device_kernel"
+         # 【CRITICAL】DO NOT MODIFY CONFIG_SECURITY_SELINUX !
+         # 不要加任何 CONFIG_SECURITY_SELINUX=n 相关代码
+
+         # ========== 新增：注入开机脚本修复/dev/ksu上下文 ==========
+      - name: 🛠️ Inject boot script fix /dev/ksu selinux context
+        run: |
           set -euo pipefail
-          cd "$GITHUB_WORKSPACE/device_kernel"
+          AK3_DIR="${GITHUB_WORKSPACE}/Anykernel3"
+          mkdir -p "${AK3_DIR}/META-INF/com/google/android/init"
+          cat > "${AK3_DIR}/META-INF/com/google/android/init/99_fix_ksu_dev.sh" <<'EOF'
+          #!/system/bin/sh
+          (
+          sleep 2
+          while [ ! -c /dev/ksu ]; do
+          sleep 0.1
+          done
+          chmod 666 /dev/ksu
+          chcon u:object_r:kernel_su_file:s0 /dev/ksu
+          )&
+          EOF
+          chmod +x "${AK3_DIR}/META-INF/com/google/android/init/99_fix_ksu_dev.sh"
+
+          # 下面再放 pack-anykernel3
+
+      
         
           
       - name: 🧰 Patch Kernel of Re:Kernel
