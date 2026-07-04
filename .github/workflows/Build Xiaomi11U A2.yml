@@ -142,9 +142,7 @@ jobs:
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/device_kernel"
-          # 可选永久关闭SELinux兜底（推荐保留，解决强制SELinux拦截隐患）
-          sed -i 's/# CONFIG_SECURITY_SELINUX=y/CONFIG_SECURITY_SELINUX=n/' arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
-          sed -i '$a CONFIG_SECURITY_SELINUX_DISABLE=y' arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
+        
           
       - name: 🧰 Patch Kernel of Re:Kernel
         uses: ./.github/workflows/patch-rekernel
