@@ -99,88 +99,6 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
         
-      - name: 🛠️ Fix selinux/Makefile missing fatal build error
-        run: |
-          set -euo pipefail
-          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
-          # 1. 彻底清理selinux编译条目与文件夹
-          sed -i '/obj-y += selinux/d' Makefile
-          sed -i '/obj-y += selinux\//d' Makefile
-          rm -rf selinux
-          # 2. 清理旧占位文件残留
-          rm -f global_selinux_dummy.h dummy_global.c
-          sed -i '/obj-y += dummy_global.o/d' Makefile
-          # 3. 注释所有selinux内部头文件引入
-          sed -i '/#include "selinux\//s#^#//#' ksu.c
-          sed -i '/#include "selinux\//s#^#//#' runtime/ksud.c
-          # 4. 重置ksud.c，仅注释2个panic钩子
-          git restore runtime/ksud.c
-          sed -i '54s#^#//#' runtime/ksud.c
-          sed -i '214s#^#//#' runtime/ksud.c
-          # ========== 修复：改用awk稳定插入ksu_dev_init，彻底规避sed换行转义报错 ==========
-          cat runtime/ksud.c | awk '
-          BEGIN{flag=0}
-          {print $0}
-          /static int __init ksu_init(void)/{flag=1;next}
-          flag==1 && /\{/{
-          print "    ksu_dev_init();"
-          flag=0
-          }
-          ' > tmp_ksud.c && mv tmp_ksud.c runtime/ksud.c
-          # 5. 全局SELinux占位头
-          cat > ksu_mini_dummy.h <<-'EOF'
-          #ifndef KSU_MINI_DUMMY_H
-          #define KSU_MINI_DUMMY_H
-          #include <linux/cred.h>
-          #include <linux/types.h>
-          #include <linux/fs.h>
-          #include <linux/cdev.h>
-          #include <linux/device.h>
-          #define KERNEL_SU_DOMAIN "kernel_su"
-          #define KERNEL_SU_CONTEXT "u:r:kernel_su:s0"
-          #define ZYGOTE_CONTEXT "u:r:zygote:s0"
-          #define INIT_CONTEXT "u:r:init:s0"
-          #define KSU_FILE_CONTEXT "u:object_r:kernel_su_file:s0"
-          #define KSU_DEFAULT_SELINUX_DOMAIN "u:r:" KERNEL_SU_DOMAIN ":s0"
-          u32 ksu_file_sid = 0;
-          u32 susfs_ksu_sid = 0;
-          u32 susfs_priv_app_sid = 0;
-          u32 susfs_zygote_sid = 0;
-          bool susfs_is_current_ksu_domain(void) { return false; }
-          void setup_selinux(const char *domain, struct cred *cred) { return; }
-          static inline bool is_ksu_domain(void) { return false; }
-          static inline int handle_sepolicy(void __user *buf, size_t len) { return 0; }
-          static inline bool susfs_is_sid_equal(const struct cred *cred, u32 sid) { return false; }
-          static inline void escape_to_root_for_adb_root(void) { return; }
-          static inline bool is_init(const struct cred *cred) { return false; }
-          static inline void apply_kernelsu_rules(void) { return; }
-          static inline void cache_sid(void) { return; }
-          static inline void setup_ksu_cred(void) { return; }
-          #endif
-          EOF
-          # 6. 两处源码引入占位头
-          sed -i '/#include "ksu_mini_dummy.h"/d' ksu.c
-          sed -i '1i#include "ksu_mini_dummy.h"' ksu.c
-          sed -i '/#include "ksu_mini_dummy.h"/d' runtime/ksud.c
-          sed -i '1i#include "ksu_mini_dummy.h"' runtime/ksud.c
-          # 7. Makefile头文件依赖
-          sed -i '/ksu.o /s/$/ ksu_mini_dummy.h/' Makefile
-          # 8. event.c 5.4内核兼容修复
-          if [ -f "sulog/event.c" ]; then
-          sed -i 's/\bstrncpy_from_user_nofault\b/__strncpy_from_user_nofault/g' sulog/event.c
-          sed -i '144,148s/^\/\///' sulog/event.c
-          sed -i '132s/long copied;/long copied = 0;/' sulog/event.c
-          fi
-          # 9. 清理旧冲突宏
-          [ -f allowlist.c ] && sed -i '/#include <linux\/task_work.h>/d' allowlist.c
-          if [ -f ksu_defs.h ]; then
-          sed -i '/#ifndef TWA_RESUME/,/#endif/d' ksu_defs.h
-          sed -i '/KSU_SKIP_SELINUX_HOOKS/d' ksu_defs.h
-          fi
-          echo "✅ 已使用awk稳定插入ksu_dev_init，消除sed换行语法错误"
-
-      
-    
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
       
@@ -188,6 +106,9 @@ jobs:
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/device_kernel"
+          # 可选永久关闭SELinux兜底（推荐保留，解决强制SELinux拦截隐患）
+          sed -i 's/# CONFIG_SECURITY_SELINUX=y/CONFIG_SECURITY_SELINUX=n/' arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
+          sed -i '$a CONFIG_SECURITY_SELINUX_DISABLE=y' arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
           
       - name: 🧰 Patch Kernel of Re:Kernel
         uses: ./.github/workflows/patch-rekernel
