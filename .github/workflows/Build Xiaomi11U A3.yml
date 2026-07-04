@@ -1,1 +1,289 @@
+name: Build Xiaomi11U A2
 
+on:
+  workflow_call:
+  workflow_dispatch:
+
+env:
+  TZ: Asia/Shanghai
+  DEVICE_NAME: "xiaomi_11U"
+  DEVICE_CODENAME: "star"
+  KERNEL_ARCH: "aarch64"
+  CUSTOM_CMDS: "CLANG_TRIPLE=aarch64-linux-gnu-"
+  EXTRA_CMDS: 'LD=ld.lld LLVM=1 LLVM_IAS=1 EXTRA_CFLAGS="-Wno-unused-function -Wno-frame-larger-than"'
+
+  KERNEL_SOURCE: "https://github.com/zttlove/android_kernel_xiaomi_sm8350-miui.git"
+  KERNEL_BRANCH: "hyper-14"
+
+  CLANG_SOURCE: "https://github.com/ZyCromerZ/Clang/releases/download/20.0.0git-20241222-release/Clang-20.0.0git-20241222.tar.gz"
+  CLANG_BRANCH: ""
+
+  GCC_GNU: false
+  GCC_64_SOURCE: "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9.git"
+  GCC_64_BRANCH: "android12L-release"
+  GCC_32_SOURCE: "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9.git"
+  GCC_32_BRANCH: "android12L-release"
+
+  DEFCONFIG_SOURCE: ""
+  DEFCONFIG_NAME: "vendor/star1_defconfig"
+  DEFCONFIG_ORIGIN_IMAGE: ""
+  DEFCONFIG_FROM_BOOT: false
+
+  KERNELSU_SOURCE: ""
+  KERNELSU_BRANCH: ""
+  KERNELSU_AUTO_GET: "true"
+  KERNELSU_AUTO_FORK: "sukisu" # xxksu, rsuntk, next, resukisu and sukisu
+
+  SUSFS_ENABLE: true
+  SUSFS_FIXED: true
+  AK3_SOURCE: "https://github.com/osm0sis/Anykernel3.git"
+  AK3_BRANCH: "master"
+
+  BOOT_SOURCE: ""
+  NEED_DTBO: false
+  NEED_SAFE_DTBO: false
+  ROM_TEXT: "hyperos_a16"
+
+  PYTHON_VERSION: "3"
+  PACK_METHOD: "Anykernel3"
+  PACK_KMODULES: "false"
+  KERNELSU_METHOD: "shell"
+  KERNELSU_SUS_PATCH: "true"
+
+  PATCHES_SOURCE: "JackA1ltman/NonGKI_Kernel_Patches"
+  PATCHES_BRANCH: "mi_kernel"
+  SUSFS_FOLDER_FIXED: "mi11_evox_a16"
+  SUSFS_PATCH_FIXED: "susfs_fixed"
+
+  REKERNEL_ENABLE: "false"
+  HOOK_METHOD: "syscall"
+  KERNEL_PATCH: "false"
+
+  KPM_ENABLE: "false"
+  KPM_INLINE: "false"
+  KPM_KPATCH_NEXT: "false"
+  KPM_PATCH_SOURCE: "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU_patch/refs/heads/main/kpm/patch_linux"
+
+  BASEBAND_GUARD_ENABLE: "false"
+  BASEBAND_GUARD_BOOT: "false"
+
+  GENERATE_DTB: "false"
+  GENERATE_CHIP: "qcom"
+
+  BUILD_DEBUGGER: "false"
+  SKIP_PATCH: "false"
+
+  BUILD_OTHER_CONFIG: "false"
+  MERGE_CONFIG_FILES: "vendor/venus_QGKI.config,vendor/xiaomi_QGKI.config"
+
+  FREE_MORE_SPACE: "false"
+
+jobs:
+  build-kernel:
+    name: Xiaomi11u A2
+    runs-on: ubuntu-latest
+    env:
+      CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
+      CCACHE_NOHASHDIR: "true"
+      CCACHE_HARDLINK: "true"
+    steps:
+      - name: ⏰ Checkout repository
+        uses: actions/checkout@v6
+
+      - name: ⌛️ Compilation environment preparation
+        uses: ./.github/workflows/build-env
+
+      - name: ⚙️ Get necessary tools
+        uses: ./.github/workflows/build-ready1
+
+      - name: 🪝 Patch Kernel of SUSFS
+        uses: ./.github/workflows/patch-susfs1
+        
+      - name: 🛠️ Fix selinux/Makefile missing fatal build error
+        run: |
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
+          # 1. 彻底清理selinux编译条目与文件夹
+          sed -i '/obj-y += selinux/d' Makefile
+          sed -i '/obj-y += selinux\//d' Makefile
+          rm -rf selinux
+          # 2. 清理旧占位文件残留
+          rm -f global_selinux_dummy.h dummy_global.c
+          sed -i '/obj-y += dummy_global.o/d' Makefile
+          # 3. 注释所有selinux内部头文件引入
+          sed -i '/#include "selinux\//s#^#//#' ksu.c
+          sed -i '/#include "selinux\//s#^#//#' runtime/ksud.c
+          # 4. 重置ksud.c，仅注释2个panic钩子
+          git restore runtime/ksud.c
+          sed -i '54s#^#//#' runtime/ksud.c
+          sed -i '214s#^#//#' runtime/ksud.c
+          # ========== 修复：改用awk稳定插入ksu_dev_init，彻底规避sed换行转义报错 ==========
+          cat runtime/ksud.c | awk '
+          BEGIN{flag=0}
+          {print $0}
+          /static int __init ksu_init(void)/{flag=1;next}
+          flag==1 && /\{/{
+          print "    ksu_dev_init();"
+          flag=0
+          }
+          ' > tmp_ksud.c && mv tmp_ksud.c runtime/ksud.c
+          # 5. 全局SELinux占位头
+          cat > ksu_mini_dummy.h <<-'EOF'
+          #ifndef KSU_MINI_DUMMY_H
+          #define KSU_MINI_DUMMY_H
+          #include <linux/cred.h>
+          #include <linux/types.h>
+          #include <linux/fs.h>
+          #include <linux/cdev.h>
+          #include <linux/device.h>
+          #define KERNEL_SU_DOMAIN "kernel_su"
+          #define KERNEL_SU_CONTEXT "u:r:kernel_su:s0"
+          #define ZYGOTE_CONTEXT "u:r:zygote:s0"
+          #define INIT_CONTEXT "u:r:init:s0"
+          #define KSU_FILE_CONTEXT "u:object_r:kernel_su_file:s0"
+          #define KSU_DEFAULT_SELINUX_DOMAIN "u:r:" KERNEL_SU_DOMAIN ":s0"
+          u32 ksu_file_sid = 0;
+          u32 susfs_ksu_sid = 0;
+          u32 susfs_priv_app_sid = 0;
+          u32 susfs_zygote_sid = 0;
+          bool susfs_is_current_ksu_domain(void) { return false; }
+          void setup_selinux(const char *domain, struct cred *cred) { return; }
+          static inline bool is_ksu_domain(void) { return false; }
+          static inline int handle_sepolicy(void __user *buf, size_t len) { return 0; }
+          static inline bool susfs_is_sid_equal(const struct cred *cred, u32 sid) { return false; }
+          static inline void escape_to_root_for_adb_root(void) { return; }
+          static inline bool is_init(const struct cred *cred) { return false; }
+          static inline void apply_kernelsu_rules(void) { return; }
+          static inline void cache_sid(void) { return; }
+          static inline void setup_ksu_cred(void) { return; }
+          #endif
+          EOF
+          # 6. 两处源码引入占位头
+          sed -i '/#include "ksu_mini_dummy.h"/d' ksu.c
+          sed -i '1i#include "ksu_mini_dummy.h"' ksu.c
+          sed -i '/#include "ksu_mini_dummy.h"/d' runtime/ksud.c
+          sed -i '1i#include "ksu_mini_dummy.h"' runtime/ksud.c
+          # 7. Makefile头文件依赖
+          sed -i '/ksu.o /s/$/ ksu_mini_dummy.h/' Makefile
+          # 8. event.c 5.4内核兼容修复
+          if [ -f "sulog/event.c" ]; then
+          sed -i 's/\bstrncpy_from_user_nofault\b/__strncpy_from_user_nofault/g' sulog/event.c
+          sed -i '144,148s/^\/\///' sulog/event.c
+          sed -i '132s/long copied;/long copied = 0;/' sulog/event.c
+          fi
+          # 9. 清理旧冲突宏
+          [ -f allowlist.c ] && sed -i '/#include <linux\/task_work.h>/d' allowlist.c
+          if [ -f ksu_defs.h ]; then
+          sed -i '/#ifndef TWA_RESUME/,/#endif/d' ksu_defs.h
+          sed -i '/KSU_SKIP_SELINUX_HOOKS/d' ksu_defs.h
+          fi
+          echo "✅ 已使用awk稳定插入ksu_dev_init，消除sed换行语法错误"
+
+      
+    
+      - name: 🔗 Patch for no-kprobe
+        uses: ./.github/workflows/patch-no-kprobe
+      
+      - name: 🪛 Extra Kernel Options
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/device_kernel"
+          
+      - name: 🧰 Patch Kernel of Re:Kernel
+        uses: ./.github/workflows/patch-rekernel
+
+      - name: 🔒 Patch Kernel of Baseband Guard
+        uses: ./.github/workflows/patch-baseband-guard
+
+      - name: 🚀 Build Process
+        uses: ./.github/workflows/build-process1
+        
+      - name: 📦 Package Anykernel3 Flash Zip
+        if: env.PACK_METHOD == 'Anykernel3'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "============================================="
+          echo "📦 Packaging Star Hyper A16 Kernel"
+          echo "==========================================="
+          
+          TIME=$(TZ=Asia/Shanghai date +"%Y-%m-%d")
+          KERNEL_DIR="${GITHUB_WORKSPACE}/device_kernel"
+          ZIP_DIR="${KERNEL_DIR}/AnyKernel3_Zip"
+          IMG_PATH="${KERNEL_DIR}/out/arch/arm64/boot/Image"
+
+          cd "${KERNEL_DIR}"
+
+          if [[ ! -f "${IMG_PATH}" ]]; then
+            echo "::error::❌ Build failed, Image not found at ${IMG_PATH}"
+            exit 1
+          fi
+
+          # 1. 准备打包目录
+          rm -rf "${ZIP_DIR}"
+          mkdir -p "${ZIP_DIR}"
+
+          # 2. 获取 AnyKernel3 (如果未预先下载)
+          if [ ! -d "Anykernel3" ]; then
+             git clone --depth=1 -b "${AK3_BRANCH}" "${AK3_SOURCE}" Anykernel3
+          fi
+
+          # 3. 复制 AK3 基础文件
+          cp -rf Anykernel3/* "${ZIP_DIR}/"
+          rm -rf "${ZIP_DIR}/.git"
+
+          # 4. 替换并配置 anykernel.sh
+          # 下载定制脚本或修改现有脚本
+          curl -fsL https://raw.githubusercontent.com/zttlove/NonGKI_Kernel_Build_2nd/mainline/Patches/anykernel.sh -o "${ZIP_DIR}/anykernel.sh" || true
+          
+          sed -i \
+            -e 's/^name=.*/name="Star-HyperA16-NonGKI-Kernel"/' \
+            -e 's/^do\.devicecheck=.*/do.devicecheck=0/' \
+            -e 's/^IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=1/' \
+            -e 's/^BLOCK=.*/BLOCK=boot/' \
+            "${ZIP_DIR}/anykernel.sh"
+
+          # 5. 复制内核镜像
+          cp -fv "${IMG_PATH}" "${ZIP_DIR}/"
+
+          # 6. 复制模块 (可选)
+          if [[ "${PACK_KMODULES}" == "true" ]]; then
+            MOD_DIR="${ZIP_DIR}/modules/vendor/lib/modules"
+            mkdir -p "${MOD_DIR}"
+            if [ -d "out" ]; then
+                find out -name "*.ko" -type f -exec cp {} "${MOD_DIR}/" \;
+                echo "📦 Packed $(ls ${MOD_DIR} | wc -l) kernel modules."
+            fi
+          fi
+
+          # 7. 修复权限
+          chmod -R 755 "${ZIP_DIR}/META-INF"
+          chmod 755 "${ZIP_DIR}/anykernel.sh"
+
+          # 8. 打包
+          cd "${ZIP_DIR}"
+          zip -r9 "${GITHUB_WORKSPACE}/${DEVICE_CODENAME}-${ROM_TEXT}-${TIME}-Ak3.zip" *
+          
+          echo "PACK_NAME=${DEVICE_CODENAME}-${ROM_TEXT}-${TIME}-Ak3.zip" >> "${GITHUB_ENV}"
+          echo "✅ Package created successfully."
+
+      - name: 🚀 Auto Upload To Github Release
+        if: env.PACK_METHOD == 'Anykernel3'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: Star-HyperA16-Kernel-${{ github.run_number }}
+          name: "Xiaomi 11 Ultra Star HyperOS A16 NonGKI Kernel #${{ github.run_number }}"
+          body: |
+            ## Xiaomi 11 Ultra Star HyperOS A16 Kernel
+            - Adapted for HyperOS A16
+            - xxksu Syscall Hook
+            - NonGKI Format
+            - Clang 20.0.0git
+          files: ${{ env.PACK_NAME }}
+          draft: false
+          prerelease: false
+          overwrite_files: true
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
