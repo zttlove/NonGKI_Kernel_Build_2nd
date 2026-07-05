@@ -125,17 +125,7 @@ jobs:
           set -euo pipefail
           cd ${GITHUB_WORKSPACE}/device_kernel
 
-      - name: Inject /dev/ksu fix script
-        run: |
-          set -euo pipefail
-          AK3=${GITHUB_WORKSPACE}/Anykernel3/META-INF/com/google/android/init
-          mkdir -p $AK3
-          echo '#!/system/bin/sh' > $AK3/99_fix_ksu_dev.sh
-          echo 'sleep 2' >> $AK3/99_fix_ksu_dev.sh
-          echo 'while [ ! -c /dev/ksu ]; do sleep 0.1; done' >> $AK3/99_fix_ksu_dev.sh
-          echo 'chmod 666 /dev/ksu' >> $AK3/99_fix_ksu_dev.sh
-          echo 'chcon u:object_r:kernel_su_file:s0 /dev/ksu' >> $AK3/99_fix_ksu_dev.sh
-          chmod +x $AK3/99_fix_ksu_dev.sh
+      
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process1
