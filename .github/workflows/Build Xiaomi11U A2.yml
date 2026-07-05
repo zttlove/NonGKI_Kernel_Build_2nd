@@ -108,31 +108,7 @@ jobs:
 
       
 
-      - name: Disable all susfs init functions for debug
-        run: |
-          set -euo pipefail
-          cd ${GITHUB_WORKSPACE}/device_kernel
-          sed -i "s#^static int __init susfs_#//static int __init susfs_#" fs/susfs.c
-          sed -i "s#^module_init(susfs_#//module_init(susfs_#" fs/susfs.c
-          sed -i "s#early_initcall(susfs_#//early_initcall(susfs_#" fs/susfs.c
-          sed -i "s#core_initcall(susfs_#//core_initcall(susfs_#" fs/susfs.c
-          sed -i "s#postcore_initcall(susfs_#//postcore_initcall(susfs_#" fs/susfs.c
-
-      - name: Fix strncpy function name error
-        run: |
-          set -euo pipefail
-          cd ${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu
-          sed -i "s#strncpy_from_user_nofault#__strncpy_from_user_nofault#g" sulog/event.c
-          sed -i "s#ksu___strncpy_from_user_nofault#ksu_strncpy_from_user_nofault#g" sulog/event.c
-          
-      - name: Comment broken susfs hook calls (fix link & bootloop)
-        run: |
-          set -euo pipefail
-          cd ${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu/runtime
-          sed -i "s#ksu_selinux_hide_handle_post_fs_data();#//ksu_selinux_hide_handle_post_fs_data();#" ksud.c
-          sed -i "s#ksu_selinux_hide_handle_second_stage();#//ksu_selinux_hide_handle_second_stage();#" ksud.c
-          sed -i '/#include <linux\/susfs.h>/d' ksud.c
-          sed -i '/void ksu_selinux_hide_handle/d' ksud.c
+      
 
 
       - name: 🔗 Patch for no-kprobe
