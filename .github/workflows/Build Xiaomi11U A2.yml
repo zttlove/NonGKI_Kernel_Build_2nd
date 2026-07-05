@@ -97,8 +97,11 @@ jobs:
       - name: ⚙️ Get necessary tools
         uses: ./.github/workflows/build-ready1
 
-      - name: 🪝 Patch Kernel of SUSFS
-        uses: ./.github/workflows/patch-susfs1
+      - name: Clean leftover patch directory
+        run: |
+          set -euo pipefail
+          cd ${GITHUB_WORKSPACE}/device_kernel
+          rm -rf NonGKI_Kernel_Patches
 
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
