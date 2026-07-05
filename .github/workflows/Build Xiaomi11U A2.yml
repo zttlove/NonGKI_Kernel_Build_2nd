@@ -99,27 +99,33 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
         
-      - name: 🛠️ Fix KSU implicit declaration SAFE VERSION
+      
+      - name: Add missing ksu selinux hook impl to susfs.c
         run: |
           set -euo pipefail
-          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu/runtime"
+          cd ${GITHUB_WORKSPACE}/device_kernel
+          # 追加实现到fs/sus.c末尾
+          cat >> fs/susfs.c <<'EOF'
 
-          # 清理历史垃圾
-          sed -i '/void ksu_selinux_hide_handle_post_fs_data(void);/d' ksud.c
-          sed -i '/void ksu_selinux_hide_handle_second_stage(void);/d' ksud.c
-          sed -i '/__attribute__((weak)) void ksu_selinux_hide_handle/,/$/d' ksud.c
-
-          # 安全重写文件头部，保留所有源码原样
+          #ifdef CONFIG_KSU_SUSFS
+          #include <linux/security.h>
+          void ksu_selinux_hide_handle_post_fs_data(void)
           {
-            printf "void ksu_selinux_hide_handle_post_fs_data(void);\n"
-            printf "void ksu_selinux_hide_handle_second_stage(void);\n"
-            cat ksud.c
-          } > ksud.c.tmp
-          mv ksud.c.tmp ksud.c
+          static_branch_enable(&susfs_is_avc_log_spoofing_enabled);
+          }
+          void ksu_selinux_hide_handle_second_stage(void)
+          {
+          WRITE_ONCE(susfs_hide_sus_mnts_for_non_su_procs, true);
+          }
+          #endif
+          EOF
+          # 头文件添加函数声明
+          sed -i '$a\
+          #ifdef CONFIG_KSU_SUSFS\
+          void ksu_selinux_hide_handle_post_fs_data(void);\
+          void ksu_selinux_hide_handle_second_stage(void);\
+          #endif' include/linux/susfs.h
 
-          cd ..
-          sed -i 's/\bstrncpy_from_user_nofault\b/__strncpy_from_user_nofault/g' sulog/event.c
-          sed -i '132s/long copied;/long copied = 0;/' sulog/event.c
 
 
       - name: 🔗 Patch for no-kprobe
