@@ -100,57 +100,39 @@ jobs:
         uses: ./.github/workflows/patch-susfs1
         
       
-      - name: Fix strncpy_from_user_nofault implicit error
+      - name: Fix strncpy function error
         run: |
-           set -euo pipefail
-           cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
-           sed -i s/strncpy_from_user_nofault/__strncpy_from_user_nofault/g sulog/event.c
-           sed -i s/ksu___strncpy_from_user_nofault/ksu_strncpy_from_user_nofault/g sulog/event.c
-           # 彻底注释危险调用，消除undefined符号、杜绝开机循环
-      - name: Comment broken susfs selinux hook calls
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
+          sed -i s/strncpy_from_user_nofault/__strncpy_from_user_nofault/g sulog/event.c
+          sed -i s/ksu___strncpy_from_user_nofault/ksu_strncpy_from_user_nofault/g sulog/event.c
+
+      - name: Comment broken susfs hook calls (fix bootloop + link error)
         run: |
-           set -euo pipefail
-           cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu/runtime"
-           # 注释两处调用，不再依赖不存在的函数
-           sed -i s/^[[:space:]]*ksu_selinux_hide_handle_post_fs_data();/\/\/&/ ksud.c
-           sed -i s/^[[:space:]]*ksu_selinux_hide_handle_second_stage();/\/\/&/ ksud.c
-           # 清理无用头文件与声明
-           sed -i '/void ksu_selinux_hide_handle/d' ksud.c
-           sed -i '/#include <linux\/susfs.h>/d' ksud.c(void);' ksud.c
-
-
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu/runtime"
+          sed -i s/^[[:space:]]*ksu_selinux_hide_handle_post_fs_data();/\/\/&/ ksud.c
+          sed -i s/^[[:space:]]*ksu_selinux_hide_handle_second_stage();/\/\/&/ ksud.c
+          sed -i '/#include <linux\/susfs.h>/d' ksud.c
+          sed -i '/void ksu_selinux_hide_handle/d' ksud.c
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
 
       - name: 🪛 Extra Kernel Options
         run: |
-         set -euo pipefail
-         cd "$GITHUB_WORKSPACE/device_kernel"
-         # 【CRITICAL】DO NOT MODIFY CONFIG_SECURITY_SELINUX !
-         # 不要加任何 CONFIG_SECURITY_SELINUX=n 相关代码
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/device_kernel"
+          # DO NOT SET CONFIG_SECURITY_SELINUX=n
 
-         # ========== 新增：注入开机脚本修复/dev/ksu上下文 ==========
-      - name: 🛠️ Inject boot script fix /dev/ksu selinux context
+      - name: Inject ksu dev fix script
         run: |
           set -euo pipefail
-          AK3_DIR="${GITHUB_WORKSPACE}/Anykernel3"
-          mkdir -p "${AK3_DIR}/META-INF/com/google/android/init"
-          cat > "${AK3_DIR}/META-INF/com/google/android/init/99_fix_ksu_dev.sh" <<'EOF'
-          #!/system/bin/sh
-          (
-          sleep 2
-          while [ ! -c /dev/ksu ]; do
-          sleep 0.1
-          done
-          chmod 666 /dev/ksu
-          chcon u:object_r:kernel_su_file:s0 /dev/ksu
-          )&
-          EOF
-          chmod +x "${AK3_DIR}/META-INF/com/google/android/init/99_fix_ksu_dev.sh"
-
-          # 下面再放 pack-anykernel3
-
+          AK3="${GITHUB_WORKSPACE}/Anykernel3/META-INF/com/google/android/init"
+          mkdir -p $AK3
+          echo '#!/system/bin/sh' > $AK3/99_fix_ksu_dev.sh
+          echo '(sleep 2; while [ ! -c /dev/ksu ]; do sleep 0.1; done; chmod 666 /dev/ksu; chcon u:object_r:kernel_su_file:s0 /dev/ksu;)&' >> $AK3/99_fix_ksu_dev.sh
+          chmod +x $AK3/99_fix_ksu_dev.sh
       
         
           
