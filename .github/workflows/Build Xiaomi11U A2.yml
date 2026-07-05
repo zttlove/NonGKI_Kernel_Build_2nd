@@ -99,33 +99,30 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
         
-      - name: 🛠️ Clean old garbage & add selinux stub correctly
+      - name: 🛠️ Fix KSU selinux function errors
         run: |
           set -euo pipefail
           cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu/runtime"
-          # 删除之前追加到文件尾部所有相关垃圾代码
-          sed -i '/__attribute__((weak)) ksu_selinux_hide_handle/,/$/d' ksud.c
-          sed -i '/void ksu_selinux_hide_handle_post_fs_data(void);/d' ksud.c
-          sed -i '/void ksu_selinux_hide_handle_second_stage(void);/d' ksud.c
-          sed -i '/^#include[[:space:]]*$/d' ksud.c
 
-           # 在第一个#include之后插入函数原型（全局头部）
-           if ! grep -q "void ksu_selinux_hide_handle_post_fs_data(void);" ksud.c; then
-           sed -i '0,/^#include/{s//&\
-           void ksu_selinux_hide_handle_post_fs_data(void);\
-           void ksu_selinux_hide_handle_second_stage(void);\
-           /}' ksud.c
-           fi
+          # 1. 在文件最顶部强制插入函数原型声明（确保在任何调用之前）
+          if ! grep -q "void ksu_selinux_hide_handle_post_fs_data(void);" ksud.c; then
+          sed -i '1i\void ksu_selinux_hide_handle_post_fs_data(void);\nvoid ksu_selinux_hide_handle_second_stage(void);' ksud.c
+          fi
 
-           # 文件末尾追加weak实现
-           echo "" >> ksud.c
-           echo "#include <linux/kernel.h>" >> ksud.c
-           echo "__attribute__((weak)) void ksu_selinux_hide_handle_post_fs_data(void){}" >> ksud.c
-           echo "__attribute__((weak)) void ksu_selinux_hide_handle_second_stage(void){}" >> ksud.c
+          # 2. 在文件末尾追加 weak 空实现（防止链接报错）
+          if ! grep -q "__attribute__((weak)) void ksu_selinux_hide_handle_post_fs_data" ksud.c; then
+          echo "" >> ksud.c
+          echo "__attribute__((weak)) void ksu_selinux_hide_handle_post_fs_data(void){}" >> ksud.c
+          echo "__attribute__((weak)) void ksu_selinux_hide_handle_second_stage(void){}" >> ksud.c
+          fi
 
-           cd ..
-           sed -i 's/\bstrncpy_from_user_nofault\b/__strncpy_from_user_nofault/g' sulog/event.c
-           sed -i '132s/long copied;/long copied = 0;/' sulog/event.c
+          cd ..
+          # strncpy兼容修复
+          sed -i 's/\bstrncpy_from_user_nofault\b/__strncpy_from_user_nofault/g' sulog/event.c
+          sed -i '132s/long copied;/long copied = 0;/' sulog/event.c
+
+          echo "✅ 已将函数原型移至文件最顶部，彻底解决隐式声明和类型冲突错误"
+
 
 
       - name: 🔗 Patch for no-kprobe
