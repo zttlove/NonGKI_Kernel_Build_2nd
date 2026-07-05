@@ -99,20 +99,23 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
         
-      - name: 🛠️ Fix undefined selinux symbol (STUB inside ksud.c, no sub Makefile)
+      - name: 🛠️ Fix implicit declaration + undefined selinux functions
         run: |
           set -euo pipefail
           cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
 
-          # 1. 先清理旧修改：恢复ksud.c取消注释那两行关键调用（必须！保证/dev/ksu初始化流程不断）
+          # 1. 确保ksud.c里的两处调用没有被注释
           sed -i '54s/^\/\///' runtime/ksud.c
           sed -i '214s/^\/\///' runtime/ksud.c
 
-          # 2. 在ksud.c文件最顶部加入空桩函数，解决链接undefined报错
-          # 先判断是否已经存在stub定义，避免重复插入
+          # 2. 在文件头部同时添加【函数声明 + weak空实现】
           if ! grep -q "ksu_selinux_hide_handle_post_fs_data" runtime/ksud.c; then
           sed -i '1i\
           #include <linux/kernel.h>\
+          // Function prototype\
+          void ksu_selinux_hide_handle_post_fs_data(void);\
+          void ksu_selinux_hide_handle_second_stage(void);\
+          // Weak empty stub implementation\
           void __attribute__((weak)) ksu_selinux_hide_handle_post_fs_data(void)\
           {\
           }\
@@ -121,11 +124,12 @@ jobs:
           }' runtime/ksud.c
           fi
 
-          # 3. 5.4内核 strncpy_from_user_nofault 兼容修复不变
+          # 3. 5.4内核 strncpy_from_user_nofault 兼容修复
           sed -i 's/\bstrncpy_from_user_nofault\b/__strncpy_from_user_nofault/g' sulog/event.c
           sed -i '132s/long copied;/long copied = 0;/' sulog/event.c
+   
+          echo "✅ 已添加函数声明+weak空桩，解决implicit declaration与undefined symbol"
 
-          echo "✅ 使用weak弱符号空桩函数，无需selinux子目录Makefile"
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
