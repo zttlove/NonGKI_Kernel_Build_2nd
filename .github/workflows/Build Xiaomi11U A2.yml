@@ -99,32 +99,32 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
         
-      - name: 🛠️ Fix selinux function compile error
+      - name: 🛠️ Fix KSU selinux function errors
         run: |
           set -euo pipefail
-          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
+          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu/runtime"
 
-          # 1. 确保调用行没有被注释
-          sed -i '54s/^\/\///' runtime/ksud.c
-          sed -i '214s/^\/\///' runtime/ksud.c
+           # 1. 先追加weak空实现到文件末尾（用echo，无sed多行坑）
+           if ! grep -q "__attribute__((weak)) void ksu_selinux_hide_handle_post_fs_data" ksud.c; then
+           echo "" >> ksud.c
+           echo "#include <linux/kernel.h>" >> ksud.c
+           echo "__attribute__((weak)) void ksu_selinux_hide_handle_post_fs_data(void){}" >> ksud.c
+           echo "__attribute__((weak)) void ksu_selinux_hide_handle_second_stage(void){}" >> ksud.c
+           fi
 
-          # 2. 在调用前插入extern声明（解决 implicit declaration）
-          grep -q "extern void ksu_selinux_hide_handle_post_fs_data" runtime/ksud.c || sed -i '53iextern void ksu_selinux_hide_handle_post_fs_data(void);' runtime/ksud.c
-          grep -q "extern void ksu_selinux_hide_handle_second_stage" runtime/ksud.c || sed -i '213iextern void ksu_selinux_hide_handle_second_stage(void);' runtime/ksud.c
+           # 2. 在第一个#include行之后插入函数原型（不依赖行号！！！）
+           if ! grep -q "void ksu_selinux_hide_handle_post_fs_data(void);" ksud.c; then
+           sed -i '0,/^#include/s//&\
+           void ksu_selinux_hide_handle_post_fs_data(void);\
+           void ksu_selinux_hide_handle_second_stage(void);/' ksud.c
+           fi
 
-          # 3. 使用echo >> 追加weak空函数，不再用sed多行追加
-          if ! grep -q "__attribute__((weak)) ksu_selinux_hide_handle_post_fs_data" runtime/ksud.c; then
-          echo "" >> runtime/ksud.c
-          echo "#include <linux/kernel.h>" >> runtime/ksud.c
-          echo "__attribute__((weak)) void ksu_selinux_hide_handle_post_fs_data(void){}" >> runtime/ksud.c
-          echo "__attribute__((weak)) void ksu_selinux_hide_handle_second_stage(void){}" >> runtime/ksud.c
-          fi
+           cd ..
+           # strncpy兼容修复
+           sed -i 's/\bstrncpy_from_user_nofault\b/__strncpy_from_user_nofault/g' sulog/event.c
+           sed -i '132s/long copied;/long copied = 0;/' sulog/event.c
 
-          # 4. strncpy兼容修复
-          sed -i 's/\bstrncpy_from_user_nofault\b/__strncpy_from_user_nofault/g' sulog/event.c
-          sed -i '132s/long copied;/long copied = 0;/' sulog/event.c
-
-          echo "✅ Done, no multi-line sed / EOF"
+           echo "✅ 原型放在文件头include之后，不在函数内部，彻底解决语法错误"
 
 
       - name: 🔗 Patch for no-kprobe
