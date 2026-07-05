@@ -29,7 +29,7 @@ env:
   DEFCONFIG_ORIGIN_IMAGE: ""
   DEFCONFIG_FROM_BOOT: false
 
-  KERNELSU_SOURCE: ""
+  KERNELSU_SOURCE: "https://github.com/zttlove/KageSU.git"
   KERNELSU_BRANCH: ""
   KERNELSU_AUTO_GET: "true"
   KERNELSU_AUTO_FORK: "sukisu" # xxksu, rsuntk, next, resukisu and sukisu
