@@ -99,29 +99,12 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
         
-      - name: 🛠️ Fix KSU selinux function errors
+      - name: 🛠️ strncpy_from_user_nofault API兼容修复
         run: |
           set -euo pipefail
-          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu/runtime"
-
-          # 1. 在文件最顶部强制插入函数原型声明（确保在任何调用之前）
-          if ! grep -q "void ksu_selinux_hide_handle_post_fs_data(void);" ksud.c; then
-          sed -i '1i\void ksu_selinux_hide_handle_post_fs_data(void);\nvoid ksu_selinux_hide_handle_second_stage(void);' ksud.c
-          fi
-
-          # 2. 在文件末尾追加 weak 空实现（防止链接报错）
-          if ! grep -q "__attribute__((weak)) void ksu_selinux_hide_handle_post_fs_data" ksud.c; then
-          echo "" >> ksud.c
-          echo "__attribute__((weak)) void ksu_selinux_hide_handle_post_fs_data(void){}" >> ksud.c
-          echo "__attribute__((weak)) void ksu_selinux_hide_handle_second_stage(void){}" >> ksud.c
-          fi
-
-          cd ..
-          # strncpy兼容修复
+          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
           sed -i 's/\bstrncpy_from_user_nofault\b/__strncpy_from_user_nofault/g' sulog/event.c
           sed -i '132s/long copied;/long copied = 0;/' sulog/event.c
-
-          echo "✅ 已将函数原型移至文件最顶部，彻底解决隐式声明和类型冲突错误"
 
 
 
