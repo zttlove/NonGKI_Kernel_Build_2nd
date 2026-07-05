@@ -99,42 +99,24 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
         
-      - name: Add ksu selinux hook implementation to fs/susfs.c
-        run: |
-          set -euo pipefail
-          cd "${GITHUB_WORKSPACE}/device_kernel"
-          echo "" >> fs/susfs.c
-          echo "#ifdef CONFIG_KSU_SUSFS" >> fs/susfs.c
-          echo "void ksu_selinux_hide_handle_post_fs_data(void)" >> fs/susfs.c
-          echo "{" >> fs/susfs.c
-          echo "    static_branch_enable(&susfs_is_avc_log_spoofing_enabled);" >> fs/susfs.c
-          echo "}" >> fs/susfs.c
-          echo "void ksu_selinux_hide_handle_second_stage(void)" >> fs/susfs.c
-          echo "{" >> fs/susfs.c
-          echo "    WRITE_ONCE(susfs_hide_sus_mnts_for_non_su_procs, true);" >> fs/susfs.c
-          echo "}" >> fs/susfs.c
-          echo "#endif" >> fs/susfs.c
-        
+      
       - name: Fix strncpy_from_user_nofault implicit error
         run: |
-          set -euo pipefail
-          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
-          sed -i 's/strncpy_from_user_nofault/__strncpy_from_user_nofault/g' sulog/event.c
-          sed -i 's/ksu___strncpy_from_user_nofault/ksu_strncpy_from_user_nofault/g' sulog/event.ct/ksu_strncpy_from_user_nofault/g' sulog/event.c
-          
-      - name: Fix ksu_selinux_hide implicit declaration
+           set -euo pipefail
+           cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
+           sed -i s/strncpy_from_user_nofault/__strncpy_from_user_nofault/g sulog/event.c
+           sed -i s/ksu___strncpy_from_user_nofault/ksu_strncpy_from_user_nofault/g sulog/event.c
+           # 彻底注释危险调用，消除undefined符号、杜绝开机循环
+      - name: Comment broken susfs selinux hook calls
         run: |
-          set -euo pipefail
-          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu/runtime"
-          # 先清理旧声明防止重复
-          sed -i '/void ksu_selinux_hide_handle/d' ksud.c
-          sed -i '#include <linux/susfs.h>/d' ksud.c
-          # 在文件第1个#include下一行插入头文件，不用匹配替换
-          sed -i '1i// SUSFS SELinux hook header' ksud.c
-          sed -i '2i#include <linux/susfs.h>' ksud.c
-          # 再追加函数原型，单独两行插入
-          sed -i '3ivoid ksu_selinux_hide_handle_post_fs_data(void);' ksud.c
-          sed -i '4ivoid ksu_selinux_hide_handle_second_stage(void);' ksud.c
+           set -euo pipefail
+           cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu/runtime"
+           # 注释两处调用，不再依赖不存在的函数
+           sed -i s/^[[:space:]]*ksu_selinux_hide_handle_post_fs_data();/\/\/&/ ksud.c
+           sed -i s/^[[:space:]]*ksu_selinux_hide_handle_second_stage();/\/\/&/ ksud.c
+           # 清理无用头文件与声明
+           sed -i '/void ksu_selinux_hide_handle/d' ksud.c
+           sed -i '/#include <linux\/susfs.h>/d' ksud.c(void);' ksud.c
 
 
 
