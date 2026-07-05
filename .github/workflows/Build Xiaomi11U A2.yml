@@ -104,19 +104,23 @@ jobs:
         uses: ./.github/workflows/patch-susfs1
 
       
+
       - name: Disable all susfs init functions for debug
         run: |
           set -euo pipefail
           cd ${GITHUB_WORKSPACE}/device_kernel
-          sed -i '/^static int __init susfs_/s/^/\/\//' fs/susfs.c
-          sed -i '/^module_init(susfs_/s/^/\/\//' fs/susfs.c
+          sed -i "s#^static int __init susfs_#//static int __init susfs_#" fs/susfs.c
+          sed -i "s#^module_init(susfs_#//module_init(susfs_#" fs/susfs.c
+          sed -i "s#early_initcall(susfs_#//early_initcall(susfs_#" fs/susfs.c
+          sed -i "s#core_initcall(susfs_#//core_initcall(susfs_#" fs/susfs.c
+          sed -i "s#postcore_initcall(susfs_#//postcore_initcall(susfs_#" fs/susfs.c
 
       - name: Fix strncpy function name error
         run: |
           set -euo pipefail
           cd ${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu
-          sed -i s/strncpy_from_user_nofault/__strncpy_from_user_nofault/g sulog/event.c
-          sed -i s/ksu___strncpy_from_user_nofault/ksu_strncpy_from_user_nofault/g sulog/event.c
+          sed -i "s#strncpy_from_user_nofault#__strncpy_from_user_nofault#g" sulog/event.c
+          sed -i "s#ksu___strncpy_from_user_nofault#ksu_strncpy_from_user_nofault#g" sulog/event.c
           
       - name: Comment broken susfs hook calls (fix link & bootloop)
         run: |
