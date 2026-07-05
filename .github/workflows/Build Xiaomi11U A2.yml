@@ -99,13 +99,28 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
         
-      
       - name: Fix strncpy_from_user_nofault implicit error
         run: |
-          set -euo pipefail
-          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
-          sed -i 's/strncpy_from_user_nofault/__strncpy_from_user_nofault/g' sulog/event.c
-
+           set -euo pipefail
+           cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
+           # 修正两处不匹配函数名：旧strncpy + 多下划线ksu___
+           sed -i 's/strncpy_from_user_nofault/__strncpy_from_user_nofault/g' sulog/event.c
+           sed -i 's/ksu___strncpy_from_user_nofault/ksu_strncpy_from_user_nofault/g' sulog/event.c
+          
+      - name: Fix ksu_selinux_hide implicit declaration
+        run: |
+           set -euo pipefail
+           cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu/runtime"
+           # 不存在则引入susfs头文件
+           if ! grep -q "#include <linux/susfs.h>" ksud.c; then
+           sed -i '0,/^#include/s//&\n#include <linux/susfs.h>/' ksud.c
+           fi
+           # 兜底添加函数原型，避免宏关闭头文件声明失效
+           if ! grep -q "void ksu_selinux_hide_handle_post_fs_data(void);" ksud.c; then
+           sed -i '/#include <linux/susfs.h>/a\
+           void ksu_selinux_hide_handle_post_fs_data(void);\
+           void ksu_selinux_hide_handle_second_stage(void);' ksud.c
+           fi
 
 
       - name: 🔗 Patch for no-kprobe
