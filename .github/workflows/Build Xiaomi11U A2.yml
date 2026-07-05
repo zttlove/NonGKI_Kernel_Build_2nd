@@ -99,6 +99,22 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
         
+      - name: Add ksu selinux hook implementation to fs/susfs.c
+        run: |
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}/device_kernel"
+          echo "" >> fs/susfs.c
+          echo "#ifdef CONFIG_KSU_SUSFS" >> fs/susfs.c
+          echo "void ksu_selinux_hide_handle_post_fs_data(void)" >> fs/susfs.c
+          echo "{" >> fs/susfs.c
+          echo "    static_branch_enable(&susfs_is_avc_log_spoofing_enabled);" >> fs/susfs.c
+          echo "}" >> fs/susfs.c
+          echo "void ksu_selinux_hide_handle_second_stage(void)" >> fs/susfs.c
+          echo "{" >> fs/susfs.c
+          echo "    WRITE_ONCE(susfs_hide_sus_mnts_for_non_su_procs, true);" >> fs/susfs.c
+          echo "}" >> fs/susfs.c
+          echo "#endif" >> fs/susfs.c
+        
       - name: Fix strncpy_from_user_nofault implicit error
         run: |
            set -euo pipefail
