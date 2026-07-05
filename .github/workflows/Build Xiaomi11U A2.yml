@@ -109,18 +109,18 @@ jobs:
           
       - name: Fix ksu_selinux_hide implicit declaration
         run: |
-           set -euo pipefail
-           cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu/runtime"
-           # 不存在则引入susfs头文件
-           if ! grep -q "#include <linux/susfs.h>" ksud.c; then
-           sed -i '0,/^#include/s//&\n#include <linux/susfs.h>/' ksud.c
-           fi
-           # 兜底添加函数原型，避免宏关闭头文件声明失效
-           if ! grep -q "void ksu_selinux_hide_handle_post_fs_data(void);" ksud.c; then
-           sed -i '/#include <linux/susfs.h>/a\
-           void ksu_selinux_hide_handle_post_fs_data(void);\
-           void ksu_selinux_hide_handle_second_stage(void);' ksud.c
-           fi
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu/runtime"
+          # 先清理旧声明防止重复
+          sed -i '/void ksu_selinux_hide_handle/d' ksud.c
+          sed -i '#include <linux/susfs.h>/d' ksud.c
+          # 在文件第1个#include下一行插入头文件，不用匹配替换
+          sed -i '1i// SUSFS SELinux hook header' ksud.c
+          sed -i '2i#include <linux/susfs.h>' ksud.c
+          # 再追加函数原型，单独两行插入
+          sed -i '3ivoid ksu_selinux_hide_handle_post_fs_data(void);' ksud.c
+          sed -i '4ivoid ksu_selinux_hide_handle_second_stage(void);' ksud.c
+
 
 
       - name: 🔗 Patch for no-kprobe
