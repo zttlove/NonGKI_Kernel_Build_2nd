@@ -100,31 +100,11 @@ jobs:
         uses: ./.github/workflows/patch-susfs1
         
       
-      - name: Add missing ksu selinux hook impl to susfs.c
+      - name: Fix strncpy_from_user_nofault implicit error
         run: |
           set -euo pipefail
-          cd ${GITHUB_WORKSPACE}/device_kernel
-          # 追加实现到fs/sus.c末尾
-          cat >> fs/susfs.c <<'EOF'
-
-          #ifdef CONFIG_KSU_SUSFS
-          #include <linux/security.h>
-          void ksu_selinux_hide_handle_post_fs_data(void)
-          {
-          static_branch_enable(&susfs_is_avc_log_spoofing_enabled);
-          }
-          void ksu_selinux_hide_handle_second_stage(void)
-          {
-          WRITE_ONCE(susfs_hide_sus_mnts_for_non_su_procs, true);
-          }
-          #endif
-          EOF
-          # 头文件添加函数声明
-          sed -i '$a\
-          #ifdef CONFIG_KSU_SUSFS\
-          void ksu_selinux_hide_handle_post_fs_data(void);\
-          void ksu_selinux_hide_handle_second_stage(void);\
-          #endif' include/linux/susfs.h
+          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
+          sed -i 's/strncpy_from_user_nofault/__strncpy_from_user_nofault/g' sulog/event.c
 
 
 
