@@ -99,42 +99,33 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
         
-      - name: 🛠️ Fix undefined selinux symbol WITH EMPTY STUB IMPLEMENTATION
+      - name: 🛠️ Fix undefined selinux symbol (STUB inside ksud.c, no sub Makefile)
         run: |
           set -euo pipefail
           cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
 
-          # 1. 恢复ksud.c，取消注释那两行关键调用（最重要！）
+          # 1. 先清理旧修改：恢复ksud.c取消注释那两行关键调用（必须！保证/dev/ksu初始化流程不断）
           sed -i '54s/^\/\///' runtime/ksud.c
           sed -i '214s/^\/\///' runtime/ksud.c
 
-          # 2. 检查selinux目录，如果没有函数，则生成stub空实现
-          HAS_FUNC_POST=$(grep -l "ksu_selinux_hide_handle_post_fs_data" selinux/* || true)
-          HAS_FUNC_SECOND=$(grep -l "ksu_selinux_hide_handle_second_stage" selinux/* || true)
-
-          if [[ -z "$HAS_FUNC_POST" || -z "$HAS_FUNC_SECOND" ]]; then
-          # 写入空桩函数，保证链接通过，不打断初始化流程
-          cat >> selinux/stub_hide.c <<'EOF'
-          #include <linux/kernel.h>
-          void ksu_selinux_hide_handle_post_fs_data(void)
-          {
-          // empty stub
-          }
-          void ksu_selinux_hide_handle_second_stage(void)
-          {
-          // empty stub
-          }
-          EOF
-          # 将stub文件加入selinux/Makefile编译
-          if ! grep -q "stub_hide.o" selinux/Makefile; then
-          sed -i 's/obj-y +=/obj-y += stub_hide.o /' selinux/Makefile
-          fi
-          echo "✅ 生成selinux空桩函数，保留完整初始化调用链"
+          # 2. 在ksud.c文件最顶部加入空桩函数，解决链接undefined报错
+          # 先判断是否已经存在stub定义，避免重复插入
+          if ! grep -q "ksu_selinux_hide_handle_post_fs_data" runtime/ksud.c; then
+          sed -i '1i\
+          #include <linux/kernel.h>\
+          void __attribute__((weak)) ksu_selinux_hide_handle_post_fs_data(void)\
+          {\
+          }\
+          void __attribute__((weak)) ksu_selinux_hide_handle_second_stage(void)\
+          {\
+          }' runtime/ksud.c
           fi
 
-          # 3. 5.4内核 strncpy 兼容修复保持不变
+          # 3. 5.4内核 strncpy_from_user_nofault 兼容修复不变
           sed -i 's/\bstrncpy_from_user_nofault\b/__strncpy_from_user_nofault/g' sulog/event.c
           sed -i '132s/long copied;/long copied = 0;/' sulog/event.c
+
+          echo "✅ 使用weak弱符号空桩函数，无需selinux子目录Makefile"
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
