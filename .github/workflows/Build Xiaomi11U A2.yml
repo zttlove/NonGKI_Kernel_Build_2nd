@@ -100,6 +100,17 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
 
+      - name: 🪝 Patch Kernel of SUSFS
+        uses: ./.github/workflows/patch-susfs1
+
+      
+      - name: Disable all susfs init functions for debug
+        run: |
+          set -euo pipefail
+          cd ${GITHUB_WORKSPACE}/device_kernel
+          sed -i '/^static int __init susfs_/s/^/\/\//' fs/susfs.c
+          sed -i '/^module_init(susfs_/s/^/\/\//' fs/susfs.c
+
       - name: Fix strncpy function name error
         run: |
           set -euo pipefail
