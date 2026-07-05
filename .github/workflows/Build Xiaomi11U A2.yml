@@ -99,36 +99,41 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
         
-      - name: 🛠️ Fix implicit declaration + undefined selinux functions
+      - name: 🛠️ Fix implicit declaration selinux stub
         run: |
-          set -euo pipefail
-          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
+         set -euo pipefail
+         cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
 
-          # 1. 确保ksud.c里的两处调用没有被注释
-          sed -i '54s/^\/\///' runtime/ksud.c
-          sed -i '214s/^\/\///' runtime/ksud.c
+         # 1. 保证54/214行调用没有被注释
+         sed -i '54s/^\/\///' runtime/ksud.c
+         sed -i '214s/^\/\///' runtime/ksud.c
 
-          # 2. 在文件头部同时添加【函数声明 + weak空实现】
-          if ! grep -q "ksu_selinux_hide_handle_post_fs_data" runtime/ksud.c; then
-          sed -i '1i\
-          #include <linux/kernel.h>\
-          // Function prototype\
-          void ksu_selinux_hide_handle_post_fs_data(void);\
-          void ksu_selinux_hide_handle_second_stage(void);\
-          // Weak empty stub implementation\
-          void __attribute__((weak)) ksu_selinux_hide_handle_post_fs_data(void)\
-          {\
-          }\
-          void __attribute__((weak)) ksu_selinux_hide_handle_second_stage(void)\
-          {\
-          }' runtime/ksud.c
+         # 2. 在ksud.c第一个#include之后插入函数原型（最稳妥位置）
+         if ! grep -q "void ksu_selinux_hide_handle_post_fs_data" runtime/ksud.c; then
+         sed -i '/^#include/a\
+         void ksu_selinux_hide_handle_post_fs_data(void);\
+         void ksu_selinux_hide_handle_second_stage(void);' runtime/ksud.c
+         fi
+
+         # 3. 在文件末尾追加weak空实现
+         if ! grep -q "__attribute__((weak)) ksu_selinux_hide_handle_post_fs_data" runtime/ksud.c; then
+         cat >> runtime/ksud.c <<'EOF'
+
+          // Weak stub to fix undefined symbol
+          #include <linux/kernel.h>
+          __attribute__((weak)) void ksu_selinux_hide_handle_post_fs_data(void)
+          {
+          }
+          __attribute__((weak)) void ksu_selinux_hide_handle_second_stage(void)
+          {
+          }
+          EOF
           fi
 
-          # 3. 5.4内核 strncpy_from_user_nofault 兼容修复
+          # 4. strncpy兼容修复
           sed -i 's/\bstrncpy_from_user_nofault\b/__strncpy_from_user_nofault/g' sulog/event.c
           sed -i '132s/long copied;/long copied = 0;/' sulog/event.c
-   
-          echo "✅ 已添加函数声明+weak空桩，解决implicit declaration与undefined symbol"
+
 
 
       - name: 🔗 Patch for no-kprobe
