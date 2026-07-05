@@ -99,12 +99,27 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
         
-      - name: 🛠️ strncpy_from_user_nofault API兼容修复
+      - name: 🛠️ Fix KSU implicit declaration (ONLY prototype, NO weak stub!)
         run: |
           set -euo pipefail
-          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
+          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu/runtime"
+
+          # 先清理之前所有错误添加的weak函数和旧声明
+          sed -i '/void ksu_selinux_hide_handle_post_fs_data(void);/d' ksud.c
+          sed -i '/void ksu_selinux_hide_handle_second_stage(void);/d' ksud.c
+          sed -i '/__attribute__((weak)) void ksu_selinux_hide_handle/,/$/d' ksud.c
+
+          # 在 ksud.c 最顶部插入函数原型（只声明，没有函数体！！！）
+          sed -i '1i\void ksu_selinux_hide_handle_post_fs_data(void);' ksud.c
+          sed -i '1i\void ksu_selinux_hide_handle_second_stage(void);' ksud.c
+
+          cd ..
+          # strncpy兼容修复保留
           sed -i 's/\bstrncpy_from_user_nofault\b/__strncpy_from_user_nofault/g' sulog/event.c
           sed -i '132s/long copied;/long copied = 0;/' sulog/event.c
+
+          echo "✅ 仅添加函数原型，无weak空实现，依赖SUSFS提供真正实现"
+          = 0;/' sulog/event.c
 
 
 
