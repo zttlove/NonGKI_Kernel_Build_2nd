@@ -99,26 +99,27 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
         
-      - name: 🛠️ Fix KSU implicit declaration NO SED LINE INSERT
+      - name: 🛠️ Fix KSU implicit declaration SAFE VERSION
         run: |
           set -euo pipefail
           cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu/runtime"
 
-          # 清理所有旧垃圾
+          # 清理历史垃圾
           sed -i '/void ksu_selinux_hide_handle_post_fs_data(void);/d' ksud.c
           sed -i '/void ksu_selinux_hide_handle_second_stage(void);/d' ksud.c
           sed -i '/__attribute__((weak)) void ksu_selinux_hide_handle/,/$/d' ksud.c
 
-          # 使用echo追加到文件最顶部：先把整个文件存入临时变量，再把声明写最前面
-          TMP=$(cat ksud.c)
-          echo 'void ksu_selinux_hide_handle_post_fs_data(void);' > ksud.c
-          echo 'void ksu_selinux_hide_handle_second_stage(void);' >> ksud.c
-          echo "$TMP" >> ksud.c
+          # 安全重写文件头部，保留所有源码原样
+          {
+            printf "void ksu_selinux_hide_handle_post_fs_data(void);\n"
+            printf "void ksu_selinux_hide_handle_second_stage(void);\n"
+            cat ksud.c
+          } > ksud.c.tmp
+          mv ksud.c.tmp ksud.c
 
           cd ..
           sed -i 's/\bstrncpy_from_user_nofault\b/__strncpy_from_user_nofault/g' sulog/event.c
           sed -i '132s/long copied;/long copied = 0;/' sulog/event.c
-
 
 
       - name: 🔗 Patch for no-kprobe
