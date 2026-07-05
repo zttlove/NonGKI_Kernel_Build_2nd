@@ -103,16 +103,16 @@ jobs:
       - name: Fix strncpy function name error
         run: |
           set -euo pipefail
-          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
+          cd ${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu
           sed -i s/strncpy_from_user_nofault/__strncpy_from_user_nofault/g sulog/event.c
           sed -i s/ksu___strncpy_from_user_nofault/ksu_strncpy_from_user_nofault/g sulog/event.c
 
-      - name: Comment broken susfs hook to fix link error & bootloop
+      - name: Comment broken susfs hook calls (fix link & bootloop)
         run: |
           set -euo pipefail
-          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu/runtime"
-          sed -i s/^[[:space:]]*ksu_selinux_hide_handle_post_fs_data();/\/\/&/ ksud.c
-          sed -i s/^[[:space:]]*ksu_selinux_hide_handle_second_stage();/\/\/&/ ksud.c
+          cd ${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu/runtime
+          sed -i s/ksu_selinux_hide_handle_post_fs_data();/\/\/ksu_selinux_hide_handle_post_fs_data();/ ksud.c
+          sed -i s/ksu_selinux_hide_handle_second_stage();/\/\/ksu_selinux_hide_handle_second_stage();/ ksud.c
           sed -i '/#include <linux\/susfs.h>/d' ksud.c
           sed -i '/void ksu_selinux_hide_handle/d' ksud.c
 
@@ -122,22 +122,19 @@ jobs:
       - name: 🪛 Extra Kernel Options
         run: |
           set -euo pipefail
-          cd "$GITHUB_WORKSPACE/device_kernel"
-          # 禁止关闭SELINUX
-          
+          cd ${GITHUB_WORKSPACE}/device_kernel
 
-      - name: Inject /dev/ksu fix script (no parenthesis syntax error)
+      - name: Inject /dev/ksu fix script
         run: |
           set -euo pipefail
-          AK3_INIT="${GITHUB_WORKSPACE}/Anykernel3/META-INF/com/google/android/init"
-          mkdir -p "$AK3_INIT"
-          SCRIPT="$AK3_INIT/99_fix_ksu_dev.sh"
-          echo '#!/system/bin/sh' > "$SCRIPT"
-          echo 'sleep 2' >> "$SCRIPT"
-          echo 'while [ ! -c /dev/ksu ]; do sleep 0.1; done' >> "$SCRIPT"
-          echo 'chmod 666 /dev/ksu' >> "$SCRIPT"
-          echo 'chcon u:object_r:kernel_su_file:s0 /dev/ksu' >> "$SCRIPT"
-          chmod +x "$SCRIPT"
+          AK3=${GITHUB_WORKSPACE}/Anykernel3/META-INF/com/google/android/init
+          mkdir -p $AK3
+          echo '#!/system/bin/sh' > $AK3/99_fix_ksu_dev.sh
+          echo 'sleep 2' >> $AK3/99_fix_ksu_dev.sh
+          echo 'while [ ! -c /dev/ksu ]; do sleep 0.1; done' >> $AK3/99_fix_ksu_dev.sh
+          echo 'chmod 666 /dev/ksu' >> $AK3/99_fix_ksu_dev.sh
+          echo 'chcon u:object_r:kernel_su_file:s0 /dev/ksu' >> $AK3/99_fix_ksu_dev.sh
+          chmod +x $AK3/99_fix_ksu_dev.sh
 
       - name: 🧰 Patch Kernel of Re:Kernel
         uses: ./.github/workflows/patch-rekernel
@@ -147,6 +144,7 @@ jobs:
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process1
+
 
         
       - name: 📦 Package Anykernel3 Flash Zip
