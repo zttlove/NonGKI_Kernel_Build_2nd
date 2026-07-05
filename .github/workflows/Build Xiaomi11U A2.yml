@@ -99,41 +99,32 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
         
-      - name: 🛠️ Fix implicit declaration selinux stub (NO EOF HERE-DOC)
+      - name: 🛠️ Fix selinux function compile error
         run: |
           set -euo pipefail
           cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
 
-          # 1. 取消注释54、214行的函数调用
+          # 1. 确保调用行没有被注释
           sed -i '54s/^\/\///' runtime/ksud.c
           sed -i '214s/^\/\///' runtime/ksud.c
 
-          # 2. 在调用行前插入extern声明，彻底解决 implicit declaration
-          if ! grep -q "extern void ksu_selinux_hide_handle_post_fs_data" runtime/ksud.c; then
-          sed -i '53i\extern void ksu_selinux_hide_handle_post_fs_data(void);' runtime/ksud.c
-          fi
-          if ! grep -q "extern void ksu_selinux_hide_handle_second_stage" runtime/ksud.c; then
-          sed -i '213i\extern void ksu_selinux_hide_handle_second_stage(void);' runtime/ksud.c
-          fi
+          # 2. 在调用前插入extern声明（解决 implicit declaration）
+          grep -q "extern void ksu_selinux_hide_handle_post_fs_data" runtime/ksud.c || sed -i '53iextern void ksu_selinux_hide_handle_post_fs_data(void);' runtime/ksud.c
+          grep -q "extern void ksu_selinux_hide_handle_second_stage" runtime/ksud.c || sed -i '213iextern void ksu_selinux_hide_handle_second_stage(void);' runtime/ksud.c
 
-          # 3. 在文件末尾追加weak空函数实现，只用sed避免cat EOF
+          # 3. 使用echo >> 追加weak空函数，不再用sed多行追加
           if ! grep -q "__attribute__((weak)) ksu_selinux_hide_handle_post_fs_data" runtime/ksud.c; then
-          sed -i '$a\\
-          #include <linux/kernel.h>\
-          __attribute__((weak)) void ksu_selinux_hide_handle_post_fs_data(void)\
-          {\
-          }\
-          __attribute__((weak)) void ksu_selinux_hide_handle_second_stage(void)\
-          {\
-          }' runtime/ksud.c
+          echo "" >> runtime/ksud.c
+          echo "#include <linux/kernel.h>" >> runtime/ksud.c
+          echo "__attribute__((weak)) void ksu_selinux_hide_handle_post_fs_data(void){}" >> runtime/ksud.c
+          echo "__attribute__((weak)) void ksu_selinux_hide_handle_second_stage(void){}" >> runtime/ksud.c
           fi
 
-          # 4. strncpy_from_user_nofault兼容修复
+          # 4. strncpy兼容修复
           sed -i 's/\bstrncpy_from_user_nofault\b/__strncpy_from_user_nofault/g' sulog/event.c
           sed -i '132s/long copied;/long copied = 0;/' sulog/event.c
 
-          echo "✅ 使用sed追加，无EOF语法错误，已添加extern声明+weak桩函数"
-
+          echo "✅ Done, no multi-line sed / EOF"
 
 
       - name: 🔗 Patch for no-kprobe
