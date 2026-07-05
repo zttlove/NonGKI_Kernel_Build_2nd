@@ -99,32 +99,33 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
         
-      - name: 🛠️ Fix KSU selinux function errors
+      - name: 🛠️ Clean old garbage & add selinux stub correctly
         run: |
           set -euo pipefail
           cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu/runtime"
+          # 删除之前追加到文件尾部所有相关垃圾代码
+          sed -i '/__attribute__((weak)) ksu_selinux_hide_handle/,/$/d' ksud.c
+          sed -i '/void ksu_selinux_hide_handle_post_fs_data(void);/d' ksud.c
+          sed -i '/void ksu_selinux_hide_handle_second_stage(void);/d' ksud.c
+          sed -i '/^#include[[:space:]]*$/d' ksud.c
 
-           # 1. 先追加weak空实现到文件末尾（用echo，无sed多行坑）
-           if ! grep -q "__attribute__((weak)) void ksu_selinux_hide_handle_post_fs_data" ksud.c; then
+           # 在第一个#include之后插入函数原型（全局头部）
+           if ! grep -q "void ksu_selinux_hide_handle_post_fs_data(void);" ksud.c; then
+           sed -i '0,/^#include/{s//&\
+           void ksu_selinux_hide_handle_post_fs_data(void);\
+           void ksu_selinux_hide_handle_second_stage(void);\
+           /}' ksud.c
+           fi
+
+           # 文件末尾追加weak实现
            echo "" >> ksud.c
            echo "#include <linux/kernel.h>" >> ksud.c
            echo "__attribute__((weak)) void ksu_selinux_hide_handle_post_fs_data(void){}" >> ksud.c
            echo "__attribute__((weak)) void ksu_selinux_hide_handle_second_stage(void){}" >> ksud.c
-           fi
-
-           # 2. 在第一个#include行之后插入函数原型（不依赖行号！！！）
-           if ! grep -q "void ksu_selinux_hide_handle_post_fs_data(void);" ksud.c; then
-           sed -i '0,/^#include/s//&\
-           void ksu_selinux_hide_handle_post_fs_data(void);\
-           void ksu_selinux_hide_handle_second_stage(void);/' ksud.c
-           fi
 
            cd ..
-           # strncpy兼容修复
            sed -i 's/\bstrncpy_from_user_nofault\b/__strncpy_from_user_nofault/g' sulog/event.c
            sed -i '132s/long copied;/long copied = 0;/' sulog/event.c
-
-           echo "✅ 原型放在文件头include之后，不在函数内部，彻底解决语法错误"
 
 
       - name: 🔗 Patch for no-kprobe
