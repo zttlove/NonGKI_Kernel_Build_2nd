@@ -30,9 +30,9 @@ env:
   DEFCONFIG_FROM_BOOT: false
 
   KERNELSU_SOURCE: "https://github.com/zttlove/KageSU.git"
-  KERNELSU_BRANCH: ""
-  KERNELSU_AUTO_GET: "true"
-  KERNELSU_AUTO_FORK: "sukisu" # xxksu, rsuntk, next, resukisu and sukisu
+  KERNELSU_BRANCH: "susfs-nongki"
+  KERNELSU_AUTO_GET: "false"
+  KERNELSU_AUTO_FORK: "" # xxksu, rsuntk, next, resukisu and sukisu
 
   SUSFS_ENABLE: true
   SUSFS_FIXED: true
@@ -47,7 +47,7 @@ env:
   PYTHON_VERSION: "3"
   PACK_METHOD: "Anykernel3"
   PACK_KMODULES: "false"
-  KERNELSU_METHOD: "shell"
+  KERNELSU_METHOD: "only"
   KERNELSU_SUS_PATCH: "true"
 
   PATCHES_SOURCE: "JackA1ltman/NonGKI_Kernel_Patches"
