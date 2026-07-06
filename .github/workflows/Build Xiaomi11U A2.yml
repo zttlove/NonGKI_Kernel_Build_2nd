@@ -107,17 +107,21 @@ jobs:
         uses: ./.github/workflows/patch-susfs1
 
       
-      - name: Fix implicit declaration errors
+      - name: Fix all implicit declaration errors
         run: |
           set -euo pipefail
           cd ${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu
-          # 1. 注释SUSFS两个未定义函数调用
+          # 1. 注释两个不存在的 SUSFS hook 调用
           sed -i "s#ksu_selinux_hide_handle_post_fs_data();#//ksu_selinux_hide_handle_post_fs_data();#" runtime/ksud.c
           sed -i "s#ksu_selinux_hide_handle_second_stage();#//ksu_selinux_hide_handle_second_stage();#" runtime/ksud.c
-          # 2. strncpy_from_user_nofault → __strncpy_from_user_nofault
-          sed -i "s#strncpy_from_user_nofault#__strncpy_from_user_nofault#g" sulog/event.c
-          # 3. 删掉susfs头防止其它未定义符号
           sed -i '/#include <linux\/susfs.h>/d' runtime/ksud.c
+
+          # 2. strncpy_from_user_nofault -> __strncpy_from_user_nofault
+          sed -i "s#strncpy_from_user_nofault#__strncpy_from_user_nofault#g" sulog/event.c
+
+          # 3. ksu___strncpy_from_user_nofault → ksu_strncpy_from_user_nofault
+          sed -i "s#ksu___strncpy_from_user_nofault#ksu_strncpy_from_user_nofault#g" sulog/event.c
+
 
       
       - name: 🔗 Patch for no-kprobe
