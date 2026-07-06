@@ -123,6 +123,7 @@ jobs:
           # 3. ksu___strncpy_from_user_nofault → ksu_strncpy_from_user_nofault
           sed -i "s#ksu___strncpy_from_user_nofault#ksu_strncpy_from_user_nofault#g" sulog/event.c
 
+          sed -i 's/\(ksu_sulog_capture.*\)USER_ARG_NULL/\1*USER_ARG_NULL/g' sulog/event.c
 
       
       - name: 🔗 Patch for no-kprobe
