@@ -126,7 +126,7 @@ runs:
                 if [[ "${{ env.SUSFS_ENABLE }}" == "true" ]]; then
                     KERNELSU_BRANCH="builtin"
                 else
-                    KERNELSU_BRANCH="main"
+                    KERNELSU_BRANCH="builtin"
                 fi
             elif [[ "${{ env.KERNELSU_AUTO_FORK }}" == "next" ]]; then
                 KERNELSU_AUTHOR="KernelSU-Next"
