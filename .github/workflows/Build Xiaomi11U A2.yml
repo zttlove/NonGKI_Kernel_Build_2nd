@@ -34,8 +34,8 @@ env:
   KERNELSU_AUTO_GET: "true"
   KERNELSU_AUTO_FORK: "sukisu" # xxksu, rsuntk, next, resukisu and sukisu
 
-  SUSFS_ENABLE: false
-  SUSFS_FIXED: false
+  SUSFS_ENABLE: true
+  SUSFS_FIXED: true
 
   AK3_SOURCE: "https://github.com/osm0sis/Anykernel3.git"
   AK3_BRANCH: "master"
@@ -123,7 +123,7 @@ jobs:
           # 3. ksu___strncpy_from_user_nofault → ksu_strncpy_from_user_nofault
           sed -i "s#ksu___strncpy_from_user_nofault#ksu_strncpy_from_user_nofault#g" sulog/event.c
 
-          sed -i 's/\(ksu_sulog_capture.*\)USER_ARG_NULL/\1*USER_ARG_NULL/g' sulog/event.c
+          
 
       
       - name: 🔗 Patch for no-kprobe
