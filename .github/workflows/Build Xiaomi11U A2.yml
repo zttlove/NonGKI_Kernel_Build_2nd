@@ -105,24 +105,27 @@ jobs:
           KERNEL_ROOT=${GITHUB_WORKSPACE}/device_kernel
           cd "${KERNEL_ROOT}/drivers/kernelsu"
 
-          # 修复pgtable.h缺失
+          # 1. 移除5.4内核不存在的头文件 pgtable.h
           if [ -f feature/sucompat.c ]; then
             sed -i '/#include <linux\/pgtable.h>/d' feature/sucompat.c
+            # 修复sucompat.c内 strncpy_from_user_nofault 未声明报错
+            sed -i "s#strncpy_from_user_nofault#__strncpy_from_user_nofault#g" feature/sucompat.c
           fi
 
-          # 仅文件存在才修改ksud.c
+          # 2. 修复runtime/ksud.c SUSFS 未定义钩子（文件存在才执行）
           if [ -f runtime/ksud.c ]; then
             sed -i '/#include <linux\/susfs.h>/d' runtime/ksud.c
             sed -i "s#ksu_selinux_hide_handle_post_fs_data();#//ksu_selinux_hide_handle_post_fs_data();#" runtime/ksud.c
             sed -i "s#ksu_selinux_hide_handle_second_stage();#//ksu_selinux_hide_handle_second_stage();#" runtime/ksud.c
           fi
 
-          # 修复strncpy
+          # 3. 修复sulog/event.c 相关兼容报错
           if [ -f sulog/event.c ]; then
             sed -i "s#strncpy_from_user_nofault#__strncpy_from_user_nofault#g" sulog/event.c
             sed -i "s#ksu___strncpy_from_user_nofault#ksu_strncpy_from_user_nofault#g" sulog/event.c
             sed -i 's/\(ksu_sulog_capture.*\)USER_ARG_NULL/\1*USER_ARG_NULL/g' sulog/event.c
           fi
+
 
 
         
