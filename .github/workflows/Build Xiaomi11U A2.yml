@@ -99,7 +99,7 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
       
-      - name: Fix all implicit declaration errors
+       - name: Fix all implicit declaration errors
         run: |
           set -euo pipefail
           KERNEL_ROOT=${GITHUB_WORKSPACE}/device_kernel
@@ -111,14 +111,16 @@ jobs:
             sed -i "s#strncpy_from_user_nofault#strncpy_from_user#g" feature/sucompat.c
           fi
 
-          # ========== patch_memory.c 修复：仅注释nofault函数调用 ==========
+          # ========== patch_memory.c 修复 ==========
           if [ -f hook/arm64/patch_memory.c ]; then
+            # 注释150行不存在的nofault拷贝函数
             sed -i '150 s/^/\/\//' hook/arm64/patch_memory.c
+            # 将第136行 int ret; 修改为 int ret = 0; 初始化消除警告
+            sed -i '136 s/int ret;/int ret = 0;/' hook/arm64/patch_memory.c
           fi
 
           # ========== seccomp_cache.c 补充缺失宏定义 ==========
           if [ -f infra/seccomp_cache.c ]; then
-            # 文件开头插入arm64标准系统调用上限宏
             sed -i '1i\#define SECCOMP_ARCH_NATIVE_NR __NR_syscalls' infra/seccomp_cache.c
           fi
 
@@ -135,6 +137,7 @@ jobs:
             sed -i "s#ksu___strncpy_from_user_nofault#ksu_strncpy_from_user#g" sulog/event.c
             sed -i 's/\(ksu_sulog_capture.*\)USER_ARG_NULL/\1*USER_ARG_NULL/g' sulog/event.c
           fi
+
 
 
 
