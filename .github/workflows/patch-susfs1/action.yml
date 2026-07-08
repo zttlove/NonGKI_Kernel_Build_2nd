@@ -27,7 +27,8 @@ runs:
         shell: bash
         run: |
           cd $GITHUB_WORKSPACE/device_kernel
-
+          # 清除原有SUSFS相关config，避免重复/冲突
+          sed -i '/CONFIG_KSU_SUSFS/d' ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
           echo "CONFIG_KSU_SUSFS=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
           echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
           echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
