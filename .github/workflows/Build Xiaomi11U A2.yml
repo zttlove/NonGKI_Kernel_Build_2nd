@@ -100,7 +100,6 @@ jobs:
         uses: ./.github/workflows/patch-susfs1
       
       - name: Fix all implicit declaration errors
-            - name: Fix all implicit declaration errors
         run: |
           set -euo pipefail
           KERNEL_ROOT=${GITHUB_WORKSPACE}/device_kernel
