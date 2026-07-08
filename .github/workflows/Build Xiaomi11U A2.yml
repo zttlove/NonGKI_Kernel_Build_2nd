@@ -57,7 +57,7 @@ env:
   SUSFS_PATCH_FIXED: "susfs_fixed"
 
   REKERNEL_ENABLE: "false"
-  HOOK_METHOD: "syscall"
+  HOOK_METHOD: ""
   KERNEL_PATCH: "false"
 
   KPM_ENABLE: "false"
