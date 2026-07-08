@@ -100,6 +100,7 @@ jobs:
         uses: ./.github/workflows/patch-susfs1
       
       - name: Fix all implicit declaration errors
+            - name: Fix all implicit declaration errors
         run: |
           set -euo pipefail
           KERNEL_ROOT=${GITHUB_WORKSPACE}/device_kernel
@@ -124,8 +125,15 @@ jobs:
 
           # ========== pkg_observer.c fsnotify结构体兼容修复 ==========
           if [ -f manager/pkg_observer.c ]; then
-            # 注释不兼容的 handle_inode_event 初始化行
             sed -i '39 s/^/\/\//' manager/pkg_observer.c
+          fi
+
+          # ========== allowlist.c 新增修复 ==========
+          if [ -f policy/allowlist.c ]; then
+            # 1. TWA_RESUME 替换为5.4内核存在的 TWA_QUEUE
+            sed -i "s/TWA_RESUME/TWA_QUEUE/g" policy/allowlist.c
+            # 2. 插入sched.h 提供put_task_struct声明
+            grep -q "#include <linux/sched.h>" policy/allowlist.c || sed -i '1a\#include <linux/sched.h>' policy/allowlist.c
           fi
 
           # ========== runtime/ksud.c SUSFS钩子屏蔽 ==========
