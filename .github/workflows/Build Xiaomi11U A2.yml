@@ -113,15 +113,19 @@ jobs:
 
           # ========== patch_memory.c 修复 ==========
           if [ -f hook/arm64/patch_memory.c ]; then
-            # 注释150行不存在的nofault拷贝函数
             sed -i '150 s/^/\/\//' hook/arm64/patch_memory.c
-            # 将第136行 int ret; 修改为 int ret = 0; 初始化消除警告
             sed -i '136 s/int ret;/int ret = 0;/' hook/arm64/patch_memory.c
           fi
 
           # ========== seccomp_cache.c 补充缺失宏定义 ==========
           if [ -f infra/seccomp_cache.c ]; then
             sed -i '1i\#define SECCOMP_ARCH_NATIVE_NR __NR_syscalls' infra/seccomp_cache.c
+          fi
+
+          # ========== pkg_observer.c fsnotify结构体兼容修复 ==========
+          if [ -f manager/pkg_observer.c ]; then
+            # 注释不兼容的 handle_inode_event 初始化行
+            sed -i '39 s/^/\/\//' manager/pkg_observer.c
           fi
 
           # ========== runtime/ksud.c SUSFS钩子屏蔽 ==========
@@ -137,6 +141,7 @@ jobs:
             sed -i "s#ksu___strncpy_from_user_nofault#ksu_strncpy_from_user#g" sulog/event.c
             sed -i 's/\(ksu_sulog_capture.*\)USER_ARG_NULL/\1*USER_ARG_NULL/g' sulog/event.c
           fi
+
 
 
 
