@@ -111,10 +111,15 @@ jobs:
             sed -i "s#strncpy_from_user_nofault#strncpy_from_user#g" feature/sucompat.c
           fi
 
-          # ========== patch_memory.c 修复：仅注释函数调用，不新增ret定义 ==========
+          # ========== patch_memory.c 修复：仅注释nofault函数调用 ==========
           if [ -f hook/arm64/patch_memory.c ]; then
-            # 注释第150行 copy_to_kernel_nofault 调用
             sed -i '150 s/^/\/\//' hook/arm64/patch_memory.c
+          fi
+
+          # ========== seccomp_cache.c 补充缺失宏定义 ==========
+          if [ -f infra/seccomp_cache.c ]; then
+            # 文件开头插入arm64标准系统调用上限宏
+            sed -i '1i\#define SECCOMP_ARCH_NATIVE_NR __NR_syscalls' infra/seccomp_cache.c
           fi
 
           # ========== runtime/ksud.c SUSFS钩子屏蔽 ==========
@@ -130,6 +135,7 @@ jobs:
             sed -i "s#ksu___strncpy_from_user_nofault#ksu_strncpy_from_user#g" sulog/event.c
             sed -i 's/\(ksu_sulog_capture.*\)USER_ARG_NULL/\1*USER_ARG_NULL/g' sulog/event.c
           fi
+
 
 
 
