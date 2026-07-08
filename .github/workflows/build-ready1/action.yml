@@ -9,6 +9,15 @@ runs:
           cd $GITHUB_WORKSPACE
           git clone --recursive "${{ env.KERNEL_SOURCE }}" -b "${{ env.KERNEL_BRANCH }}" device_kernel --depth=1
 
+          if [[ -f "device_kernel/.gitmodules" ]]; then
+            cd device_kernel
+            git submodule init
+            git submodule update
+            cd ../
+            echo "[+] Detected GitModules."
+
+          fi
+
           # Get Kernel Version
 
           KERNEL_VERSION=$(head -n 3 $GITHUB_WORKSPACE/device_kernel/Makefile | grep -E 'VERSION|PATCHLEVEL' | awk '{print $3}' | paste -sd '.')
@@ -24,7 +33,8 @@ runs:
           if [[ -d "arch/arm64/configs" ]]; then
             echo "KERNEL_ARCH=arm64" >> $GITHUB_ENV
           else
-            echo "KERNEL_ARCH=arm" >> $GITHUB_ENV
+            echo "[-] Non-ARM64 Devies not supported!"
+            false
           fi
 
       - name: Get Packing Tools
@@ -34,20 +44,34 @@ runs:
 
           if [[ "${{ env.PACK_METHOD }}" == "Anykernel3" ]]; then
             cd $GITHUB_WORKSPACE/device_kernel
+
             if [[ -d "Anykernel3" ]]; then
-              echo "Found Anykernel3 in Kernel!"
+              echo "[+] Found Anykernel3 in Kernel!"
+
+            elif [[ "${{ env.AK3_SOURCE }}" == *"osm0sis/AnyKernel3.git" ]]; then
+              git clone "${{ env.AK3_SOURCE }}" -b "${{ env.AK3_BRANCH }}" Anykernel3
+              cd Anykernel3
+              git checkout dca9dc370838d919d56c1f59ec78b27a14a72c68
+              cd ../
+              echo "[+] Get Anykernel3 successfully!"
+
             else
               git clone "${{ env.AK3_SOURCE }}" -b "${{ env.AK3_BRANCH }}" Anykernel3 --depth=1
+
             fi
           elif [[ "${{ env.PACK_METHOD }}" == "MKBOOTIMG" ]] || [ "${{ env.DEFCONFIG_FROM_BOOT }}" == "true" ]; then
             cd $GITHUB_WORKSPACE
             git clone https://android.googlesource.com/platform/system/tools/mkbootimg $GITHUB_WORKSPACE/mkboottools -b main-kernel-build-2024 --depth=1
             ${{ env.CURLX }} ${{ env.BOOT_SOURCE }} $GITHUB_WORKSPACE/boot_source_${{ env.DEVICE_NAME }}.img
+            echo "[+] Get MKBOOTIMG successfully!"
             cd device_kernel
+
           else
-            echo "Need packing method! "
+            echo "[-] Need packing method! "
             false
+
           fi
+
           echo "PACK_METHOD=${{ env.PACK_METHOD }}" >> $GITHUB_ENV
 
       - name: Get DEFCONFIG
@@ -57,30 +81,21 @@ runs:
           cd $GITHUB_WORKSPACE/device_kernel
 
           if [[ -n "${{ env.DEFCONFIG_SOURCE }}" ]]; then
-            if [[ -d "device_kernel/arch/arm64/configs" ]]; then
-                ${{ env.CURLX }} ${{ env.DEFCONFIG_SOURCE }} device_kernel/arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
-            else
-                ${{ env.CURLX }} ${{ env.DEFCONFIG_SOURCE }} device_kernel/arch/arm/configs/${{ env.DEFCONFIG_NAME }}
-            fi
+            ${{ env.CURLX }} ${{ env.DEFCONFIG_SOURCE }} device_kernel/arch/"${{ env.KERNEL_ARCH }}"/configs/${{ env.DEFCONFIG_NAME }}
+
           elif [[ -z "${{ env.DEFCONFIG_ORIGIN_IMAGE }}" ]]; then
             if [[ "${{ env.DEFCONFIG_FROM_BOOT }}" == "true" ]]; then
                 if [[ -f "${{ env.BOOT_SOURCE }}" ]]; then
                     ${{ env.CURLX }} "${{ env.BOOT_SOURCE }}" $GITHUB_WORKSPACE/boot.img
                     $GITHUB_WORKSPACE/mkboottools/unpack_bootimg.py --boot_img $GITHUB_WORKSPACE/boot.img
                     mv $GITHUB_WORKSPACE/out/kernel $GITHUB_WORKSPACE/device_kernel/Image
-                    if [[ -d "device_kernel/arch/arm64/configs" ]]; then
-                        $GITHUB_WORKSPACE/device_kernel/scripts/extract-ikconfig $GITHUB_WORKSPACE/device_kernel/Image > $GITHUB_WORKSPACE/device_kernel/arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
-                    else
-                        $GITHUB_WORKSPACE/device_kernel/scripts/extract-ikconfig $GITHUB_WORKSPACE/device_kernel/Image > $GITHUB_WORKSPACE/device_kernel/arch/arm/configs/${{ env.DEFCONFIG_NAME }}
-                    fi
+                    $GITHUB_WORKSPACE/device_kernel/scripts/extract-ikconfig $GITHUB_WORKSPACE/device_kernel/Image > $GITHUB_WORKSPACE/device_kernel/arch/"${{ env.KERNEL_ARCH }}"/configs/${{ env.DEFCONFIG_NAME }}
+
                 fi
             else
                 ${{ env.CURLX }} "${{ env.DEFCONFIG_ORIGIN_IMAGE }}" $GITHUB_WORKSPACE/device_kernel/Image
-                if [[ -d "device_kernel/arch/arm64/configs" ]]; then
-                    $GITHUB_WORKSPACE/device_kernel/scripts/extract-ikconfig $GITHUB_WORKSPACE/device_kernel/Image > $GITHUB_WORKSPACE/device_kernel/arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
-                else
-                    $GITHUB_WORKSPACE/device_kernel/scripts/extract-ikconfig $GITHUB_WORKSPACE/device_kernel/Image > $GITHUB_WORKSPACE/device_kernel/arch/arm/configs/${{ env.DEFCONFIG_NAME }}
-                fi
+                $GITHUB_WORKSPACE/device_kernel/scripts/extract-ikconfig $GITHUB_WORKSPACE/device_kernel/Image > $GITHUB_WORKSPACE/device_kernel/arch/"${{ env.KERNEL_ARCH }}"/configs/${{ env.DEFCONFIG_NAME }}
+
             fi
           fi
 
@@ -104,7 +119,7 @@ runs:
                 KERNELSU_NAME="KernelSU"
                 KERNELSU_ORIGIN_BRANCH="master"
                 if [[ "${{ env.SUSFS_ENABLE }}" == "true" ]]; then
-                    KERNELSU_BRANCH="master"
+                    echo "${{ env.KERNELSU_AUTO_FORK }} doesn't support SuSFS! "
                     false
                 else
                     KERNELSU_BRANCH="master"
@@ -124,25 +139,26 @@ runs:
                 KERNELSU_NAME="SukiSU-Ultra"
                 KERNELSU_ORIGIN_BRANCH="main"
                 if [[ "${{ env.SUSFS_ENABLE }}" == "true" ]]; then
-                    KERNELSU_BRANCH="susfs_new"
+                    KERNELSU_BRANCH="builtin"
                 else
                     KERNELSU_BRANCH="builtin"
                 fi
             elif [[ "${{ env.KERNELSU_AUTO_FORK }}" == "next" ]]; then
                 KERNELSU_AUTHOR="KernelSU-Next"
                 KERNELSU_NAME="KernelSU-Next"
-                KERNELSU_ORIGIN_BRANCH="stable"
+                KERNELSU_ORIGIN_BRANCH="legacy"
                 if [[ "${{ env.SUSFS_ENABLE }}" == "true" ]]; then
-                    KERNELSU_BRANCH="legacy_susfs"
+                    echo "${{ env.KERNELSU_AUTO_FORK }} doesn't support SuSFS! "
+                    false
                 else
-                    KERNELSU_BRANCH="stable"
+                    KERNELSU_BRANCH="legacy"
                 fi
             elif [[ "${{ env.KERNELSU_AUTO_FORK }}" == "resukisu" ]]; then
                 KERNELSU_AUTHOR="ReSukiSU"
                 KERNELSU_NAME="ReSukiSU"
                 KERNELSU_ORIGIN_BRANCH="main"
                 if [[ "${{ env.SUSFS_ENABLE }}" == "true" ]]; then
-                    KERNELSU_BRANCH="dev"
+                    KERNELSU_BRANCH="main"
                 else
                     KERNELSU_BRANCH="main"
                 fi
@@ -225,6 +241,7 @@ runs:
 
           ENABLE_KPM_CONFIGS(){
 
+            sed -n '/^config KALLSYMS_ALL/,/^[^ \t]/p' init/Kconfig | grep -q 'depends on.*DEBUG_KERNEL' && echo "CONFIG_DEBUG_KERNEL=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
             echo "CONFIG_KALLSYMS=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
             echo "CONFIG_KALLSYMS_ALL=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
 
@@ -233,7 +250,7 @@ runs:
           GET_KPM_TOOLS(){
 
             echo "[+] Detected set_memory."
-            echo "CONFIG_KPM=y" >> ./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
+            echo "CONFIG_KPM=y" >> ./arch/"${{ env.KERNEL_ARCH }}"/configs/${{ env.DEFCONFIG_NAME }}
             ${{ env.CURLX }} "${{ env.KPM_PATCH_SOURCE }}" patch
 
             if [ -f "patch" ]; then
@@ -262,7 +279,7 @@ runs:
 
           }
 
-          if [[ "${{ env.KERNELSU_SOURCE }}" == *SukiSU* ]] || [[ "${{ env.KERNELSU_AUTO_FORK }}" == "sukisu" ]]  || [[ "${{ env.KERNELSU_SOURCE }}" == *ReSukiSU* ]] || [[ "${{ env.KERNELSU_AUTO_FORK }}" == "resukisu" ]] && [[ "${{ env.KPM_INLINE }}" == "true" ]]; then
+          if [[ "${{ env.KERNELSU_SOURCE }}" == *SukiSU* ]] || [[ "${{ env.KERNELSU_AUTO_FORK }}" == "sukisu" ]] && [[ "${{ env.KPM_INLINE }}" == "true" ]]; then
             echo "[+] Detected SukiSU-Ultra and enabled KPM Inline."
             ENABLE_KPM_CONFIGS
 
@@ -278,7 +295,7 @@ runs:
 
             fi
 
-          elif [[ "${{ env.KERNELSU_SOURCE }}" != *SukiSU* ]] || [[ "${{ env.KERNELSU_AUTO_FORK }}" != "sukisu" ]] || [[ "${{ env.KERNELSU_SOURCE }}" != *ReSukiSU* ]] || [[ "${{ env.KERNELSU_AUTO_FORK }}" != "resukisu" ]] && [[ "${{ env.KPM_INLINE }}" == "true" ]]; then
+          elif [[ "${{ env.KERNELSU_SOURCE }}" != *SukiSU* ]] || [[ "${{ env.KERNELSU_AUTO_FORK }}" != "sukisu" ]] && [[ "${{ env.KPM_INLINE }}" == "true" ]]; then
             echo "[-] Your KernelSU Fork could not support KPM Inline!"
             false
 
@@ -298,35 +315,25 @@ runs:
 
           # Neccssary
           echo "CONFIG_KSU=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-          echo "# CONFIG_KPROBES is not set" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_HAVE_SYSCALL_TRACEPOINTS=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
 
           # Fork
-          if [[ "${{ env.KERNELSU_SOURCE }}" == *rsuntk* ]] || [[ "${{ env.KERNELSU_SOURCE }}" == *SukiSU* ]] || [[ "${{ env.KERNELSU_SOURCE }}" == *next* ]] || [[ "${{ env.KERNELSU_AUTO_FORK }}" == "sukisu" ]] || [[ "${{ env.KERNELSU_AUTO_FORK }}" == "rsuntk" ]] || [[ "${{ env.KERNELSU_AUTO_FORK }}" == "next" ]] || [[ "${{ env.KERNELSU_SOURCE }}" == *ReSukiSU* ]] || [[ "${{ env.KERNELSU_AUTO_FORK }}" == "resukisu" ]]; then
+          if [[ "${{ env.KERNELSU_SOURCE }}" == *rsuntk* ]] || [[ "${{ env.KERNELSU_SOURCE }}" == *next* ]] || [[ "${{ env.KERNELSU_AUTO_FORK }}" == "rsuntk" ]] || [[ "${{ env.KERNELSU_AUTO_FORK }}" == "next" ]] || [[ "${{ env.KERNELSU_SOURCE }}" == *ReSukiSU* ]] || [[ "${{ env.KERNELSU_AUTO_FORK }}" == "resukisu" ]]; then
             if [[ ${{ env.SUSFS_ENABLE }} != "true" ]]; then
-
                 echo "CONFIG_KSU_MANUAL_HOOK=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
+
             fi
           fi
 
           if [[ "${{ env.KERNELSU_SOURCE }}" == *blackslashxx* ]] || [[ "${{ env.KERNELSU_AUTO_FORK }}" == "xxksu" ]]; then
             echo "CONFIG_KSU_KPROBES_KSUD=n" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
 
-            if [ "${{ env.FIRST_VERSION }}" -lt 5 ] && [ "${{ env.SECOND_VERSION }}" -lt 2 ]; then
-                echo "CONFIG_KSU_LSM_SECURITY_HOOKS=n" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-            else
-                echo "CONFIG_KSU_LSM_SECURITY_HOOKS=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-            fi
           fi
 
           if [[ "${{ env.KERNELSU_SOURCE }}" == *SukiSU* ]] || [[ "${{ env.KERNELSU_AUTO_FORK }}" == "sukisu" ]] || [[ "${{ env.KERNELSU_SOURCE }}" == *ReSukiSU* ]] || [[ "${{ env.KERNELSU_AUTO_FORK }}" == "resukisu" ]]; then
-            echo "CONFIG_KSU_MANUAL_SU=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-
-            if [[ "${{ env.SUSFS_ENABLE }}" != true ]]; then
+            if [[ "${{ env.SUSFS_ENABLE }}" != "true" ]]; then
                 echo "CONFIG_KSU_SUSFS=n" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
 
-            elif [[ "${{ env.SUSFS_ENABLE }}" == true ]]; then
-                echo "CONFIG_KSU_MANUAL_HOOK=n" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-                echo "CONFIG_KSU_NONE_HOOK=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
+            elif [[ "${{ env.SUSFS_ENABLE }}" == "true" ]]; then
+                echo "CONFIG_KSU_SUSFS=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
             fi
           fi
