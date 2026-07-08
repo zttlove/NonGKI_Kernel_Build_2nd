@@ -103,6 +103,15 @@ jobs:
           set -euo pipefail
           cd ${GITHUB_WORKSPACE}/device_kernel
           rm -rf NonGKI_Kernel_Patches
+     
+      - name: Clean leftover syscall hook references to fix undefined symbol
+        run: |
+          set -euo pipefail
+          KERNEL_ROOT=${GITHUB_WORKSPACE}/device_kernel
+          cd "${KERNEL_ROOT}"
+          [ -f fs/read_write.c ] && sed -i 's/\(.*ksu_init_rc_hook.*\)/\/\/\1/' fs/read_write.c
+          [ -f kernel/sys.c ] && sed -i 's/\(.*ksu_handle_setresuid.*\)/\/\/\1/' kernel/sys.c
+          echo "Cleared undefined ksu hook references"
 
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
@@ -123,10 +132,7 @@ jobs:
           # 3. ksu___strncpy_from_user_nofault → ksu_strncpy_from_user_nofault
           sed -i "s#ksu___strncpy_from_user_nofault#ksu_strncpy_from_user_nofault#g" sulog/event.c
           sed -i '379 s/USER_ARG_NULL/*USER_ARG_NULL/' sulog/event.c
-          cd ${GITHUB_WORKSPACE}/device_kernel
-          sed -i 's/\(.*ksu_init_rc_hook.*\)/\/\/\1/' fs/read_write.c
-          # 注释所有包含 ksu_handle_setresuid 的调用行
-          sed -i 's/\(.*ksu_handle_setresuid.*\)/\/\/\1/' kernel/sys.c
+         
 
       
       - name: 🔗 Patch for no-kprobe
