@@ -139,7 +139,7 @@ runs:
                 KERNELSU_NAME="SukiSU-Ultra"
                 KERNELSU_ORIGIN_BRANCH="main"
                 if [[ "${{ env.SUSFS_ENABLE }}" == "true" ]]; then
-                    KERNELSU_BRANCH="builtin"
+                    KERNELSU_BRANCH="susfs_new"
                 else
                     KERNELSU_BRANCH="builtin"
                 fi
