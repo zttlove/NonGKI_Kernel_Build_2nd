@@ -105,25 +105,28 @@ jobs:
           KERNEL_ROOT=${GITHUB_WORKSPACE}/device_kernel
           cd "${KERNEL_ROOT}/drivers/kernelsu"
 
-          # ========== 处理 sucompat.c ==========
+          # ========== sucompat.c 修复 ==========
           if [ -f feature/sucompat.c ]; then
             sed -i '/#include <linux\/pgtable.h>/d' feature/sucompat.c
             sed -i "s#strncpy_from_user_nofault#strncpy_from_user#g" feature/sucompat.c
           fi
 
-          # ========== 处理 arm64 patch_memory.c 新增修复 ==========
+          # ========== patch_memory.c 修复：注释缺失的nofault拷贝代码 ==========
           if [ -f hook/arm64/patch_memory.c ]; then
-            sed -i "s#copy_to_kernel_nofault#copy_to_kernel#g" hook/arm64/patch_memory.c
+            # 注释调用 copy_to_kernel_nofault 的整行
+            sed -i '150 s/^/\/\//' hook/arm64/patch_memory.c
+            # 给ret赋0，防止变量未使用警告
+            sed -i '149 a\    int ret = 0;' hook/arm64/patch_memory.c
           fi
 
-          # ========== 处理 runtime/ksud.c SUSFS 未定义钩子 ==========
+          # ========== runtime/ksud.c SUSFS钩子屏蔽 ==========
           if [ -f runtime/ksud.c ]; then
             sed -i '/#include <linux\/susfs.h>/d' runtime/ksud.c
             sed -i "s#ksu_selinux_hide_handle_post_fs_data();#//ksu_selinux_hide_handle_post_fs_data();#" runtime/ksud.c
             sed -i "s#ksu_selinux_hide_handle_second_stage();#//ksu_selinux_hide_handle_second_stage();#" runtime/ksud.c
           fi
 
-          # ========== 处理 sulog/event.c 字符串拷贝兼容 ==========
+          # ========== sulog/event.c 字符串拷贝兼容 ==========
           if [ -f sulog/event.c ]; then
             sed -i "s#strncpy_from_user_nofault#strncpy_from_user#g" sulog/event.c
             sed -i "s#ksu___strncpy_from_user_nofault#ksu_strncpy_from_user#g" sulog/event.c
