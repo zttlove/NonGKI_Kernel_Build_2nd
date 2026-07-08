@@ -105,21 +105,24 @@ jobs:
           KERNEL_ROOT=${GITHUB_WORKSPACE}/device_kernel
           cd "${KERNEL_ROOT}/drivers/kernelsu"
 
-          # 1. 移除5.4内核不存在的头文件 pgtable.h
+          # 处理 sucompat.c
           if [ -f feature/sucompat.c ]; then
+            # 删除不存在的pgtable.h
             sed -i '/#include <linux\/pgtable.h>/d' feature/sucompat.c
-            # 修复sucompat.c内 strncpy_from_user_nofault 未声明报错
+            # 替换函数名
             sed -i "s#strncpy_from_user_nofault#__strncpy_from_user_nofault#g" feature/sucompat.c
+            # 追加兼容头文件，提供__strncpy_from_user_nofault声明
+            grep -q "kernel_compat.h" feature/sucompat.c || sed -i '1a\#include "infra/kernel_compat.h"' feature/sucompat.c
           fi
 
-          # 2. 修复runtime/ksud.c SUSFS 未定义钩子（文件存在才执行）
+          # runtime/ksud.c 修复（存在才执行）
           if [ -f runtime/ksud.c ]; then
             sed -i '/#include <linux\/susfs.h>/d' runtime/ksud.c
             sed -i "s#ksu_selinux_hide_handle_post_fs_data();#//ksu_selinux_hide_handle_post_fs_data();#" runtime/ksud.c
             sed -i "s#ksu_selinux_hide_handle_second_stage();#//ksu_selinux_hide_handle_second_stage();#" runtime/ksud.c
           fi
 
-          # 3. 修复sulog/event.c 相关兼容报错
+          # sulog/event.c 修复
           if [ -f sulog/event.c ]; then
             sed -i "s#strncpy_from_user_nofault#__strncpy_from_user_nofault#g" sulog/event.c
             sed -i "s#ksu___strncpy_from_user_nofault#ksu_strncpy_from_user_nofault#g" sulog/event.c
