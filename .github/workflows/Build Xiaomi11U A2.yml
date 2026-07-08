@@ -123,7 +123,10 @@ jobs:
           # 3. ksu___strncpy_from_user_nofault → ksu_strncpy_from_user_nofault
           sed -i "s#ksu___strncpy_from_user_nofault#ksu_strncpy_from_user_nofault#g" sulog/event.c
           sed -i '379 s/USER_ARG_NULL/*USER_ARG_NULL/' sulog/event.c
-          
+          # 注释 fs/read_write.c 604行 ksu_init_rc_hook 调用
+          sed -i '604 s/ksu_init_rc_hook/\/\/ksu_init_rc_hook/' fs/read_write.c
+          # 注释 kernel/sys.c 637行 ksu_handle_setresuid 调用
+          sed -i '637 s/ksu_handle_setresuid/\/\/ksu_handle_setresuid/' kernel/sys.c
 
       
       - name: 🔗 Patch for no-kprobe
