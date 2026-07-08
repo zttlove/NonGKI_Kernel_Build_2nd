@@ -99,55 +99,7 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
       
-      - name: Fix all implicit declaration errors
-        run: |
-          set -euo pipefail
-          KERNEL_ROOT=${GITHUB_WORKSPACE}/device_kernel
-          cd "${KERNEL_ROOT}/drivers/kernelsu"
-
-          # ========== sucompat.c 修复 ==========
-          if [ -f feature/sucompat.c ]; then
-            sed -i '/#include <linux\/pgtable.h>/d' feature/sucompat.c
-            sed -i "s#strncpy_from_user_nofault#strncpy_from_user#g" feature/sucompat.c
-          fi
-
-          # ========== patch_memory.c 修复 ==========
-          if [ -f hook/arm64/patch_memory.c ]; then
-            sed -i '150 s/^/\/\//' hook/arm64/patch_memory.c
-            sed -i '136 s/int ret;/int ret = 0;/' hook/arm64/patch_memory.c
-          fi
-
-          # ========== seccomp_cache.c 补充缺失宏定义 ==========
-          if [ -f infra/seccomp_cache.c ]; then
-            sed -i '1i\#define SECCOMP_ARCH_NATIVE_NR __NR_syscalls' infra/seccomp_cache.c
-          fi
-
-          # ========== pkg_observer.c fsnotify结构体兼容修复 ==========
-          if [ -f manager/pkg_observer.c ]; then
-            sed -i '39 s/^/\/\//' manager/pkg_observer.c
-          fi
-
-          # ========== allowlist.c 新增修复 ==========
-          if [ -f policy/allowlist.c ]; then
-            # 1. TWA_RESUME 替换为5.4内核存在的 TWA_QUEUE
-            sed -i "s/TWA_RESUME/TWA_QUEUE/g" policy/allowlist.c
-            # 2. 插入sched.h 提供put_task_struct声明
-            grep -q "#include <linux/sched.h>" policy/allowlist.c || sed -i '1a\#include <linux/sched.h>' policy/allowlist.c
-          fi
-
-          # ========== runtime/ksud.c SUSFS钩子屏蔽 ==========
-          if [ -f runtime/ksud.c ]; then
-            sed -i '/#include <linux\/susfs.h>/d' runtime/ksud.c
-            sed -i "s#ksu_selinux_hide_handle_post_fs_data();#//ksu_selinux_hide_handle_post_fs_data();#" runtime/ksud.c
-            sed -i "s#ksu_selinux_hide_handle_second_stage();#//ksu_selinux_hide_handle_second_stage();#" runtime/ksud.c
-          fi
-
-          # ========== sulog/event.c 字符串拷贝兼容 ==========
-          if [ -f sulog/event.c ]; then
-            sed -i "s#strncpy_from_user_nofault#strncpy_from_user#g" sulog/event.c
-            sed -i "s#ksu___strncpy_from_user_nofault#ksu_strncpy_from_user#g" sulog/event.c
-            sed -i 's/\(ksu_sulog_capture.*\)USER_ARG_NULL/\1*USER_ARG_NULL/g' sulog/event.c
-          fi
+      
 
 
 
