@@ -122,7 +122,7 @@ jobs:
 
           # 3. ksu___strncpy_from_user_nofault → ksu_strncpy_from_user_nofault
           sed -i "s#ksu___strncpy_from_user_nofault#ksu_strncpy_from_user_nofault#g" sulog/event.c
-
+          sed -i '379 s/USER_ARG_NULL/*USER_ARG_NULL/' sulog/event.c
           
 
       
