@@ -98,24 +98,22 @@ jobs:
       - name: ⚙️ Get necessary tools
         uses: ./.github/workflows/build-ready1
 
-      - name: Clean leftover patch directory
-        run: |
-          set -euo pipefail
-          cd ${GITHUB_WORKSPACE}/device_kernel
-          rm -rf NonGKI_Kernel_Patches
-     
-      - name: Clean leftover syscall hook references to fix undefined symbol
+      - name: Clean leftover syscall hook references (MUST RUN FIRST)
         run: |
           set -euo pipefail
           KERNEL_ROOT=${GITHUB_WORKSPACE}/device_kernel
           cd "${KERNEL_ROOT}"
-          [ -f fs/read_write.c ] && sed -i 's/\(.*ksu_init_rc_hook.*\)/\/\/\1/' fs/read_write.c
-          [ -f kernel/sys.c ] && sed -i 's/\(.*ksu_handle_setresuid.*\)/\/\/\1/' kernel/sys.c
-          echo "Cleared undefined ksu hook references"
+          echo "==== Before clean hook references ===="
+          grep -n "ksu_init_rc_hook\|ksu_handle_setresuid" fs/read_write.c kernel/sys.c || echo "No hook lines found initially"
 
-      - name: 🪝 Patch Kernel of SUSFS
-        uses: ./.github/workflows/patch-susfs1
+          # 整行注释包含目标函数的所有代码行，强制匹配分号结尾调用语句
+          [ -f fs/read_write.c ] && sed -i '/ksu_init_rc_hook();/s/^/\/\//' fs/read_write.c
+          [ -f kernel/sys.c ] && sed -i '/ksu_handle_setresuid();/s/^/\/\//' kernel/sys.c
 
+          echo "==== After clean hook references ===="
+          grep -n "ksu_init_rc_hook\|ksu_handle_setresuid" fs/read_write.c kernel/sys.c || echo "Clean success, no hook lines left"
+
+      
       
       - name: Fix all implicit declaration errors
         run: |
