@@ -104,18 +104,26 @@ jobs:
           set -euo pipefail
           KERNEL_ROOT=${GITHUB_WORKSPACE}/device_kernel
           cd "${KERNEL_ROOT}/drivers/kernelsu"
-          # 新增：删除不存在的pgtable.h头文件
-          sed -i '/#include <linux\/pgtable.h>/d' feature/sucompat.c
 
-          # 屏蔽SUSFS相关不存在的函数调用与头文件
-          sed -i '/#include <linux\/susfs.h>/d' runtime/ksud.c
-          sed -i "s#ksu_selinux_hide_handle_post_fs_data();#//ksu_selinux_hide_handle_post_fs_data();#" runtime/ksud.c
-          sed -i "s#ksu_selinux_hide_handle_second_stage();#//ksu_selinux_hide_handle_second_stage();#" runtime/ksud.c
-          # 修复5.4内核strncpy符号兼容
-          sed -i "s#strncpy_from_user_nofault#__strncpy_from_user_nofault#g" sulog/event.c
-          sed -i "s#ksu___strncpy_from_user_nofault#ksu_strncpy_from_user_nofault#g" sulog/event.c
-          # 全局修复USER_ARG_NULL指针类型不匹配
-          sed -i 's/\(ksu_sulog_capture.*\)USER_ARG_NULL/\1*USER_ARG_NULL/g' sulog/event.c
+          # 修复pgtable.h缺失
+          if [ -f feature/sucompat.c ]; then
+            sed -i '/#include <linux\/pgtable.h>/d' feature/sucompat.c
+          fi
+
+          # 仅文件存在才修改ksud.c
+          if [ -f runtime/ksud.c ]; then
+            sed -i '/#include <linux\/susfs.h>/d' runtime/ksud.c
+            sed -i "s#ksu_selinux_hide_handle_post_fs_data();#//ksu_selinux_hide_handle_post_fs_data();#" runtime/ksud.c
+            sed -i "s#ksu_selinux_hide_handle_second_stage();#//ksu_selinux_hide_handle_second_stage();#" runtime/ksud.c
+          fi
+
+          # 修复strncpy
+          if [ -f sulog/event.c ]; then
+            sed -i "s#strncpy_from_user_nofault#__strncpy_from_user_nofault#g" sulog/event.c
+            sed -i "s#ksu___strncpy_from_user_nofault#ksu_strncpy_from_user_nofault#g" sulog/event.c
+            sed -i 's/\(ksu_sulog_capture.*\)USER_ARG_NULL/\1*USER_ARG_NULL/g' sulog/event.c
+          fi
+
 
         
       - name: 🔗 Patch for no-kprobe
