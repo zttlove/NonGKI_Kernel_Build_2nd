@@ -109,10 +109,8 @@ jobs:
           if [ -f feature/sucompat.c ]; then
             # 删除不存在的pgtable.h
             sed -i '/#include <linux\/pgtable.h>/d' feature/sucompat.c
-            # 替换函数名
-            sed -i "s#strncpy_from_user_nofault#__strncpy_from_user_nofault#g" feature/sucompat.c
-            # 追加兼容头文件，提供__strncpy_from_user_nofault声明
-            grep -q "kernel_compat.h" feature/sucompat.c || sed -i '1a\#include "infra/kernel_compat.h"' feature/sucompat.c
+            # 直接替换成内核原生strncpy_from_user，抛弃nofault兼容函数
+            sed -i "s#strncpy_from_user_nofault#strncpy_from_user#g" feature/sucompat.c
           fi
 
           # runtime/ksud.c 修复（存在才执行）
@@ -124,10 +122,11 @@ jobs:
 
           # sulog/event.c 修复
           if [ -f sulog/event.c ]; then
-            sed -i "s#strncpy_from_user_nofault#__strncpy_from_user_nofault#g" sulog/event.c
+            sed -i "s#strncpy_from_user_nofault#strncpy_from_user#g" sulog/event.c
             sed -i "s#ksu___strncpy_from_user_nofault#ksu_strncpy_from_user_nofault#g" sulog/event.c
             sed -i 's/\(ksu_sulog_capture.*\)USER_ARG_NULL/\1*USER_ARG_NULL/g' sulog/event.c
           fi
+
 
 
 
