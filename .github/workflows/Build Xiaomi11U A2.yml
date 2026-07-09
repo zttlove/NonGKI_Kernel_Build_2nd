@@ -103,25 +103,23 @@ jobs:
         run: |
          set -euo pipefail
          cd $GITHUB_WORKSPACE/device_kernel
-
-         # 1. 修复 event.c 中的 strncpy_from_user_nofault 隐式声明报错
-         # 将调用替换为内核实际导出的 __strncpy_from_user_nofault
+         # 1. 修复 event.c 中的字符串拷贝函数调用
          EVENT_FILE="drivers/kernelsu/sulog/event.c"
          if [ -f "$EVENT_FILE" ]; then
          echo "正在修复 event.c 中的字符串拷贝函数调用..."
+         # 步骤 A: 将内核底层的 strncpy_from_user_nofault 替换为 __strncpy_from_user_nofault
          sed -i 's/strncpy_from_user_nofault(/__strncpy_from_user_nofault(/g' "$EVENT_FILE"
+         # 步骤 B: 修正之前误替换导致的 ksu__ 双下划线问题，改回单下划线 ksu_
+         sed -i 's/ksu___strncpy_from_user_nofault(/ksu_strncpy_from_user_nofault(/g' "$EVENT_FILE"
          echo "✅ event.c 修复完成。"
          fi
-
          # 2. 修复 ksud.c 中的 SELinux 隐藏函数隐式声明
-         # 尝试在 ksud.c 中补充包含 selinux 相关的头文件（假设路径为 selinux/selinux.h）
          KSUD_FILE="drivers/kernelsu/runtime/ksud.c"
          if [ -f "$KSUD_FILE" ]; then
          echo "正在修复 ksud.c 中的 SELinux 隐藏函数声明..."
          # 在文件头部包含可能缺失的 selinux 头文件
          sed -i '1i #include "../selinux/selinux.h"' "$KSUD_FILE"
-         # 如果上述头文件包含后依然报错，说明当前内核不支持该隐藏功能，
-         # 此时应使用条件编译宏包裹，而不是直接注释掉，以保持代码完整性。
+         # 使用条件编译宏包裹，如果当前内核不支持该隐藏功能，则自动跳过，防止报错
          sed -i 's/ksu_selinux_hide_handle_post_fs_data();/#ifdef CONFIG_KSU_SELINUX_HIDE\n\tksu_selinux_hide_handle_post_fs_data();\n#endif/' "$KSUD_FILE"
          sed -i 's/ksu_selinux_hide_handle_second_stage();/#ifdef CONFIG_KSU_SELINUX_HIDE\n\tksu_selinux_hide_handle_second_stage();\n#endif/' "$KSUD_FILE"
          echo "✅ ksud.c 修复完成。"
