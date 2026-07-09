@@ -120,7 +120,7 @@ runs:
                 KERNELSU_ORIGIN_BRANCH="master"
                 if [[ "${{ env.SUSFS_ENABLE }}" == "true" ]]; then
                     KERNELSU_BRANCH="master"
-                    false
+                    
                 else
                     KERNELSU_BRANCH="master"
                 fi
