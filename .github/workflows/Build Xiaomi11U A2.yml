@@ -105,7 +105,7 @@ jobs:
            [ -n "$FILE2" ] && sed -i '$a EXPORT_SYMBOL(ksu_is_init_rc_hook_enabled);' "$FILE2"
            FILE3=$(grep -rl "ksu_hide_setprocattr(" --include="*.c" ./ | head -1)
            [ -n "$FILE3" ] && sed -i '$a EXPORT_SYMBOL(ksu_hide_setprocattr);' "$FILE3"
-           find . -type f \( -name "*.h" -o -name "*.c" \) -exec sed -i 's|^#undef CONFIG_KSU_SUSFS|\/\/#undef CONFIG_KSU_SUSFS|g' {}  +
+           find . -type f \( -name "*.h" -o -name "*.c" \) -exec sed -i 's|^#undef CONFIG_KSU_SUSFS|\/\/#undef CONFIG_KSU_SUSFS|g' {} +
 
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
