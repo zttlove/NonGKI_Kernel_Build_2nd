@@ -96,14 +96,16 @@ jobs:
       - name: ⚙️ Get necessary tools
         uses: ./.github/workflows/build-ready1
         
-      - name: Export xxksu symbols for SUSFS
+      - name: Export xxksu symbols dynamically
         run: |
            cd $GITHUB_WORKSPACE/device_kernel
-           sed -i '$a EXPORT_SYMBOL(ksu_handle_sys_read);' kernel/ksu/ksu_hooks.c
-           sed -i '$a EXPORT_SYMBOL(ksu_is_init_rc_hook_enabled);' kernel/ksu/core.c
-           sed -i '$a EXPORT_SYMBOL(ksu_hide_setprocattr);' kernel/ksu/selinux_hook.c
-           # 注释掉xxksu里面 #undef CONFIG_KSU_SUSFS
-           find . -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i 's|^#undef CONFIG_KSU_SUSFS|\/\/#undef CONFIG_KSU_SUSFS|g' {} +
+           FILE1=$(grep -rl "ksu_handle_sys_read(" --include="*.c" ./ | head -1)
+           [ -n "$FILE1" ] && sed -i '$a EXPORT_SYMBOL(ksu_handle_sys_read);' "$FILE1"
+           FILE2=$(grep -rl "ksu_is_init_rc_hook_enabled(" --include="*.c" ./ | head -1)
+           [ -n "$FILE2" ] && sed -i '$a EXPORT_SYMBOL(ksu_is_init_rc_hook_enabled);' "$FILE2"
+           FILE3=$(grep -rl "ksu_hide_setprocattr(" --include="*.c" ./ | head -1)
+           [ -n "$FILE3" ] && sed -i '$a EXPORT_SYMBOL(ksu_hide_setprocattr);' "$FILE3"
+           find . -type f \( -name "*.h" -o -name "*.c" \) -exec sed -i 's|^#undef CONFIG_KSU_SUSFS|\/\/#undef CONFIG_KSU_SUSFS|g' {}  +
 
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
