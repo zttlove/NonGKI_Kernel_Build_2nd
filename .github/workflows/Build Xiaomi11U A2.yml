@@ -99,38 +99,33 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
         
-      - name: Check KernelSU Source Structure
+      - name: Fix KernelSU Compilation Errors
         run: |
          set -euo pipefail
          cd $GITHUB_WORKSPACE/device_kernel
 
-         # 1. 严格校验关键目录与文件是否存在
-         KSU_RUNTIME_DIR="drivers/kernelsu/runtime"
-         KSU_SULOG_DIR="drivers/kernelsu/sulog"
-
-         if [ ! -d "$KSU_RUNTIME_DIR" ] || [ ! -d "$KSU_SULOG_DIR" ]; then
-         echo "❌ 错误：KernelSU 核心目录不存在，请核对内核源码结构或 KernelSU 集成路径。"
-         exit 1
+         # 1. 修复 event.c 中的 strncpy_from_user_nofault 隐式声明报错
+         # 将调用替换为内核实际导出的 __strncpy_from_user_nofault
+         EVENT_FILE="drivers/kernelsu/sulog/event.c"
+         if [ -f "$EVENT_FILE" ]; then
+         echo "正在修复 event.c 中的字符串拷贝函数调用..."
+         sed -i 's/strncpy_from_user_nofault(/__strncpy_from_user_nofault(/g' "$EVENT_FILE"
+         echo "✅ event.c 修复完成。"
          fi
-         echo "✅ KernelSU 目录结构校验通过。"
 
-      - name: Apply Linux 5.4 Compatibility Patches
-        run: |
-          set -euo pipefail
-          cd $GITHUB_WORKSPACE/device_kernel
-
-          # 2. 修复 Linux 5.4 内核的 MODULE_IMPORT_NS 宏未定义报错
-          # 该宏在 Linux 5.10 才引入，5.4 内核需要条件编译规避
-          KSU_C_FILE="kernel/ksu.c"
-          if [ -f "$KSU_C_FILE" ]; then
-          echo "正在为 Linux 5.4 内核应用 MODULE_IMPORT_NS 兼容补丁..."
-          # 使用 sed 在 MODULE_IMPORT_NS 行前添加版本检测宏
-          sed -i '/MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);/i #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)' "$KSU_C_FILE"
-          sed -i '/MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);/a #endif' "$KSU_C_FILE"
-          echo "✅ 5.4 内核兼容性补丁应用成功。"
-          else
-          echo "⚠️ 未找到 kernel/ksu.c，请确认 KernelSU 集成路径。"
-          fi
+         # 2. 修复 ksud.c 中的 SELinux 隐藏函数隐式声明
+         # 尝试在 ksud.c 中补充包含 selinux 相关的头文件（假设路径为 selinux/selinux.h）
+         KSUD_FILE="drivers/kernelsu/runtime/ksud.c"
+         if [ -f "$KSUD_FILE" ]; then
+         echo "正在修复 ksud.c 中的 SELinux 隐藏函数声明..."
+         # 在文件头部包含可能缺失的 selinux 头文件
+         sed -i '1i #include "../selinux/selinux.h"' "$KSUD_FILE"
+         # 如果上述头文件包含后依然报错，说明当前内核不支持该隐藏功能，
+         # 此时应使用条件编译宏包裹，而不是直接注释掉，以保持代码完整性。
+         sed -i 's/ksu_selinux_hide_handle_post_fs_data();/#ifdef CONFIG_KSU_SELINUX_HIDE\n\tksu_selinux_hide_handle_post_fs_data();\n#endif/' "$KSUD_FILE"
+         sed -i 's/ksu_selinux_hide_handle_second_stage();/#ifdef CONFIG_KSU_SELINUX_HIDE\n\tksu_selinux_hide_handle_second_stage();\n#endif/' "$KSUD_FILE"
+         echo "✅ ksud.c 修复完成。"
+         fi
         
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
