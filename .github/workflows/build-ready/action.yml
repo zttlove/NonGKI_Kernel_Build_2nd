@@ -158,7 +158,7 @@ runs:
                 KERNELSU_NAME="ReSukiSU"
                 KERNELSU_ORIGIN_BRANCH="main"
                 if [[ "${{ env.SUSFS_ENABLE }}" == "true" ]]; then
-                    KERNELSU_BRANCH="main"
+                    KERNELSU_BRANCH="upstream"
                 else
                     KERNELSU_BRANCH="main"
                 fi
