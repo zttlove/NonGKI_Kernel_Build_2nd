@@ -103,18 +103,19 @@ jobs:
       - name: Export xxksu symbols dynamically
         run: |
           cd $GITHUB_WORKSPACE/device_kernel
+          
           # 1. 处理 ksu_handle_sys_read
-          # 在调用行上方添加 #ifdef CONFIG_KSU，下方补 #endif
-          sed -i '602i#ifdef CONFIG_KSU' fs/read_write.c
-          sed -i '604i#endif' fs/read_write.c
+          # 假设第603行是调用代码，我们需要把603行包裹起来
+          sed -i '603s/^/#ifdef CONFIG_KSU\n/' fs/read_write.c
+          sed -i '603s/$/\n#endif/' fs/read_write.c
+          # 或者更安全的做法，匹配具体函数名进行包裹：
+          # sed -i '/ksu_handle_sys_read/i #ifdef CONFIG_KSU' fs/read_write.c
+          # sed -i '/ksu_handle_sys_read/a #endif' fs/read_write.c
 
-          # 2. ksu_is_init_rc_hook_enabled 跳转表这里处理：
-          # SUSFS给jump table硬编码引用，这种方式包裹#ifdef效果差，改用注释掉该调用更现实：
-          sed -i '/ksu_is_init_rc_hook_enabled/d' fs/read_write.c
-
-          # 3. selinux_setprocattr 里 ksu_hide_setprocattr
-          sed -i '6496i#ifdef CONFIG_KSU' security/selinux/hooks.c
-          sed -i '6498i#endif' security/selinux/hooks.c
+          # 2. 处理 selinux_setprocattr 里的 ksu_hide_setprocattr
+          # 同样，确保调用行被包裹
+          sed -i '/ksu_hide_setprocattr/i #ifdef CONFIG_KSU' security/selinux/hooks.c
+          sed -i '/ksu_hide_setprocattr/a #endif' security/selinux/hooks.c
 
         
       - name: 🔗 Patch for no-kprobe
