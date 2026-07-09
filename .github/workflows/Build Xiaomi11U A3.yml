@@ -99,88 +99,32 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
         
-      - name: 🛠️ Fix selinux/Makefile missing fatal build error
+      - name: Fix KernelSU Compilation Errors
         run: |
-          set -euo pipefail
-          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
-          # 1. 彻底清理selinux编译条目与文件夹
-          sed -i '/obj-y += selinux/d' Makefile
-          sed -i '/obj-y += selinux\//d' Makefile
-          rm -rf selinux
-          # 2. 清理旧占位文件残留
-          rm -f global_selinux_dummy.h dummy_global.c
-          sed -i '/obj-y += dummy_global.o/d' Makefile
-          # 3. 注释所有selinux内部头文件引入
-          sed -i '/#include "selinux\//s#^#//#' ksu.c
-          sed -i '/#include "selinux\//s#^#//#' runtime/ksud.c
-          # 4. 重置ksud.c，仅注释2个panic钩子
-          git restore runtime/ksud.c
-          sed -i '54s#^#//#' runtime/ksud.c
-          sed -i '214s#^#//#' runtime/ksud.c
-          # ========== 修复：改用awk稳定插入ksu_dev_init，彻底规避sed换行转义报错 ==========
-          cat runtime/ksud.c | awk '
-          BEGIN{flag=0}
-          {print $0}
-          /static int __init ksu_init(void)/{flag=1;next}
-          flag==1 && /\{/{
-          print "    ksu_dev_init();"
-          flag=0
-          }
-          ' > tmp_ksud.c && mv tmp_ksud.c runtime/ksud.c
-          # 5. 全局SELinux占位头
-          cat > ksu_mini_dummy.h <<-'EOF'
-          #ifndef KSU_MINI_DUMMY_H
-          #define KSU_MINI_DUMMY_H
-          #include <linux/cred.h>
-          #include <linux/types.h>
-          #include <linux/fs.h>
-          #include <linux/cdev.h>
-          #include <linux/device.h>
-          #define KERNEL_SU_DOMAIN "kernel_su"
-          #define KERNEL_SU_CONTEXT "u:r:kernel_su:s0"
-          #define ZYGOTE_CONTEXT "u:r:zygote:s0"
-          #define INIT_CONTEXT "u:r:init:s0"
-          #define KSU_FILE_CONTEXT "u:object_r:kernel_su_file:s0"
-          #define KSU_DEFAULT_SELINUX_DOMAIN "u:r:" KERNEL_SU_DOMAIN ":s0"
-          u32 ksu_file_sid = 0;
-          u32 susfs_ksu_sid = 0;
-          u32 susfs_priv_app_sid = 0;
-          u32 susfs_zygote_sid = 0;
-          bool susfs_is_current_ksu_domain(void) { return false; }
-          void setup_selinux(const char *domain, struct cred *cred) { return; }
-          static inline bool is_ksu_domain(void) { return false; }
-          static inline int handle_sepolicy(void __user *buf, size_t len) { return 0; }
-          static inline bool susfs_is_sid_equal(const struct cred *cred, u32 sid) { return false; }
-          static inline void escape_to_root_for_adb_root(void) { return; }
-          static inline bool is_init(const struct cred *cred) { return false; }
-          static inline void apply_kernelsu_rules(void) { return; }
-          static inline void cache_sid(void) { return; }
-          static inline void setup_ksu_cred(void) { return; }
-          #endif
-          EOF
-          # 6. 两处源码引入占位头
-          sed -i '/#include "ksu_mini_dummy.h"/d' ksu.c
-          sed -i '1i#include "ksu_mini_dummy.h"' ksu.c
-          sed -i '/#include "ksu_mini_dummy.h"/d' runtime/ksud.c
-          sed -i '1i#include "ksu_mini_dummy.h"' runtime/ksud.c
-          # 7. Makefile头文件依赖
-          sed -i '/ksu.o /s/$/ ksu_mini_dummy.h/' Makefile
-          # 8. event.c 5.4内核兼容修复
-          if [ -f "sulog/event.c" ]; then
-          sed -i 's/\bstrncpy_from_user_nofault\b/__strncpy_from_user_nofault/g' sulog/event.c
-          sed -i '144,148s/^\/\///' sulog/event.c
-          sed -i '132s/long copied;/long copied = 0;/' sulog/event.c
-          fi
-          # 9. 清理旧冲突宏
-          [ -f allowlist.c ] && sed -i '/#include <linux\/task_work.h>/d' allowlist.c
-          if [ -f ksu_defs.h ]; then
-          sed -i '/#ifndef TWA_RESUME/,/#endif/d' ksu_defs.h
-          sed -i '/KSU_SKIP_SELINUX_HOOKS/d' ksu_defs.h
-          fi
-          echo "✅ 已使用awk稳定插入ksu_dev_init，消除sed换行语法错误"
-
-      
-    
+         set -euo pipefail
+         cd $GITHUB_WORKSPACE/device_kernel
+         # 1. 修复 event.c 中的字符串拷贝函数调用
+         EVENT_FILE="drivers/kernelsu/sulog/event.c"
+         if [ -f "$EVENT_FILE" ]; then
+         echo "正在修复 event.c 中的字符串拷贝函数调用..."
+         # 步骤 A: 将内核底层的 strncpy_from_user_nofault 替换为 __strncpy_from_user_nofault
+         sed -i 's/strncpy_from_user_nofault(/__strncpy_from_user_nofault(/g' "$EVENT_FILE"
+         # 步骤 B: 修正之前误替换导致的 ksu__ 双下划线问题，改回单下划线 ksu_
+         sed -i 's/ksu___strncpy_from_user_nofault(/ksu_strncpy_from_user_nofault(/g' "$EVENT_FILE"
+         echo "✅ event.c 修复完成。"
+         fi
+         # 2. 修复 ksud.c 中的 SELinux 隐藏函数隐式声明
+         KSUD_FILE="drivers/kernelsu/runtime/ksud.c"
+         if [ -f "$KSUD_FILE" ]; then
+         echo "正在修复 ksud.c 中的 SELinux 隐藏函数声明..."
+         # 在文件头部包含可能缺失的 selinux 头文件
+         sed -i '1i #include "../selinux/selinux.h"' "$KSUD_FILE"
+         # 使用条件编译宏包裹，如果当前内核不支持该隐藏功能，则自动跳过，防止报错
+         sed -i 's/ksu_selinux_hide_handle_post_fs_data();/#ifdef CONFIG_KSU_SELINUX_HIDE\n\tksu_selinux_hide_handle_post_fs_data();\n#endif/' "$KSUD_FILE"
+         sed -i 's/ksu_selinux_hide_handle_second_stage();/#ifdef CONFIG_KSU_SELINUX_HIDE\n\tksu_selinux_hide_handle_second_stage();\n#endif/' "$KSUD_FILE"
+         echo "✅ ksud.c 修复完成。"
+         fi
+        
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
       
@@ -262,28 +206,4 @@ jobs:
 
           # 8. 打包
           cd "${ZIP_DIR}"
-          zip -r9 "${GITHUB_WORKSPACE}/${DEVICE_CODENAME}-${ROM_TEXT}-${TIME}-Ak3.zip" *
-          
-          echo "PACK_NAME=${DEVICE_CODENAME}-${ROM_TEXT}-${TIME}-Ak3.zip" >> "${GITHUB_ENV}"
-          echo "✅ Package created successfully."
-
-      - name: 🚀 Auto Upload To Github Release
-        if: env.PACK_METHOD == 'Anykernel3'
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: Star-HyperA16-Kernel-${{ github.run_number }}
-          name: "Xiaomi 11 Ultra Star HyperOS A16 NonGKI Kernel #${{ github.run_number }}"
-          body: |
-            ## Xiaomi 11 Ultra Star HyperOS A16 Kernel
-            - Adapted for HyperOS A16
-            - xxksu Syscall Hook
-            - NonGKI Format
-            - Clang 20.0.0git
-          files: ${{ env.PACK_NAME }}
-          draft: false
-          prerelease: false
-          overwrite_files: true
-          make_latest: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+          zip -r9 "${GITHUB_WORKSPACE}/${DEVI
