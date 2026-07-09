@@ -111,7 +111,8 @@ jobs:
          # 修复strncpy_from_user_nofault
          sed -i 's/strncpy_from_user_nofault(/__strncpy_from_user_nofault(/g' drivers/kernelsu/sulog/event.c
          sed -i 's/ksu___strncpy_from_user_nofault(/ksu_strncpy_from_user_nofault(/g' drivers/kernelsu/sulog/event.c
-
+         sed -i 's/ksu_selinux_hide_handle_post_fs_data();/\/\/ksu_selinux_hide_handle_post_fs_data();/' drivers/kernelsu/runtime/ksud.c
+         sed -i 's/ksu_selinux_hide_handle_second_stage();/\/\/ksu_selinux_hide_handle_second_stage();/' drivers/kernelsu/runtime/ksud.c
 
 
 
