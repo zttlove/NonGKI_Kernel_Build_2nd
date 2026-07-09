@@ -99,12 +99,17 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
         
-      - name: 🛠️ Fix selinux/Makefile missing fatal build error
+      - name: Fix KernelSU compile error
         run: |
-          set -euo pipefail
-          cd "${GITHUB_WORKSPACE}/device_kernel/drivers/kernelsu"
-          sed -i '1i void ksu_selinux_hide_handle_post_fs_data(void);\nvoid ksu_selinux_hide_handle_second_stage(void);' drivers/kernelsu/runtime/ksud.c && sed -i 's/strncpy_from_user_nofault(/__strncpy_from_user_nofault(/g' drivers/kernelsu/sulog/event.c
-
+         set -euo pipefail
+         cd $GITHUB_WORKSPACE/device_kernel
+         # 打印目录校验文件是否存在
+         ls drivers/kernelsu/runtime/ || echo "ksud.c 路径不存在，请核对目录结构"
+         ls drivers/kernelsu/sulog/ || echo "event.c 路径不存在，请核对目录结构"
+         # 修复ksud.c隐式声明
+         sed -i '1i void ksu_selinux_hide_handle_post_fs_data(void);\nvoid ksu_selinux_hide_handle_second_stage(void);' drivers/kernelsu/runtime/ksud.c
+         # 修复strncpy_from_user_nofault
+         sed -i 's/strncpy_from_user_nofault(/__strncpy_from_user_nofault(/g' drivers/kernelsu/sulog/event.c
 
 
 
