@@ -99,32 +99,38 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
         
-      - name: Fix KernelSU compile error
+      - name: Check KernelSU Source Structure
+        run: |
+         set -euo pipefail
+         cd $GITHUB_WORKSPACE/device_kernel
+
+         # 1. 严格校验关键目录与文件是否存在
+         KSU_RUNTIME_DIR="drivers/kernelsu/runtime"
+         KSU_SULOG_DIR="drivers/kernelsu/sulog"
+
+         if [ ! -d "$KSU_RUNTIME_DIR" ] || [ ! -d "$KSU_SULOG_DIR" ]; then
+         echo "❌ 错误：KernelSU 核心目录不存在，请核对内核源码结构或 KernelSU 集成路径。"
+         exit 1
+         fi
+         echo "✅ KernelSU 目录结构校验通过。"
+
+      - name: Apply Linux 5.4 Compatibility Patches
         run: |
           set -euo pipefail
           cd $GITHUB_WORKSPACE/device_kernel
-          # 1. 严格校验关键目录与文件是否存在，不存在则直接报错阻断流程
-          KSU_RUNTIME_DIR="drivers/kernelsu/runtime"
-          KSU_SULOG_DIR="drivers/kernelsu/sulog"
 
-          if [ ! -d "$KSU_RUNTIME_DIR" ] || [ ! -d "$KSU_SULOG_DIR" ]; then
-          echo "❌ 错误：KernelSU 核心目录不存在，请核对内核源码结构或 KernelSU 集成路径。"
-          exit 1
+          # 2. 修复 Linux 5.4 内核的 MODULE_IMPORT_NS 宏未定义报错
+          # 该宏在 Linux 5.10 才引入，5.4 内核需要条件编译规避
+          KSU_C_FILE="kernel/ksu.c"
+          if [ -f "$KSU_C_FILE" ]; then
+          echo "正在为 Linux 5.4 内核应用 MODULE_IMPORT_NS 兼容补丁..."
+          # 使用 sed 在 MODULE_IMPORT_NS 行前添加版本检测宏
+          sed -i '/MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);/i #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)' "$KSU_C_FILE"
+          sed -i '/MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);/a #endif' "$KSU_C_FILE"
+          echo "✅ 5.4 内核兼容性补丁应用成功。"
+          else
+          echo "⚠️ 未找到 kernel/ksu.c，请确认 KernelSU 集成路径。"
           fi
-          # 2. 针对旧版内核的兼容性修复（仅做安全校验，不破坏核心逻辑）
-          KSUD_FILE="$KSU_RUNTIME_DIR/ksud.c"
-          EVENT_FILE="$KSU_SULOG_DIR/event.c"
-          if [ -f "$KSUD_FILE" ]; then
-          # 如果确实存在隐式声明报错，应通过补全头文件包含或前向声明解决，而不是注释掉核心调用。
-          # 此处仅做存在性检查，避免盲目 sed 替换破坏 SELinux 隐藏功能。
-          echo "✅ ksud.c 存在，请确认内核版本与 KernelSU 分支的兼容性。"
-          fi
-          if [ -f "$EVENT_FILE" ]; then
-          # 针对 strncpy_from_user_nofault 报错，应检查当前内核 include/linux/uaccess.h 
-          # 中实际导出的宏定义或内联函数名称，确保符号匹配，而不是盲目替换。
-          echo "✅ event.c 存在，请根据当前内核版本确认底层字符串拷贝函数的正确符号。"
-          fi
-
         
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
