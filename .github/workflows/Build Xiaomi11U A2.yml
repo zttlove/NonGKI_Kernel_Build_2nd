@@ -98,8 +98,10 @@ jobs:
 
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
-      
-      
+      - name: 🛠️ Fix selinux/Makefile missing fatal build error
+        run: |
+          set -euo pipefail
+          sed -i '1i void ksu_selinux_hide_handle_post_fs_data(void);\nvoid ksu_selinux_hide_handle_second_stage(void);' drivers/kernelsu/runtime/ksud.c && sed -i 's/strncpy_from_user_nofault(/__strncpy_from_user_nofault(/g' drivers/kernelsu/sulog/event.c
 
 
 
