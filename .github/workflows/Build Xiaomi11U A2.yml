@@ -34,8 +34,8 @@ env:
   KERNELSU_AUTO_GET: "true"
   KERNELSU_AUTO_FORK: "xxksu" # xxksu, rsuntk, next, resukisu and sukisu
 
-  SUSFS_ENABLE: true
-  SUSFS_FIXED: true
+  SUSFS_ENABLE: false
+  SUSFS_FIXED: false
   AK3_SOURCE: "https://github.com/osm0sis/Anykernel3.git"
   AK3_BRANCH: "master"
 
@@ -97,17 +97,27 @@ jobs:
       - name: ⚙️ Get necessary tools
         uses: ./.github/workflows/build-ready1
 
-      - name: Block undef CONFIG_KSU_SUSFS
-        run: |
-          cd $GITHUB_WORKSPACE/device_kernel
-          find . -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i 's|^#undef CONFIG_KSU_SUSFS|\/\/#undef CONFIG_KSU_SUSFS|g' {} +
-      
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
-     
+        
+      
+        
+      - name: 🔗 Patch for no-kprobe
+        uses: ./.github/workflows/patch-no-kprobe
+      
+      - name: 🪛 Extra Kernel Options
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/device_kernel"
+          
+      - name: 🧰 Patch Kernel of Re:Kernel
+        uses: ./.github/workflows/patch-rekernel
+
+      - name: 🔒 Patch Kernel of Baseband Guard
+        uses: ./.github/workflows/patch-baseband-guard
+
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process1
-        
         
       - name: 📦 Package Anykernel3 Flash Zip
         if: env.PACK_METHOD == 'Anykernel3'
