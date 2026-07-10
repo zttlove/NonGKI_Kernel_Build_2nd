@@ -96,52 +96,44 @@ jobs:
 
       - name: ⚙️ Get necessary tools
         uses: ./.github/workflows/build-ready1
+
+     
+     
+
       
-      - name: 🪝 Patch Kernel of SUSFS
-        uses: ./.github/workflows/patch-susfs1
-        
+      - name: Block undef CONFIG_KSU_SUSFS
+        run: |
+          cd $GITHUB_WORKSPACE/device_kernel
+          find . -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i 's|^#undef CONFIG_KSU_SUSFS|\/\/#undef CONFIG_KSU_SUSFS|g' {} +
+
+      
+      - name: 🪝 Patch Kernel of susfs4ksu (sidex15 xxksu compatible)
+        run: |
+          cd $GITHUB_WORKSPACE/device_kernel
+          # 拉取适配xxksu的susfs内核补丁
+          git clone --depth=1 https://github.com/sidex15/susfs4ksu temp_susfs4ksu
+          # 打入内核补丁
+          patch -p1 --no-backup-if-mismatch < temp_susfs4ksu/kernel.patch
+          rm -rf temp_susfs4ksu
+
+      
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
-
+      
+      - name: 🪛 Extra Kernel Options
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/device_kernel"
+         
       - name: 🧰 Patch Kernel of Re:Kernel
         uses: ./.github/workflows/patch-rekernel
 
       - name: 🔒 Patch Kernel of Baseband Guard
         uses: ./.github/workflows/patch-baseband-guard
-
       
-      - name: Export xxksu symbols dynamically
-        run: |
-          cd $GITHUB_WORKSPACE/device_kernel
-          
-          if grep -q "ksu_handle_sys_read" fs/read_write.c; then
-            sed -i '/ksu_handle_sys_read/i #ifdef CONFIG_KSU' fs/read_write.c
-            sed -i '/ksu_handle_sys_read/a #endif' fs/read_write.c
-          fi
-
-          if grep -q "ksu_hide_setprocattr" security/selinux/hooks.c; then
-            sed -i '/ksu_hide_setprocattr/i #ifdef CONFIG_KSU' security/selinux/hooks.c
-            sed -i '/ksu_hide_setprocattr/a #endif' security/selinux/hooks.c
-          fi
-
-     
-      - name: 🪛 Extra Kernel Options
-        run: |
-          set -euo pipefail
-          cd "$GITHUB_WORKSPACE/device_kernel"
-          scripts/config --enable CONFIG_KSU
-          # 注意：这里不要运行 make mrproper 或 make olddefconfig
-          # 因为 build-process1 会重新生成配置
-          
-      - name: 🧹 Clean Kernel Source Tree
-        run: |
-          cd "$GITHUB_WORKSPACE/device_kernel"
-          # 使用 make mrproper 彻底清理源码根目录
-          # 这会删除所有编译残留和临时文件，但不会影响你刚刚通过 sed 修改的源码
-          make ARCH=arm64 mrproper
-     
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process1
+        
         
       - name: 📦 Package Anykernel3 Flash Zip
         if: env.PACK_METHOD == 'Anykernel3'
