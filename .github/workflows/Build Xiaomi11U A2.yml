@@ -107,18 +107,19 @@ jobs:
           find . -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i 's|^#undef CONFIG_KSU_SUSFS|\/\/#undef CONFIG_KSU_SUSFS|g' {} +
 
       
-      - name: 🪝 Apply SUSFS4KSU kernel patch for 5.4 NonGKI
+      - name: 🪝 Apply SUSFS4KSU for 5.4 NonGKI
         run: |
           set -e
           cd $GITHUB_WORKSPACE/device_kernel
-          # 拉取5.x内核专用分支
-          git clone --depth=1 -b gki-android12-5.4 https://gitlab.com/simonpunk/susfs4ksu.git temp_susfs4ksu
-          # 复制内核补丁到根目录
+          # 不指定分支，拉取main主线
+          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git temp_susfs4ksu
+          # 复制5.4内核主补丁
           cp temp_susfs4ksu/kernel_patches/50_add_susfs_in_kernel-5.4.patch ./
+          # 复制KSU兼容补丁
           cp temp_susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
-          # 打入内核主补丁
+          # 打入susfs内核基础补丁
           patch -p1 --no-backup-if-mismatch < 50_add_susfs_in_kernel-5.4.patch
-          # 进入ksu目录打兼容补丁（xxKSU兼容关键）
+          # 进入KernelSU目录打兼容补丁（适配xxKSU）
           cd KernelSU
           patch -p1 --no-backup-if-mismatch < ../10_enable_susfs_for_ksu.patch
           cd ..
