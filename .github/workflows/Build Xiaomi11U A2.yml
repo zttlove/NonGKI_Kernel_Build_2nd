@@ -120,7 +120,13 @@ jobs:
           cd ..
           rm -rf temp_susfs4ksu 50_add_susfs_in_kernel-5.4.patch 10_enable_susfs_for_ksu.patch
 
-      
+      - name: Remove incompatible ksu calls
+        run: |
+          cd $GITHUB_WORKSPACE/device_kernel
+          sed -i '/ksu_hide_setprocattr/d' security/selinux/hooks.c
+          sed -i '/ksu_handle_sys_read/d' fs/read_write.c
+          sed -i '/ksu_is_init_rc_hook_enabled/d' fs/read_write.c
+          
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
       
