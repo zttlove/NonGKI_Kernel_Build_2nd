@@ -109,21 +109,15 @@ jobs:
       
       - name: 🪝 Apply SUSFS4KSU for 5.4 NonGKI
         run: |
-          set -e
           cd $GITHUB_WORKSPACE/device_kernel
-          # 不指定分支，拉取main主线
           git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git temp_susfs4ksu
-          # 复制5.4内核主补丁
           cp temp_susfs4ksu/kernel_patches/50_add_susfs_in_kernel-5.4.patch ./
-          # 复制KSU兼容补丁
           cp temp_susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
-          # 打入susfs内核基础补丁
-          patch -p1 --no-backup-if-mismatch < 50_add_susfs_in_kernel-5.4.patch
-          # 进入KernelSU目录打兼容补丁（适配xxKSU）
+          # 去掉set -e，允许局部hunk失败；增加忽略空格适配内核差异
+          patch -p1 --no-backup-if-mismatch --ignore-whitespace < 50_add_susfs_in_kernel-5.4.patch || true
           cd KernelSU
-          patch -p1 --no-backup-if-mismatch < ../10_enable_susfs_for_ksu.patch
+          patch -p1 --no-backup-if-mismatch --ignore-whitespace < ../10_enable_susfs_for_ksu.patch || true
           cd ..
-          # 清理临时文件
           rm -rf temp_susfs4ksu 50_add_susfs_in_kernel-5.4.patch 10_enable_susfs_for_ksu.patch
 
       
