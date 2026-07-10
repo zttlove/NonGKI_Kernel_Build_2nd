@@ -107,13 +107,16 @@ jobs:
           find . -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i 's|^#undef CONFIG_KSU_SUSFS|\/\/#undef CONFIG_KSU_SUSFS|g' {} +
 
       
-      - name: 🪝 Patch Kernel of susfs4ksu (sidex15 xxksu compatible)
+      - name: 🪝 Install susfs4ksu from gitlab
         run: |
+          set -e
           cd $GITHUB_WORKSPACE/device_kernel
-          # 拉取适配xxksu的susfs内核补丁
-          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu
-          # 打入内核补丁
-          patch -p1 --no-backup-if-mismatch < temp_susfs4ksu/kernel.patch
+          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git temp_susfs4ksu
+          cp temp_susfs4ksu/kernel/fs/sus_su.c fs/
+          cp temp_susfs4ksu/kernel/include/linux/susfs*.h include/linux/
+          if ! grep -q "CONFIG_KSU_SUSFS" fs/Makefile; then
+            echo -e "\nifdef CONFIG_KSU_SUSFS\nobj-y += sus_su.o\nendif" >> fs/Makefile
+          fi
           rm -rf temp_susfs4ksu
 
       
