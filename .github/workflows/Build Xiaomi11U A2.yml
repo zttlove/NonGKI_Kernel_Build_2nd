@@ -111,7 +111,7 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE/device_kernel
           # 拉取适配xxksu的susfs内核补丁
-          git clone --depth=1 https://github.com/sidex15/susfs4ksu temp_susfs4ksu
+          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu
           # 打入内核补丁
           patch -p1 --no-backup-if-mismatch < temp_susfs4ksu/kernel.patch
           rm -rf temp_susfs4ksu
