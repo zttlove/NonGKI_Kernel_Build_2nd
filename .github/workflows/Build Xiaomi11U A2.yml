@@ -127,19 +127,7 @@ jobs:
           sed -i '/ksu_handle_sys_read/d' fs/read_write.c
           sed -i '/ksu_is_init_rc_hook_enabled/d' fs/read_write.c
           
-      - name: 🔗 Patch for no-kprobe
-        uses: ./.github/workflows/patch-no-kprobe
       
-      - name: 🪛 Extra Kernel Options
-        run: |
-          set -euo pipefail
-          cd "$GITHUB_WORKSPACE/device_kernel"
-         
-      - name: 🧰 Patch Kernel of Re:Kernel
-        uses: ./.github/workflows/patch-rekernel
-
-      - name: 🔒 Patch Kernel of Baseband Guard
-        uses: ./.github/workflows/patch-baseband-guard
       
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process1
