@@ -97,38 +97,14 @@ jobs:
       - name: ⚙️ Get necessary tools
         uses: ./.github/workflows/build-ready1
 
-     
-     
-
-      
       - name: Block undef CONFIG_KSU_SUSFS
         run: |
           cd $GITHUB_WORKSPACE/device_kernel
           find . -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i 's|^#undef CONFIG_KSU_SUSFS|\/\/#undef CONFIG_KSU_SUSFS|g' {} +
-
       
-      - name: 🪝 Apply SUSFS4KSU for 5.4 NonGKI
-        run: |
-          cd $GITHUB_WORKSPACE/device_kernel
-          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git temp_susfs4ksu
-          cp temp_susfs4ksu/kernel_patches/50_add_susfs_in_kernel-5.4.patch ./
-          cp temp_susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
-          # 去掉set -e，允许局部hunk失败；增加忽略空格适配内核差异
-          patch -p1 --no-backup-if-mismatch --ignore-whitespace < 50_add_susfs_in_kernel-5.4.patch || true
-          cd KernelSU
-          patch -p1 --no-backup-if-mismatch --ignore-whitespace < ../10_enable_susfs_for_ksu.patch || true
-          cd ..
-          rm -rf temp_susfs4ksu 50_add_susfs_in_kernel-5.4.patch 10_enable_susfs_for_ksu.patch
-
-      - name: Remove incompatible ksu calls
-        run: |
-          cd $GITHUB_WORKSPACE/device_kernel
-          sed -i '/ksu_hide_setprocattr/d' security/selinux/hooks.c
-          sed -i '/ksu_handle_sys_read/d' fs/read_write.c
-          sed -i '/ksu_is_init_rc_hook_enabled/d' fs/read_write.c
-          
-      
-      
+      - name: 🪝 Patch Kernel of SUSFS
+        uses: ./.github/workflows/patch-susfs1
+     
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process1
         
