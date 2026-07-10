@@ -96,51 +96,51 @@ jobs:
 
       - name: ⚙️ Get necessary tools
         uses: ./.github/workflows/build-ready1
-        
-      - name: Block undef CONFIG_KSU_SUSFS
-        run: |
-          cd $GITHUB_WORKSPACE/device_kernel
-          find . -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i 's|^#undef CONFIG_KSU_SUSFS|\/\/#undef CONFIG_KSU_SUSFS|g' {} +
-      
-      - name: Export xxksu symbols dynamically
-        run: |
-          cd $GITHUB_WORKSPACE/device_kernel
-          
-          # 1. 处理 ksu_handle_sys_read
-          # 假设第603行是调用代码，我们需要把603行包裹起来
-          sed -i '603s/^/#ifdef CONFIG_KSU\n/' fs/read_write.c
-          sed -i '603s/$/\n#endif/' fs/read_write.c
-          # 或者更安全的做法，匹配具体函数名进行包裹：
-          # sed -i '/ksu_handle_sys_read/i #ifdef CONFIG_KSU' fs/read_write.c
-          # sed -i '/ksu_handle_sys_read/a #endif' fs/read_write.c
-
-          # 2. 处理 selinux_setprocattr 里的 ksu_hide_setprocattr
-          # 同样，确保调用行被包裹
-          sed -i '/ksu_hide_setprocattr/i #ifdef CONFIG_KSU' security/selinux/hooks.c
-          sed -i '/ksu_hide_setprocattr/a #endif' security/selinux/hooks.c
-
-
-        
       
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
         
-            
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
-      
-      - name: 🪛 Extra Kernel Options
-        run: |
-          set -euo pipefail
-          cd "$GITHUB_WORKSPACE/device_kernel"
-          scripts/config --enable CONFIG_KSU
-          
+
       - name: 🧰 Patch Kernel of Re:Kernel
         uses: ./.github/workflows/patch-rekernel
 
       - name: 🔒 Patch Kernel of Baseband Guard
         uses: ./.github/workflows/patch-baseband-guard
+
+     
+      - name: Export xxksu symbols dynamically
+        run: |
+          cd $GITHUB_WORKSPACE/device_kernel
+          
+          # 1. 安全处理 ksu_handle_sys_read（使用内容匹配，不再使用硬编码行号）
+          # 检查文件是否存在该函数调用，如果存在则包裹
+          if grep -q "ksu_handle_sys_read" fs/read_write.c; then
+            sed -i '/ksu_handle_sys_read/i #ifdef CONFIG_KSU' fs/read_write.c
+            sed -i '/ksu_handle_sys_read/a #endif' fs/read_write.c
+          fi
+
+          # 2. 安全处理 ksu_hide_setprocattr
+          if grep -q "ksu_hide_setprocattr" security/selinux/hooks.c; then
+            sed -i '/ksu_hide_setprocattr/i #ifdef CONFIG_KSU' security/selinux/hooks.c
+            sed -i '/ksu_hide_setprocattr/a #endif' security/selinux/hooks.c
+          fi
+
       
+      - name: 🪛 Extra Kernel Options
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/device_kernel"
+          
+          # 启用 KernelSU 核心配置
+          scripts/config --enable CONFIG_KSU
+          # 如果你需要 SUSFS，也在这里启用
+          # scripts/config --enable CONFIG_KSU_SUSFS
+          
+          # 重新生成最终配置文件，这一步会触发 KernelSU 源码的编译
+          make olddefconfig
+
       
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process1
