@@ -86,6 +86,7 @@ jobs:
       CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
       CCACHE_NOHASHDIR: "true"
       CCACHE_HARDLINK: "true"
+      
     steps:
       - name: ⏰ Checkout repository
         uses: actions/checkout@v6
@@ -95,6 +96,30 @@ jobs:
 
       - name: ⚙️ Get necessary tools
         uses: ./.github/workflows/build-ready1
+        
+      - name: Block undef CONFIG_KSU_SUSFS
+        run: |
+          cd $GITHUB_WORKSPACE/device_kernel
+          find . -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i 's|^#undef CONFIG_KSU_SUSFS|\/\/#undef CONFIG_KSU_SUSFS|g' {} +
+      
+      - name: Export xxksu symbols dynamically
+        run: |
+          cd $GITHUB_WORKSPACE/device_kernel
+          
+          # 1. 处理 ksu_handle_sys_read
+          # 假设第603行是调用代码，我们需要把603行包裹起来
+          sed -i '603s/^/#ifdef CONFIG_KSU\n/' fs/read_write.c
+          sed -i '603s/$/\n#endif/' fs/read_write.c
+          # 或者更安全的做法，匹配具体函数名进行包裹：
+          # sed -i '/ksu_handle_sys_read/i #ifdef CONFIG_KSU' fs/read_write.c
+          # sed -i '/ksu_handle_sys_read/a #endif' fs/read_write.c
+
+          # 2. 处理 selinux_setprocattr 里的 ksu_hide_setprocattr
+          # 同样，确保调用行被包裹
+          sed -i '/ksu_hide_setprocattr/i #ifdef CONFIG_KSU' security/selinux/hooks.c
+          sed -i '/ksu_hide_setprocattr/a #endif' security/selinux/hooks.c
+
+
         
       
       - name: 🪝 Patch Kernel of SUSFS
@@ -115,24 +140,7 @@ jobs:
       - name: 🔒 Patch Kernel of Baseband Guard
         uses: ./.github/workflows/patch-baseband-guard
       
-      - name: Export xxksu symbols dynamically
-        run: |
-          cd $GITHUB_WORKSPACE/device_kernel
-          
-          # 1. 处理 ksu_handle_sys_read
-          # 假设第603行是调用代码，我们需要把603行包裹起来
-          sed -i '603s/^/#ifdef CONFIG_KSU\n/' fs/read_write.c
-          sed -i '603s/$/\n#endif/' fs/read_write.c
-          # 或者更安全的做法，匹配具体函数名进行包裹：
-          # sed -i '/ksu_handle_sys_read/i #ifdef CONFIG_KSU' fs/read_write.c
-          # sed -i '/ksu_handle_sys_read/a #endif' fs/read_write.c
-
-          # 2. 处理 selinux_setprocattr 里的 ksu_hide_setprocattr
-          # 同样，确保调用行被包裹
-          sed -i '/ksu_hide_setprocattr/i #ifdef CONFIG_KSU' security/selinux/hooks.c
-          sed -i '/ksu_hide_setprocattr/a #endif' security/selinux/hooks.c
-
-
+      
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process1
         
