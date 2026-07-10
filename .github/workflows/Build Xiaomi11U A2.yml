@@ -100,6 +100,21 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs1
         
+            
+      - name: 🔗 Patch for no-kprobe
+        uses: ./.github/workflows/patch-no-kprobe
+      
+      - name: 🪛 Extra Kernel Options
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/device_kernel"
+          
+      - name: 🧰 Patch Kernel of Re:Kernel
+        uses: ./.github/workflows/patch-rekernel
+
+      - name: 🔒 Patch Kernel of Baseband Guard
+        uses: ./.github/workflows/patch-baseband-guard
+      
       - name: Export xxksu symbols dynamically
         run: |
           cd $GITHUB_WORKSPACE/device_kernel
@@ -117,20 +132,6 @@ jobs:
           sed -i '/ksu_hide_setprocattr/i #ifdef CONFIG_KSU' security/selinux/hooks.c
           sed -i '/ksu_hide_setprocattr/a #endif' security/selinux/hooks.c
 
-        
-      - name: 🔗 Patch for no-kprobe
-        uses: ./.github/workflows/patch-no-kprobe
-      
-      - name: 🪛 Extra Kernel Options
-        run: |
-          set -euo pipefail
-          cd "$GITHUB_WORKSPACE/device_kernel"
-          
-      - name: 🧰 Patch Kernel of Re:Kernel
-        uses: ./.github/workflows/patch-rekernel
-
-      - name: 🔒 Patch Kernel of Baseband Guard
-        uses: ./.github/workflows/patch-baseband-guard
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process1
