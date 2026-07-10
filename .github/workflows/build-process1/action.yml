@@ -50,6 +50,7 @@ runs:
             echo "========================"
             echo "=Read Defconfig (Clang)="
             echo "========================"
+            make ARCH=arm64 mrproper
             scripts/config --enable CONFIG_KSU
             make CC="ccache clang" O=out ARCH="${{ env.KERNEL_ARCH }}" ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} ${{ env.DEFCONFIG_NAME }}
             
@@ -72,6 +73,7 @@ runs:
                 echo "==============================="
                 echo "=Execuate olddefconfig (Clang)="
                 echo "==============================="
+                make ARCH=arm64 mrproper
                 scripts/config --enable CONFIG_KSU
                 make CC="ccache clang" O=out ARCH="${{ env.KERNEL_ARCH }}" ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }} olddefconfig
                
