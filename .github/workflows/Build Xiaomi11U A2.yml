@@ -132,7 +132,13 @@ jobs:
           scripts/config --enable CONFIG_KSU
           # 注意：这里不要运行 make mrproper 或 make olddefconfig
           # 因为 build-process1 会重新生成配置
-
+          
+      - name: 🧹 Clean Kernel Source Tree
+        run: |
+          cd "$GITHUB_WORKSPACE/device_kernel"
+          # 使用 make mrproper 彻底清理源码根目录
+          # 这会删除所有编译残留和临时文件，但不会影响你刚刚通过 sed 修改的源码
+          make ARCH=arm64 mrproper
      
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process1
