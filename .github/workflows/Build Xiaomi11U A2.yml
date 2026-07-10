@@ -139,7 +139,7 @@ jobs:
           # scripts/config --enable CONFIG_KSU_SUSFS
           
           # 重新生成最终配置文件，这一步会触发 KernelSU 源码的编译
-          make olddefconfig
+          make ARCH=arm64 mrproper
 
       
       - name: 🚀 Build Process
