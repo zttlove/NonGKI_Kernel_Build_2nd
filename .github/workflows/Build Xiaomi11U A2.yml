@@ -162,19 +162,21 @@ jobs:
             -e 's/^do\.devicecheck=.*/do.devicecheck=0/' \
             -e 's/^IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=1/' \
             -e 's/^BLOCK=.*/BLOCK=boot/' \
-            -e 's/^do\.modules=.*/do.modules=1/' \
             "${ZIP_DIR}/anykernel.sh"
 
           # 5. 复制内核镜像
           cp -fv "${IMG_PATH}" "${ZIP_DIR}/"
-          MOD_TARGET="${ZIP_DIR}/modules/vendor/lib/modules"
-          mkdir -p "${MOD_TARGET}"
-          if find out -name "kernelsu.ko" -type f | grep -q .; then
-          find out -name "kernelsu.ko" -type f -exec cp -fv {} "${MOD_TARGET}/" \;
-          echo "✅ Successfully pack xxksu kernelsu.ko into flash zip"
-          else
-          echo "⚠️ kernelsu.ko not found, skip ksu module pack"
+
+          # 6. 复制模块 (可选)
+          if [[ "${PACK_KMODULES}" == "true" ]]; then
+            MOD_DIR="${ZIP_DIR}/modules/vendor/lib/modules"
+            mkdir -p "${MOD_DIR}"
+            if [ -d "out" ]; then
+                find out -name "*.ko" -type f -exec cp {} "${MOD_DIR}/" \;
+                echo "📦 Packed $(ls ${MOD_DIR} | wc -l) kernel modules."
+            fi
           fi
+
 
           # 6. 复制模块 (可选)
           if [[ "${PACK_KMODULES}" == "true" ]]; then
