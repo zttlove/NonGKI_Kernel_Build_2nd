@@ -123,78 +123,75 @@ jobs:
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
 
-      # 打包Anykernel3 仅Image内核专用
       - name: 📦 Package Anykernel3 Flash Zip
         if: env.PACK_METHOD == 'Anykernel3'
         shell: bash
         run: |
           set -euo pipefail
           echo "============================================="
-          echo "📦 开始打包 Star Hyper A16 内核卡刷包"
-          echo "============================================="
-
+          echo "📦 Packaging Star Hyper A16 Kernel"
+          echo "==========================================="
+          
           TIME=$(TZ=Asia/Shanghai date +"%Y-%m-%d")
           KERNEL_DIR="${GITHUB_WORKSPACE}/device_kernel"
-          TMP_DIR="${KERNEL_DIR}/tmp"
+          ZIP_DIR="${KERNEL_DIR}/AnyKernel3_Zip"
           IMG_PATH="${KERNEL_DIR}/out/arch/arm64/boot/Image"
+
           cd "${KERNEL_DIR}"
 
-          # 严格校验内核文件存在
           if [[ ! -f "${IMG_PATH}" ]]; then
-            echo "::error::❌ 编译失败，未找到 out/arch/arm64/boot/Image 内核文件"
+            echo "::error::❌ Build failed, Image not found at ${IMG_PATH}"
             exit 1
           fi
-          IMG_SIZE=$(du -h "${IMG_PATH}" | awk '{print $1}')
-          echo "✅ 检测到内核镜像 Image | 大小: ${IMG_SIZE}"
 
-          # 清理重建临时目录
-          rm -rf "${TMP_DIR}"
-          mkdir -p "${TMP_DIR}"
+          # 1. 准备打包目录
+          rm -rf "${ZIP_DIR}"
+          mkdir -p "${ZIP_DIR}"
 
-          # 自动修改Anykernel3机型适配参数
-          AK3_DIR="${KERNEL_DIR}/Anykernel3"
-          if [[ -d "${AK3_DIR}" && -f "${AK3_DIR}/anykernel.sh" ]]; then
-            sed -i \
-              -e 's/^name=.*/name="Star-HyperA16-NonGKI-Kernel"/' \
-              -e 's/^do\.devicecheck=.*/do.devicecheck=0/' \
-              -e 's/^IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=1/' \
-              -e 's/^BLOCK=.*/BLOCK=boot/' \
-              "${AK3_DIR}/anykernel.sh"
-              curl -L https://raw.githubusercontent.com/zttlove/NonGKI_Kernel_Build_2nd/mainline/Patches/anykernel.sh -o Anykernel3/anykernel.sh
-              chmod +x Anykernel3/anykernel.sh
+          # 2. 获取 AnyKernel3 (如果未预先下载)
+          if [ ! -d "Anykernel3" ]; then
+             git clone --depth=1 -b "${AK3_BRANCH}" "${AK3_SOURCE}" Anykernel3
           fi
 
-          # 复制内核主镜像
-          cp -v "${IMG_PATH}" "${TMP_DIR}/Image"
+          # 3. 复制 AK3 基础文件
+          cp -rf Anykernel3/* "${ZIP_DIR}/"
+          rm -rf "${ZIP_DIR}/.git"
 
-          # 按需打包内核模块
-          if [[ "${{ env.PACK_KMODULES }}" == "true" ]]; then
-            MOD_DIR="${TMP_DIR}/modules/vendor/lib/modules"
+          # 4. 替换并配置 anykernel.sh
+          # 下载定制脚本或修改现有脚本
+          curl -fsL https://raw.githubusercontent.com/zttlove/NonGKI_Kernel_Build_2nd/mainline/Patches/anykernel.sh -o "${ZIP_DIR}/anykernel.sh" || true
+          
+          sed -i \
+            -e 's/^name=.*/name="Star-HyperA16-NonGKI-Kernel"/' \
+            -e 's/^do\.devicecheck=.*/do.devicecheck=0/' \
+            -e 's/^IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=1/' \
+            -e 's/^BLOCK=.*/BLOCK=boot/' \
+            "${ZIP_DIR}/anykernel.sh"
+
+          # 5. 复制内核镜像
+          cp -fv "${IMG_PATH}" "${ZIP_DIR}/"
+
+
+          # 6. 复制模块 (可选)
+          if [[ "${PACK_KMODULES}" == "true" ]]; then
+            MOD_DIR="${ZIP_DIR}/modules/vendor/lib/modules"
             mkdir -p "${MOD_DIR}"
-            find . -name "*.ko" -type f -print0 | xargs -0 cp -t "${MOD_DIR}/" 2>/dev/null || true
-            module_count=$(find "${MOD_DIR}" -name "*.ko" | wc -l)
-            echo "📦 打包内核模块: ${module_count} 个"
-            [[ ${module_count} -eq 0 ]] && rm -rf "${TMP_DIR}/modules"
-          else
-            echo "ℹ️ 已关闭模块打包，跳过ko文件"
+            if [ -d "out" ]; then
+                find out -name "*.ko" -type f -exec cp {} "${MOD_DIR}/" \;
+                echo "📦 Packed $(ls ${MOD_DIR} | wc -l) kernel modules."
+            fi
           fi
 
-          # 合并Anykernel3刷机脚本全部文件
-          [[ -d "${AK3_DIR}" ]] && cp -rp "${AK3_DIR}"/* "${TMP_DIR}/"
+          # 7. 修复权限
+          chmod -R 755 "${ZIP_DIR}/META-INF"
+          chmod 755 "${ZIP_DIR}/anykernel.sh"
 
-          # 最高压缩率打包ZIP
-          cd "${TMP_DIR}"
-          7za a -tzip -mx9 -mmt=on package.zip ./* >/dev/null
-          cd "${GITHUB_WORKSPACE}"
-
-          # 生成唯一不重复文件名
-          FINAL_ZIP="${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-${TIME}-Ak3.zip"
-          cp -fp "${TMP_DIR}/package.zip" "${FINAL_ZIP}"
-          echo "PACK_NAME=${FINAL_ZIP}" >> "${GITHUB_ENV}"
-          echo "✅ 刷机包打包完成: ${FINAL_ZIP}"
-
-          # 彻底清理临时垃圾文件
-          rm -rf "${TMP_DIR}"
+          # 8. 打包
+          cd "${ZIP_DIR}"
+          zip -r9 "${GITHUB_WORKSPACE}/${DEVICE_CODENAME}-${ROM_TEXT}-${TIME}-Ak3.zip" *
+          
+          echo "PACK_NAME=${DEVICE_CODENAME}-${ROM_TEXT}-${TIME}-Ak3.zip" >> "${GITHUB_ENV}"
+          echo "✅ Package created successfully."
 
       # 自动发布到GitHub Releases页面（动态标签永不重复报错）
       - name: 🚀 Auto Upload To Github Release
