@@ -1,4 +1,4 @@
-name: Build Xiaomi11U (hyper A16)
+name: Build Xiaomi11U (A3)
 
 on:
   workflow_call:
