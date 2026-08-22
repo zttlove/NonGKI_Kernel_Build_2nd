@@ -120,10 +120,16 @@ jobs:
       - name: 🔧 Patch Hide Stuff
         uses: ./.github/workflows/patch-hide-stuff
           
-      - name: Fix pgsize_migration.h symbol error
+      - name: Fix multiple missing symbols
         run: |
-           cd "$GITHUB_WORKSPACE/device_kernel"
-           sed -i 's/^#if PAGE_SIZE == SZ_4K && defined(CONFIG_64BIT)/#if 0/' include/linux/pgsize_migration.h
+          cd "$GITHUB_WORKSPACE/device_kernel"
+          # 1. 修复 pgsize_migration.h 头文件
+          sed -i 's/^#if PAGE_SIZE == SZ_4K && defined(CONFIG_64BIT)/#if 0/' include/linux/pgsize_migration.h
+          # 2. lookup_positive_unlocked 不存在，全局替换为 __lookup_hash
+          sed -i 's/\blookup_positive_unlocked\b/__lookup_hash/g' fs/debugfs/inode.c fs/overlayfs/namei.c
+          # 3. page_get_link_raw 改 page_get_link
+          sed -i 's/\bpage_get_link_raw\b/page_get_link/g' fs/fuse/dir.c
+
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
 
