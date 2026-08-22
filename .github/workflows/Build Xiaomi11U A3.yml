@@ -119,6 +119,7 @@ jobs:
 
       - name: 🔧 Patch Hide Stuff
         uses: ./.github/workflows/patch-hide-stuff
+          sed -i 's/^#if PAGE_SIZE == SZ_4K && defined(CONFIG_64BIT)/#if 0/' include/linux/pgsize_migration.h
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
