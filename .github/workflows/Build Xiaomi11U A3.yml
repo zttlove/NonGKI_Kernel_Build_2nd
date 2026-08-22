@@ -123,12 +123,27 @@ jobs:
       - name: Fix multiple missing symbols
         run: |
           cd "$GITHUB_WORKSPACE/device_kernel"
-          # 1. 修复 pgsize_migration.h 头文件
+          # 1. 修复 pgsize_migration.h
           sed -i 's/^#if PAGE_SIZE == SZ_4K && defined(CONFIG_64BIT)/#if 0/' include/linux/pgsize_migration.h
-          # 2. lookup_positive_unlocked 不存在，全局替换为 __lookup_hash
-          sed -i 's/\blookup_positive_unlocked\b/__lookup_hash/g' fs/debugfs/inode.c fs/overlayfs/namei.c
-          # 3. page_get_link_raw 改 page_get_link
+          # 2. page_get_link_raw 修正
           sed -i 's/\bpage_get_link_raw\b/page_get_link/g' fs/fuse/dir.c
+          # 3. 在 fs/namei.c 头部追加 lookup_positive_unlocked 实现
+          grep -q 'lookup_positive_unlocked' fs/namei.c || cat >> fs/namei.c << 'EOF'
+          struct dentry *lookup_positive_unlocked(struct inode *dir,const struct qstr *name, unsigned int flags)
+          { 
+          struct dentry *dentry;
+          dentry = lookup_hash(name, dir, flags);
+          if (IS_ERR(dentry))
+          return dentry;
+          if (!dentry->d_inode) {
+          dput(dentry);
+          return ERR_PTR(-ENOENT)
+          }
+          return dentry;
+          }
+          EXPORT_SYMBOL(lookup_positive_unlocked);
+          EOF
+)
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
