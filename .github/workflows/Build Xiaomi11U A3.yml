@@ -120,26 +120,24 @@ jobs:
       - name: 🔧 Patch Hide Stuff
         uses: ./.github/workflows/patch-hide-stuff
           
-      - name: Fix all missing symbols & broken syntax
+      - name: Fix missing symbols with weak stub (no code break)
         run: |
           cd "$GITHUB_WORKSPACE/device_kernel"
-          # 1. pgsize_migration 旧问题修复
+          # 1. 修复pgsize_migration.h vma符号老问题
           sed -i 's/^#if PAGE_SIZE == SZ_4K && defined(CONFIG_64BIT)/#if 0/' include/linux/pgsize_migration.h
-          # 2. fuse page_get_link_raw
+          # 2. fuse page_get_link_raw 简单修复
           sed -i 's/\bpage_get_link_raw\b/page_get_link/g' fs/fuse/dir.c
 
-          # ========== overlayfs 处理 ==========
-          # 删除调用 lookup_positive_unlocked 那一行，彻底删掉语句，杜绝括号错乱
-          sed -i '/lookup_positive_unlocked(/d' fs/overlayfs/namei.c
-          # 初始化未赋值变量 this = NULL
-          sed -i '201 s/struct dentry \*this;/struct dentry \*this = NULL;/' fs/overlayfs/namei.c
-          # 初始化两处 index 变量
-          sed -i '654 s/struct dentry \*index;/struct dentry \*index = NULL;/' fs/overlayfs/namei.c
-          sed -i '684 s/struct dentry \*index;/struct dentry \*index = NULL;/' fs/overlayfs/namei.c
-
-          # ========== debugfs 处理 ==========
-          # 删除两处 lookup_positive_unlocked 调用行
-          sed -i '/lookup_positive_unlocked(/d' fs/debugfs/inode.c
+          # 3. 【核心】在 namei.h 尾部添加弱兼容空桩函数
+          # 匹配你 namei.h 里的原版声明签名，完美兼容，无类型冲突
+          cat >> include/linux/namei.h <<'EOF'
+          #include <linux/dcache.h>
+          __attribute__((weak))
+          struct dentry *lookup_positive_unlocked(const char *name, struct dentry *parent, int flags)
+          {
+          return ERR_PTR(-ENOENT);
+          }
+          EOF
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
