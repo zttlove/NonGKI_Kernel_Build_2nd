@@ -120,25 +120,7 @@ jobs:
       - name: 🔧 Patch Hide Stuff
         uses: ./.github/workflows/patch-hide-stuff
           
-      - name: Fix missing symbols with weak stub (no code break)
-        run: |
-          cd "$GITHUB_WORKSPACE/device_kernel"
-          # 1. 修复pgsize_migration.h vma符号老问题
-          sed -i 's/^#if PAGE_SIZE == SZ_4K && defined(CONFIG_64BIT)/#if 0/' include/linux/pgsize_migration.h
-          # 2. fuse page_get_link_raw 简单修复
-          sed -i 's/\bpage_get_link_raw\b/page_get_link/g' fs/fuse/dir.c
-
-          # 3. 【核心】在 namei.h 尾部添加弱兼容空桩函数
-          # 匹配你 namei.h 里的原版声明签名，完美兼容，无类型冲突
-          cat >> include/linux/namei.h <<'EOF'
-          #include <linux/dcache.h>
-          __attribute__((weak))
-          struct dentry *lookup_positive_unlocked(const char *name, struct dentry *parent, int flags)
-          {
-          return ERR_PTR(-ENOENT);
-          }
-          EOF
-
+    
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
 
