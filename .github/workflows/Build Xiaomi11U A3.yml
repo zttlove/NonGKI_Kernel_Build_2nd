@@ -123,26 +123,19 @@ jobs:
       - name: Fix multiple missing symbols
         run: |
           cd "$GITHUB_WORKSPACE/device_kernel"
-          # 1. 修复 pgsize_migration.h
+          # 1. 修复 pgsize_migration.h 之前的vma符号问题
           sed -i 's/^#if PAGE_SIZE == SZ_4K && defined(CONFIG_64BIT)/#if 0/' include/linux/pgsize_migration.h
-          # 2. page_get_link_raw 修正
+          # 2. fuse: page_get_link_raw -> page_get_link
           sed -i 's/\bpage_get_link_raw\b/page_get_link/g' fs/fuse/dir.c
-          # 3. 在 fs/namei.c 头部追加 lookup_positive_unlocked 实现
-          grep -q 'lookup_positive_unlocked' fs/namei.c || cat >> fs/namei.c << 'EOF'
-          struct dentry *lookup_positive_unlocked(struct inode *dir,const struct qstr *name, unsigned int flags)
-          { 
-          struct dentry *dentry;
-          dentry = lookup_hash(name, dir, flags);
-          if (IS_ERR(dentry))
-          return dentry;
-          if (!dentry->d_inode) {
-          dput(dentry);
-          return ERR_PTR(-ENOENT)
-          }
-          return dentry;
-          }
-          EXPORT_SYMBOL(lookup_positive_unlocked);
-          EOF
+
+          # ========== 根治 lookup_positive_unlocked 链接报错 ==========
+          # debugfs/inode.c 两处调用改写为 lookup_one_len
+          sed -i 's/lookup_positive_unlocked(name, parent, 0)/lookup_one_len(name->name, parent, name->len)/g' fs/debugfs/inode.c
+          sed -i 's/lookup_positive_unlocked(name, parent, 0)/lookup_one_len(name->name, parent, name->len)/g' fs/debugfs/inode.c
+
+          # overlayfs/namei.c 调用替换
+          sed -i 's/lookup_positive_unlocked(\&fh_name, dentry, 0)/lookup_one_len(fh_name.name, dentry, fh_name.len)/g' fs/overlayfs/namei.c
+
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
