@@ -120,15 +120,16 @@ jobs:
       - name: 🔧 Patch Hide Stuff
         uses: ./.github/workflows/patch-hide-stuff
           
-      - name: Fix all missing symbols
+      - name: Fix all missing symbols & broken code
         run: |
           cd "$GITHUB_WORKSPACE/device_kernel"
-          # 1. 解决pgsize_migration vma系列符号
+          # 1. 修复pgsize_migration.h vma符号问题
           sed -i 's/^#if PAGE_SIZE == SZ_4K && defined(CONFIG_64BIT)/#if 0/' include/linux/pgsize_migration.h
-          # 2. fuse raw后缀修正
+          # 2. 修复 page_get_link_raw
           sed -i 's/\bpage_get_link_raw\b/page_get_link/g' fs/fuse/dir.c
-          # 3. 批量注释所有 lookup_positive_unlocked 调用，彻底消除未定义符号
-          sed -i 's/\<lookup_positive_unlocked(/\/\/&/' fs/debugfs/inode.c fs/overlayfs/namei.c
+
+          # 3. 完整注释掉包含 lookup_positive_unlocked 的整行，杜绝变量残留报错
+          sed -i '/lookup_positive_unlocked(/ s/^/\/\*/; /lookup_positive_unlocked(/ s/$/\*\//' fs/debugfs/inode.c fs/overlayfs/namei.c
 
 
       - name: 🚀 Build Process
