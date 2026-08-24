@@ -132,6 +132,7 @@ jobs:
           sed -i 's/\.proc_release/.release/' kernel/kallsyms.c
           
           sed -i 's/struct call_single_data csd;/struct call_single_data csd __aligned(32);/' block/blk‑mq.h
+          sed -i 's/(u32)device->iface_q_table.align_virtual_addr/(uintptr_t)device->iface_q_table.align_virtual_addr/' techpack/video/msm/vidc/hfi_iris2.c
      
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
