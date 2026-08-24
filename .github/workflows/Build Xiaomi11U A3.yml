@@ -176,7 +176,12 @@ jobs:
           grep "^#if 0" include/linux/pgsize_migration.h
           
           
-          sed -i '/static const char \*sym_whitelist\[\] = {/a\	"__stack_chk_guard",\n	"__stack_chk_fail",' scripts/mod/modpost.c
+          
+          # 删除旧配置
+          sed -i '/CONFIG_STACKPROTECTOR/d' arch/arm64/configs/star_defconfig
+          # 完全关闭栈保护
+          echo "# CONFIG_STACKPROTECTOR is not set" >> arch/arm64/configs/star_defconfig
+
 
           sed -i 's/^LDFLAGS +=/LDFLAGS += --no-warn-asm-clobber-reserved-registers /' Makefile
 
