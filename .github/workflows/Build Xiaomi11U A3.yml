@@ -149,6 +149,10 @@ jobs:
           # 把CONFIG_KSU_SUSFS_SUS_PATH整个块注释跳过
           sed -i 's/#ifdef CONFIG_KSU_SUSFS_SUS_PATH/#if 0/' fs/namei.c
           
+          echo 'CFLAGS_block/blk-mq.o += -Wno-align-mismatch' >> Makefile
+          
+          sed -i 's/struct call_single_data csd;/struct call_single_data csd __aligned(32);/' include/linux/blk-mq.h
+          
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
 
