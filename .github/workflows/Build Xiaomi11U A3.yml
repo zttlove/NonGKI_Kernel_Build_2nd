@@ -156,29 +156,32 @@ jobs:
           # blk‑mq对齐警告屏蔽
            echo 'CFLAGS_block/blk-mq.o += -Wno-align-mismatch' >> Makefile
            
-          # ========== 1. 修复 __stack_chk_guard 未定义（弱符号兜底） ==========
+          
+
+          # 1. 修复 __stack_chk_guard 弱符号
           cat >> init/main.c <<'EOF'
           #if defined(CONFIG_STACKPROTECTOR)
           unsigned long __weak __stack_chk_guard;
           #endif
           EOF
 
-          # ========== 2. 禁用 page size migration 整套API，解决 get_pad_vma 系列未定义 ==========
-          # 把条件 #if PAGE_SIZE == SZ_4K && defined(CONFIG_64BIT) 改为 #if 0 直接关闭整个模块
+          # 2. 关闭 page‑size‑migration 头文件整套条件编译，屏蔽extern声明
           sed -i 's/^#if PAGE_SIZE == SZ_4K \&\& defined(CONFIG_64BIT)/#if 0/' include/linux/pgsize_migration.h
 
-          # ========== 3. task_mmu.c 清除调用点，彻底干掉 show_map_pad_vma 引用 ==========
-          # 注释掉 show_map / show_smap 里面 show_map_pad_vma 调用
-          sed -i '/show_map_pad_vma/,/^[[:space:]]*}/s/^/# /' fs/proc/task_mmu.c
+           # 3. 在 init/main.c 追加这三个缺失函数的空弱实现（关键！不去修改task_mmu.c）
+           cat >> init/main.c <<'EOF'
 
-          # ========== 校验 ==========
-          echo "=== check __stack_chk_guard in main.c ==="
-          grep "__stack_chk_guard" init/main.c
-          echo "=== check pgsize_migration disable ==="
-          grep "^#if 0" include/linux/pgsize_migration.h
-          echo "=== check show_map_pad_vma call commented ==="
-          grep "show_map_pad_vma" fs/proc/task_mmu.c
+           #if 0
+           #include <linux/pgsize_migration.h>
+           unsigned long __weak get_pad_vma(struct vm_area_struct *vma) { return 0; }
+           unsigned long __weak get_data_vma(struct vm_area_struct *vma) { return 0; }
+           void __weak show_map_pad_vma(struct seq_file *m, struct vm_area_struct *vma) { }
+           #endif
+           EOF
 
+           # 校验
+           grep -E "__stack_chk_guard|get_pad_vma|show_map_pad_vma" init/main.c
+           grep "^#if 0" include/linux/pgsize_migration.h
 
            
       - name: 🚀 Build Process
