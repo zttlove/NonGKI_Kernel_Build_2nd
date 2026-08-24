@@ -804,12 +804,7 @@ index 7955b65..76b4025 100644
 +	unlock_mount_hash();
 +	return &mnt->mnt;
 +}
-+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-diff --git a/fs/notify/fdinfo.c b/fs/notify/fdinfo.c
-index 7df9ad4..145ba52 100644
---- a/fs/notify/fdinfo.c
-+++ b/fs/notify/fdinfo.c
-@@ -13,6 +13,9 @@
+
  #include <linux/seq_file.h>
  #include <linux/proc_fs.h>
  #include <linux/exportfs.h>
