@@ -178,6 +178,7 @@ jobs:
           
           sed -i '/static const char \*sym_whitelist\[\] = {/a\	"__stack_chk_guard",\n	"__stack_chk_fail",' scripts/mod/modpost.c
 
+          sed -i 's/^LDFLAGS +=/LDFLAGS += --no-warn-asm-clobber-reserved-registers /' Makefile
 
            
       - name: 🚀 Build Process
