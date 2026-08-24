@@ -122,7 +122,15 @@ jobs:
       - name: 🔧 Patch Hide Stuff
         uses: ./.github/workflows/patch-hide-stuff
           
-    
+      - name: Fix kallsyms incomplete proc_ops
+        run: |
+          cd "$GITHUB_WORKSPACE/device_kernel"
+          sed -i 's/static const struct proc_ops kallsyms_proc_ops = {/static const struct file_operations kallsyms_proc_ops = {/' kernel/kallsyms.c
+          sed -i 's/\.proc_open/.open/' kernel/kallsyms.c
+          sed -i 's/\.proc_read/.read/' kernel/kallsyms.c
+          sed -i 's/\.proc_lseek/.llseek/' kernel/kallsyms.c
+          sed -i 's/\.proc_release/.release/' kernel/kallsyms.c
+
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
 
