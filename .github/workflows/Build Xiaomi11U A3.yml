@@ -155,10 +155,7 @@ jobs:
 
           # blk‑mq对齐警告屏蔽
            echo 'CFLAGS_block/blk-mq.o += -Wno-align-mismatch' >> Makefile
-           # 删除 ", \"x18\""
-           find . -type f -name "*.c" -exec sed -i 's/, "x18"//g' {} \;
-           # 删除开头 "x18",
-           find . -type f -name "*.c" -exec sed -i 's/"x18", //g' {} \;
+           
 
            
       - name: 🚀 Build Process
