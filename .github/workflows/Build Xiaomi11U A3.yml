@@ -155,33 +155,26 @@ jobs:
 
           # blk‑mq对齐警告屏蔽
            echo 'CFLAGS_block/blk-mq.o += -Wno-align-mismatch' >> Makefile
-           
-          
+      
 
-          # 1. 修复 __stack_chk_guard 弱符号
-          cat >> init/main.c <<'EOF'
+          # ========== 追加C弱符号到 init/main.c （只写C代码，禁止混入shell/grep） ==========
+          cat >> init/main.c <<'CEOF'
           #if defined(CONFIG_STACKPROTECTOR)
           unsigned long __weak __stack_chk_guard;
           #endif
-          EOF
 
-          # 2. 关闭 page‑size‑migration 头文件整套条件编译，屏蔽extern声明
+          unsigned long __weak get_pad_vma(struct vm_area_struct *vma) { return 0; }
+          unsigned long __weak get_data_vma(struct vm_area_struct *vma) { return 0; }
+          void __weak show_map_pad_vma(struct seq_file *m, struct vm_area_struct *vma) { }
+          CEOF
+
+          # 关闭 pgsize_migration 头文件条件
           sed -i 's/^#if PAGE_SIZE == SZ_4K \&\& defined(CONFIG_64BIT)/#if 0/' include/linux/pgsize_migration.h
 
-           # 3. 在 init/main.c 追加这三个缺失函数的空弱实现（关键！不去修改task_mmu.c）
-           cat >> init/main.c <<'EOF'
+          # 下面是shell校验，运行在CI shell，不会写入C文件
+          grep -E "__stack_chk_guard|get_pad_vma|show_map_pad_vma" init/main.c
+          grep "^#if 0" include/linux/pgsize_migration.h
 
-           #if 0
-           #include <linux/pgsize_migration.h>
-           unsigned long __weak get_pad_vma(struct vm_area_struct *vma) { return 0; }
-           unsigned long __weak get_data_vma(struct vm_area_struct *vma) { return 0; }
-           void __weak show_map_pad_vma(struct seq_file *m, struct vm_area_struct *vma) { }
-           #endif
-           EOF
-
-           # 校验
-           grep -E "__stack_chk_guard|get_pad_vma|show_map_pad_vma" init/main.c
-           grep "^#if 0" include/linux/pgsize_migration.h
 
            
       - name: 🚀 Build Process
