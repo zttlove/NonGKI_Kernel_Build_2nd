@@ -130,7 +130,9 @@ jobs:
           sed -i 's/\.proc_read/.read/' kernel/kallsyms.c
           sed -i 's/\.proc_lseek/.llseek/' kernel/kallsyms.c
           sed -i 's/\.proc_release/.release/' kernel/kallsyms.c
-
+          
+          sed -i 's/struct call_single_data csd;/struct call_single_data csd __aligned(32);/' block/blk‑mq.h
+     
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
 
