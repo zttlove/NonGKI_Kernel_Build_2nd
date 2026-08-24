@@ -152,9 +152,6 @@ jobs:
           echo 'CFLAGS_block/blk-mq.o += -Wno-align-mismatch' >> Makefile
           
           sed -i 's/struct call_single_data csd;/struct call_single_data csd __aligned(32);/' include/linux/blk-mq.h
-          # namespace.c susfs GKI补丁不兼容5.4‑nonGKI，直接禁用
-          sed -i 's/#ifdef CONFIG_KSU_SUSFS/#if 0/' fs/namespace.c
-          sed -i 's/#elif CONFIG_KSU_SUSFS/#elif 0/' fs/namespace.c
 
           # namei.c sus‑path补丁错乱，禁用
           sed -i 's/#ifdef CONFIG_KSU_SUSFS_SUS_PATH/#if 0/' fs/namei.c
