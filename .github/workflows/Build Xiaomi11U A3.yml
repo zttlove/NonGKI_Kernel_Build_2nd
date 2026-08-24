@@ -141,11 +141,13 @@ jobs:
           # 在__lookup_hash函数变量区注入 bool found_sus_path = false;
           sed -i '/struct inode \*dir = base->d_inode;/a\#ifdef CONFIG_KSU_SUSFS_SUS_PATH\n\tbool found_sus_path = false;\n#endif' fs/namei.c
 
-          # 在 dentry = d_alloc(base, name); 下一行插入 retry:
-           sed -i '/dentry = d_alloc(base, name);/a\#ifdef CONFIG_KSU_SUSFS_SUS_PATH\nretry:\n#endif' fs/namei.c
+          printf '#ifdef CONFIG_KSU_SUSFS_SUS_PATH\n\tbool found_sus_path = false;\n#endif\n' | sed -i '/struct inode \*dir = base->d_inode;/r /dev/stdin' fs/namei.c
 
+          # 注入 retry: 标签
+          printf '#ifdef CONFIG_KSU_SUSFS_SUS_PATH\nretry:\n#endif\n' | sed -i '/dentry = d_alloc(base, name);/r /dev/stdin' fs/namei.c
+          
           # 把CONFIG_KSU_SUSFS_SUS_PATH整个块注释跳过
-          sed -i 's/#ifdef CONFIG_KSU_SUSFS_SUS_PATH/#if 0/' fs/namei.concurrency
+          sed -i 's/#ifdef CONFIG_KSU_SUSFS_SUS_PATH/#if 0/' fs/namei.c
           
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
