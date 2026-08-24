@@ -175,8 +175,8 @@ jobs:
           grep -E "__stack_chk_guard|get_pad_vma|show_map_pad_vma" init/main.c
           grep "^#if 0" include/linux/pgsize_migration.h
           
-          sed -i '/CONFIG_STACKPROTECTOR_MODULE/d' arch/arm64/configs/xxx_defconfig
-          echo "# CONFIG_STACKPROTECTOR_MODULE is not set" >> arch/arm64/configs/xxx_defconfig
+          sed -i '/CONFIG_STACKPROTECTOR_MODULE/d' arch/arm64/configs/star_defconfig
+          echo "# CONFIG_STACKPROTECTOR_MODULE is not set" >> arch/arm64/configs/star_defconfig
 
 
            
