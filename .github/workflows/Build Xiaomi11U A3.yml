@@ -110,6 +110,8 @@ jobs:
       - name: 🪛 Extra Kernel Options
         run: |
           cd "$GITHUB_WORKSPACE/device_kernel"
+          sed -i '28s|#include <linux/susfs_def.h>|//#include <linux/susfs_def.h>|' kernel/kallsyms.c
+
 
       - name: 🧰 Patch Kernel of Re:Kernel
         uses: ./.github/workflows/patch-rekernel
