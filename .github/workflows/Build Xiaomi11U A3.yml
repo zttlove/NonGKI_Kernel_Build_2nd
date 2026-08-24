@@ -138,6 +138,14 @@ jobs:
           sed -i '253s/heap->type/(enum msm_ion_heap_types)heap->type/' drivers/staging/android/ion/heaps/msm_ion.c
           sed -i '254s/heap->type/(enum msm_ion_heap_types)heap->type/' drivers/staging/android/ion/heaps/msm_ion.c
           sed -i '255s/heap->type/(enum msm_ion_heap_types)heap->type/' drivers/staging/android/ion/heaps/msm_ion.c
+          # 在__lookup_hash函数变量区注入 bool found_sus_path = false;
+          sed -i '/struct inode \*dir = base->d_inode;/a\#ifdef CONFIG_KSU_SUSFS_SUS_PATH\n\tbool found_sus_path = false;\n#endif' fs/namei.c
+
+          # 在 dentry = d_alloc(base, name); 下一行插入 retry:
+           sed -i '/dentry = d_alloc(base, name);/a\#ifdef CONFIG_KSU_SUSFS_SUS_PATH\nretry:\n#endif' fs/namei.c
+
+          # 把CONFIG_KSU_SUSFS_SUS_PATH整个块注释跳过
+          sed -i 's/#ifdef CONFIG_KSU_SUSFS_SUS_PATH/#if 0/' fs/namei.concurrency
           
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
