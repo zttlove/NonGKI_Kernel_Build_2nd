@@ -131,7 +131,9 @@ jobs:
           sed -i 's/\.proc_lseek/.llseek/' kernel/kallsyms.c
           sed -i 's/\.proc_release/.release/' kernel/kallsyms.c
           
-          sed -i 's/struct call_single_data csd;/struct call_single_data csd __aligned(32);/' block/blk‑mq.h
+          sed -i '622i\                struct call_single_data __aligned(32) local_csd = rq->csd;' block/blk-mq.c
+          sed -i '623s/&rq->csd/\&local_csd/' block/blk-mq.c
+          sed -i '624i\                rq->csd = local_csd;' block/blk-mq.c
           sed -i 's/(u32)device->iface_q_table.align_virtual_addr/(uintptr_t)device->iface_q_table.align_virtual_addr/' techpack/video/msm/vidc/hfi_iris2.c
           sed -i '253s/heap->type/(enum msm_ion_heap_types)heap->type/' drivers/staging/android/ion/heaps/msm_ion.c
           sed -i '254s/heap->type/(enum msm_ion_heap_types)heap->type/' drivers/staging/android/ion/heaps/msm_ion.c
