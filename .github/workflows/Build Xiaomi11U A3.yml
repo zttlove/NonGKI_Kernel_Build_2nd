@@ -185,6 +185,11 @@ jobs:
 
           sed -i 's/^LDFLAGS +=/LDFLAGS += --no-warn-asm-clobber-reserved-registers /' Makefile
           cat /dev/null > KernelSU/kernel/tools/inline_hook_check.mk
+          sed -i 's/struct proc_ops/struct file_operations/g' kernel/module.c
+          sed -i 's/.proc_open/.open/g' kernel/module.c
+          sed -i 's/.proc_read/.read/g' kernel/module.c
+          sed -i 's/.proc_lseek/.llseek/g' kernel/module.c
+          sed -i 's/.proc_release/.release/g' kernel/module.c
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
