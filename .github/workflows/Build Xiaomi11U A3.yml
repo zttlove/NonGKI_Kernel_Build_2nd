@@ -182,9 +182,13 @@ jobs:
           # 完全关闭栈保护
           echo "# CONFIG_STACKPROTECTOR is not set" >> arch/arm64/configs/star_defconfig
 
-
           sed -i 's/^LDFLAGS +=/LDFLAGS += --no-warn-asm-clobber-reserved-registers /' Makefile
           
+          # 搜索所有包含x18 clobber的源码文件
+          grep -rl '"x18"' --include="*.c" fs/ kernel/
+          # 批量替换，移除x18
+          grep -rl '"x18"' --include="*.c" fs/ kernel/ | xargs sed -i 's/"x0","x1","x18","memory"/"x0","x1","memory"/g'
+          grep -rl '"x18"' --include="*.c" fs/ kernel/ | xargs sed -i 's/"x18",//g'
           
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
