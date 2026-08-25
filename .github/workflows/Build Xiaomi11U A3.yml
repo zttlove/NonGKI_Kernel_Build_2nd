@@ -190,6 +190,7 @@ jobs:
           sed -i 's/.proc_read/.read/g' kernel/module.c
           sed -i 's/.proc_lseek/.llseek/g' kernel/module.c
           sed -i 's/.proc_release/.release/g' kernel/module.c
+          sed -i '/#include "ecryptfs_kernel.h"/d' fs/read_write.c
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
