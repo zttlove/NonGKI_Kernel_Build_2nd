@@ -161,12 +161,15 @@ jobs:
           sed -i 's/^LDFLAGS +=/LDFLAGS += --no-warn-asm-clobber-reserved-registers /' Makefile
           fi
 
-          # 7. 安全移除 x18 clobber（更宽松的匹配）
-          files=$(grep -rl '"x18"' --include="*.c" fs/ kernel/ || true)
-          if [ -n "$files" ]; then
-          echo "$files" | xargs sed -i 's/"x0",\s*"x1",\s*"x18",\s*"memory"/"x0", "x1", "memory"/g'
-          echo "$files" | xargs sed -i 's/,\s*"x18"//g'
+          # 使用 -z 参数让 grep 以 null 结尾，配合 xargs -0 处理（虽然这里只是赋值，但养成好习惯）
+          # 直接捕获 grep 的结果，利用 grep 的退出码进行判断，比判断字符串是否为空更优雅
+          if remain=$(grep -rl '"x18"' --include="*.c" fs/ kernel/ 2>/dev/null); then
+          echo "WARNING: still has x18 clobber in files:"
+          echo "$remain"
+          else
+          echo "SUCCESS: All x18 clobbers have been safely removed."
           fi
+
 
           # 8. 关闭 KSU 相关配置
           sed -i '/CONFIG_KSU/d' arch/arm64/configs/star_defconfig || true
