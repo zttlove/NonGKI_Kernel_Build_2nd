@@ -135,12 +135,14 @@ jobs:
           cat init/main.c.tmp >> init/main.c
           rm -f init/main.c.tmp
 
-          # 关闭pgsize_migration条件
+          # 先判断文件是否存在再执行sed，避免sed报错
+          if [ -f include/linux/pgsize_migration.h ]; then
           sed -i 's/^#if PAGE_SIZE == SZ_4K \&\& defined(CONFIG_64BIT)/#if 0/' include/linux/pgsize_migration.h
+          fi
 
-          # 容错校验
-          grep -E "get_pad_vma|show_map_pad_vma" init/main.c || true
-          grep "^#if 0" include/linux/pgsize_migration.h || true
+           # 容错校验，输出匹配结果，不阻断流程
+           grep -E "get_pad_vma|show_map_pad_vma" init/main.c || echo "Warning: pad vma weak symbols not found"
+           grep "^#if 0" include/linux/pgsize_migration.h || echo "Warning: pgsize_migration if0 not set"
 
           # 关闭栈保护
           sed -i '/CONFIG_STACKPROTECTOR/d' arch/arm64/configs/star_defconfig
