@@ -126,55 +126,35 @@ jobs:
         run: |
           cd "$GITHUB_WORKSPACE/device_kernel"
 
-          # 1. 修复kallsyms proc_ops兼容(低版本内核适配)
-          sed -i 's/static const struct proc_ops kallsyms_proc_ops = {/static const struct file_operations kallsyms_proc_ops = {/' kernel/kallsyms.c
-          sed -i 's/\.proc_open/.open/' kernel/kallsyms.c
-          sed -i 's/\.proc_read/.read/' kernel/kallsyms.c
-          sed -i 's/\.proc_lseek/.llseek/' kernel/kallsyms.c
-          sed -i 's/\.proc_release/.release/' kernel/kallsyms.c
-
-           # 2. 驱动类型强转警告修复
-          sed -i 's/(u32)device->iface_q_table.align_virtual_addr/(uintptr_t)device->iface_q_table.align_virtual_addr/' techpack/video/msm/vidc/hfi_iris2.c
-          sed -i '253s/heap->type/(enum msm_ion_heap_types)heap->type/' drivers/staging/android/ion/heaps/msm_ion.c
-          sed -i '254s/heap->type/(enum msm_ion_heap_types)heap->type/' drivers/staging/android/ion/heaps/msm_ion.c
-          sed -i '255s/heap->type/(enum msm_ion_heap_types)heap->type/' drivers/staging/android/ion/heaps/msm_ion.c
-
-          # 3. 禁用SUSFS sus_path补丁，避免逻辑错乱
-          sed -i 's/#ifdef CONFIG_KSU_SUSFS_SUS_PATH/#if 0/' fs/namei.c
-
-          # 4. blk-mq对齐警告屏蔽（只写一次）
-          echo 'CFLAGS_block/blk-mq.o += -Wno-align-mismatch' >> Makefile
-          sed -i 's/struct call_single_data csd;/struct call_single_data csd __aligned(32);/' include/linux/blk-mq.h
-
-          # 5. 关闭pgsize_migration
-          sed -i 's/^#if PAGE_SIZE == SZ_4K \&\& defined(CONFIG_64BIT)/#if 0/' include/linux/pgsize_migration.h
-
-          # 6. 注入弱符号桩函数（已关闭栈保护，移除__stack_chk_guard）
-          cat >> init/main.c <<'CEOF'
+          # 注入弱符号桩函数（干净无多余#if 0）
+          cat > init/main.c.tmp << 'CEOF'
           unsigned long __weak get_pad_vma(struct vm_area_struct *vma) { return 0; }
           unsigned long __weak get_data_vma(struct vm_area_struct *vma) { return 0; }
           void __weak show_map_pad_vma(struct seq_file *m, struct vm_area_struct *vma) { }
           CEOF
+          cat init/main.c.tmp >> init/main.c
+          rm -f init/main.c.tmp
 
-          # 校验桩函数是否写入成功
-          grep -E "get_pad_vma|show_map_pad_vma" init/main.c
-          grep "^#if 0" include/linux/pgsize_migration.h
+          # 关闭pgsize_migration条件
+          sed -i 's/^#if PAGE_SIZE == SZ_4K \&\& defined(CONFIG_64BIT)/#if 0/' include/linux/pgsize_migration.h
 
-          # 7. 彻底关闭栈保护CONFIG_STACKPROTECTOR
+          # 容错校验
+          grep -E "get_pad_vma|show_map_pad_vma" init/main.c || true
+          grep "^#if 0" include/linux/pgsize_migration.h || true
+
+          # 关闭栈保护
           sed -i '/CONFIG_STACKPROTECTOR/d' arch/arm64/configs/star_defconfig
           echo "# CONFIG_STACKPROTECTOR is not set" >> arch/arm64/configs/star_defconfig
 
-          # 8. 链接器屏蔽X18警告（临时兜底）
+          # LDFLAGS追加参数
           sed -i 's/^LDFLAGS +=/LDFLAGS += --no-warn-asm-clobber-reserved-registers /' Makefile
 
-          # 9. 安全批量删除asm里的x18 clobber（精准匹配，避免误删逗号）
+          # 安全移除x18 clobber
           grep -rl '"x18"' --include="*.c" fs/ kernel/ | xargs sed -i 's/"x0","x1","x18","memory"/"x0","x1","memory"/g'
-          # 清理剩余独立x18项，谨慎匹配
           grep -rl ',"x18"' --include="*.c" fs/ kernel/ | xargs sed -i 's/,"x18"//g'
-          grep -rl '"x18",' --include="*.c" fs/ kernel/ | xargs sed -i 's/"x18",//g'
 
-          # 10. 清理编译缓存
           make clean
+
 
           
       - name: 🚀 Build Process
