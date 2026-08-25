@@ -124,58 +124,62 @@ jobs:
           
       - name: Fix kallsyms incomplete proc_ops
         run: |
+          set -e  # 遇到错误立即退出，避免在错误状态下继续编译
           cd "$GITHUB_WORKSPACE/device_kernel"
-          cd "$GITHUB_WORKSPACE/device_kernel"
-          sed -i '/^#if 0$/d' init/main.c
 
+          # 1. 清理可能冲突的宏定义
+          sed -i '/^#if 0$/d' init/main.c || true
 
-          # 注入弱符号桩函数（干净无多余#if 0，避免重复追加）
+          # 2. 注入弱符号桩函数（独立文件方式，更干净）
           if ! grep -q "get_pad_vma" init/main.c; then
-          cat > init/main.c.tmp << 'CEOF'
+          cat >> init/main.c << 'CEOF'
+
+          /* Weak symbols for pad vma */
           unsigned long __weak get_pad_vma(struct vm_area_struct *vma) { return 0; }
           unsigned long __weak get_data_vma(struct vm_area_struct *vma) { return 0; }
           void __weak show_map_pad_vma(struct seq_file *m, struct vm_area_struct *vma) { }
           CEOF
-          cat init/main.c.tmp >> init/main.c
-          rm -f init/main.c.tmp
           fi
 
-          # 先判断文件是否存在再执行sed，避免sed报错
+          # 3. 禁用 pgsize_migration 的 4K 检查
           if [ -f include/linux/pgsize_migration.h ]; then
           sed -i 's/^#if PAGE_SIZE == SZ_4K \&\& defined(CONFIG_64BIT)/#if 0/' include/linux/pgsize_migration.h
           fi
 
-          # 容错校验，输出匹配结果，不阻断流程
-          grep -E "get_pad_vma|show_map_pad_vma" init/main.c || echo "Warning: pad vma weak symbols not found"
+          # 4. 容错校验
+          grep -E "get_pad_vma|show_map_pad_vma" init/main.c || echo "::warning::pad vma weak symbols not found"
           if [ -f include/linux/pgsize_migration.h ]; then
-          grep "^#if 0" include/linux/pgsize_migration.h || echo "Warning: pgsize_migration if0 not set"
+          grep -q "^#if 0" include/linux/pgsize_migration.h || echo "::warning::pgsize_migration if0 not set"
           fi
 
-          # 关闭栈保护
-          sed -i '/CONFIG_STACKPROTECTOR/d' arch/arm64/configs/star_defconfig
+          # 5. 关闭栈保护
+          sed -i '/CONFIG_STACKPROTECTOR/d' arch/arm64/configs/star_defconfig || true
           echo "# CONFIG_STACKPROTECTOR is not set" >> arch/arm64/configs/star_defconfig
 
-          # LDFLAGS追加参数，避免重复追加
+          # 6. LDFLAGS 追加参数（防重复）
           if ! grep -q -- "--no-warn-asm-clobber-reserved-registers" Makefile; then
           sed -i 's/^LDFLAGS +=/LDFLAGS += --no-warn-asm-clobber-reserved-registers /' Makefile
           fi
 
-          # 安全移除x18 clobber，无匹配时不执行sed，避免xargs报错
-          files=$(grep -rl '"x18"' --include="*.c" fs/ kernel/)
+          # 7. 安全移除 x18 clobber（更宽松的匹配）
+          files=$(grep -rl '"x18"' --include="*.c" fs/ kernel/ || true)
           if [ -n "$files" ]; then
-          echo "$files" | xargs sed -i 's/"x0","x1","x18","memory"/"x0","x1","memory"/g'
-          echo "$files" | xargs sed -i 's/,"x18"//g'
+          echo "$files" | xargs sed -i 's/"x0",\s*"x1",\s*"x18",\s*"memory"/"x0", "x1", "memory"/g'
+          echo "$files" | xargs sed -i 's/,\s*"x18"//g'
           fi
-          # 关闭KSU相关配置
-          sed -i '/CONFIG_KSU/d' arch/arm64/configs/star_defconfig
-          sed -i '/CONFIG_KSU_SUSFS/d' arch/arm64/configs/star_defconfig
+
+          # 8. 关闭 KSU 相关配置
+          sed -i '/CONFIG_KSU/d' arch/arm64/configs/star_defconfig || true
+          sed -i '/CONFIG_KSU_SUSFS/d' arch/arm64/configs/star_defconfig || true
           echo "# CONFIG_KSU is not set" >> arch/arm64/configs/star_defconfig
           echo "# CONFIG_KSU_SUSFS is not set" >> arch/arm64/configs/star_defconfig
 
-          # 复原被补丁修改的核心文件
-          git checkout fs/exec.c fs/open.c fs/read_write.c fs/namei.c kernel/module.c
+          # 9. 复原被补丁修改的核心文件（防止 kallsyms/proc_ops 冲突）
+           git checkout fs/exec.c fs/open.c fs/read_write.c fs/namei.c kernel/module.c || true
 
+          # 10. 清理构建缓存（按需保留）
           make clean
+
 
 
 
