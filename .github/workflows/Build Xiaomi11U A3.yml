@@ -125,6 +125,9 @@ jobs:
       - name: Fix kallsyms incomplete proc_ops
         run: |
           cd "$GITHUB_WORKSPACE/device_kernel"
+          cd "$GITHUB_WORKSPACE/device_kernel"
+          sed -i '/^#if 0$/d' init/main.c
+
 
           # 注入弱符号桩函数（干净无多余#if 0，避免重复追加）
           if ! grep -q "get_pad_vma" init/main.c; then
@@ -163,7 +166,17 @@ jobs:
           echo "$files" | xargs sed -i 's/"x0","x1","x18","memory"/"x0","x1","memory"/g'
           echo "$files" | xargs sed -i 's/,"x18"//g'
           fi
+          # 关闭KSU相关配置
+          sed -i '/CONFIG_KSU/d' arch/arm64/configs/star_defconfig
+          sed -i '/CONFIG_KSU_SUSFS/d' arch/arm64/configs/star_defconfig
+          echo "# CONFIG_KSU is not set" >> arch/arm64/configs/star_defconfig
+          echo "# CONFIG_KSU_SUSFS is not set" >> arch/arm64/configs/star_defconfig
+
+          # 复原被补丁修改的核心文件
+          git checkout fs/exec.c fs/open.c fs/read_write.c fs/namei.c kernel/module.c
+
           make clean
+
 
 
           
