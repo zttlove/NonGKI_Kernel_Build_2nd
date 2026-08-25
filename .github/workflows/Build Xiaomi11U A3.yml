@@ -126,7 +126,8 @@ jobs:
         run: |
           cd "$GITHUB_WORKSPACE/device_kernel"
 
-          # 注入弱符号桩函数（干净无多余#if 0）
+          # 注入弱符号桩函数（干净无多余#if 0，避免重复追加）
+          if ! grep -q "get_pad_vma" init/main.c; then
           cat > init/main.c.tmp << 'CEOF'
           unsigned long __weak get_pad_vma(struct vm_area_struct *vma) { return 0; }
           unsigned long __weak get_data_vma(struct vm_area_struct *vma) { return 0; }
@@ -134,27 +135,34 @@ jobs:
           CEOF
           cat init/main.c.tmp >> init/main.c
           rm -f init/main.c.tmp
+          fi
 
           # 先判断文件是否存在再执行sed，避免sed报错
           if [ -f include/linux/pgsize_migration.h ]; then
           sed -i 's/^#if PAGE_SIZE == SZ_4K \&\& defined(CONFIG_64BIT)/#if 0/' include/linux/pgsize_migration.h
           fi
 
-           # 容错校验，输出匹配结果，不阻断流程
-           grep -E "get_pad_vma|show_map_pad_vma" init/main.c || echo "Warning: pad vma weak symbols not found"
-           grep "^#if 0" include/linux/pgsize_migration.h || echo "Warning: pgsize_migration if0 not set"
+          # 容错校验，输出匹配结果，不阻断流程
+          grep -E "get_pad_vma|show_map_pad_vma" init/main.c || echo "Warning: pad vma weak symbols not found"
+          if [ -f include/linux/pgsize_migration.h ]; then
+          grep "^#if 0" include/linux/pgsize_migration.h || echo "Warning: pgsize_migration if0 not set"
+          fi
 
           # 关闭栈保护
           sed -i '/CONFIG_STACKPROTECTOR/d' arch/arm64/configs/star_defconfig
           echo "# CONFIG_STACKPROTECTOR is not set" >> arch/arm64/configs/star_defconfig
 
-          # LDFLAGS追加参数
+          # LDFLAGS追加参数，避免重复追加
+          if ! grep -q -- "--no-warn-asm-clobber-reserved-registers" Makefile; then
           sed -i 's/^LDFLAGS +=/LDFLAGS += --no-warn-asm-clobber-reserved-registers /' Makefile
+          fi
 
-          # 安全移除x18 clobber
-          grep -rl '"x18"' --include="*.c" fs/ kernel/ | xargs sed -i 's/"x0","x1","x18","memory"/"x0","x1","memory"/g'
-          grep -rl ',"x18"' --include="*.c" fs/ kernel/ | xargs sed -i 's/,"x18"//g'
-
+          # 安全移除x18 clobber，无匹配时不执行sed，避免xargs报错
+          files=$(grep -rl '"x18"' --include="*.c" fs/ kernel/)
+          if [ -n "$files" ]; then
+          echo "$files" | xargs sed -i 's/"x0","x1","x18","memory"/"x0","x1","memory"/g'
+          echo "$files" | xargs sed -i 's/,"x18"//g'
+          fi
           make clean
 
 
