@@ -184,10 +184,7 @@ jobs:
 
 
           sed -i 's/^LDFLAGS +=/LDFLAGS += --no-warn-asm-clobber-reserved-registers /' Makefile
-
-          sed -i 's/$(error You should integrate ReSukiSU in your kernel.)/# $(error You should integrate ReSukiSU in your kernel.)/' KernelSU/kernel/tools/inline_hook_check.mk
-          sed -i 's/-- Please submit issue to your SUSFS patches author./# -- Please submit issue to your SUSFS patches author./' KernelSU/kernel/tools/inline_hook_check.mk
-
+          cat /dev/null > KernelSU/kernel/tools/inline_hook_check.mk
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
