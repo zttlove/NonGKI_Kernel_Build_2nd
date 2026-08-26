@@ -116,7 +116,7 @@ jobs:
       - name: 🔒 Patch Kernel of Baseband Guard
         uses: ./.github/workflows/patch-baseband-guard
         
-      - - name: Fix kallsyms incomplete proc_ops
+      - name: Fix kallsyms incomplete proc_ops
         run: |
           set -e  # 遇到错误立即退出，避免在错误状态下继续编译
           cd "$GITHUB_WORKSPACE/device_kernel"
