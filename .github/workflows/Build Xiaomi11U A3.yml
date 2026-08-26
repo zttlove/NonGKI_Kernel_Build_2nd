@@ -134,7 +134,7 @@ jobs:
           sed -i '17{/^#endif/d}' fs/notify/fdinfo.c
           sed -i '357{/^#endif/d}' fs/proc/task_mmu.c
           sed -i '283s/min(/min_t(unsigned int,/' drivers/clk/qcom/clk-rpmh.c
-
+          sed -i '2028s/min(/min_t(unsigned long long,/' net/ipv4/tcp_output.c
 
 
           
