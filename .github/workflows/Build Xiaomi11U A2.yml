@@ -121,13 +121,14 @@ jobs:
           set -e  # 遇到错误立即退出，避免在错误状态下继续编译
           cd "$GITHUB_WORKSPACE/device_kernel"
 
-          # 注释掉fdinfo.c里的susfs_def.h头文件
-          sed -i '16s/^#include <linux\/susfs_def.h>/#\/\/include <linux\/susfs_def.h>/' kernel/kallsyms.c
+         
           # 删除44行 show_mark_fhandle(...)
           sed -i '44d' fs/notify/fdinfo.c
           sed -i '52d' fs/notify/fdinfo.c
           sed -i '17d' fs/notify/fdinfo.c
           sed -i '16s/^#include <linux\/susfs_def.h>/#\/\/include <linux\/susfs_def.h>/' fs/notify/fdinfo.c
+          sed -i '28s/^#include <linux\/susfs_def.h>/#\/\/include <linux\/susfs_def.h>/' kernel/kallsyms.c
+
 
           
 
