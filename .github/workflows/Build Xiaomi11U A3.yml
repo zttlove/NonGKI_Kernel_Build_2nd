@@ -130,22 +130,19 @@ jobs:
           # 1. 关闭强栈保护
           sed -i 's/CONFIG_STACKPROTECTOR_STRONG=y/CONFIG_STACKPROTECTOR_STRONG=n/' arch/arm64/configs/star_defconfig
 
-          # 2. 新建栈保护文件，强制加入内核编译
-          cat > kernel/stack_chk_fix.c << 'EOF'
-          #include <linux/module.h>
-          #ifdef CONFIG_STACKPROTECTOR
-          __weak unsigned long __stack_chk_guard = 0;
-          void __stack_chk_fail(void)
-          {
-           panic("Kernel stack corruption detected");
-          }
-           EXPORT_SYMBOL(__stack_chk_fail);
-          #endif
+          # 2. 移除我们自己创建的重复符号文件，避免冲突
+          rm -f kernel/stack_chk_fix.c
+          sed -i '/stack_chk_fix.o/d' kernel/Makefile
+          
+          # 3. SUSFS弱符号兜底（只声明，不重复定义）
+          cat >> fs/xarray.c << 'EOF'
+          __weak int susfs_hide_sus_mnts_for_non_su_procs(void) { return 0; }
+          __weak int susfs_open_redirect_spoof_show_map_vma(struct seq_file *m, struct vm_area_struct *vma) { return 0; }
+          EXPORT_SYMBOL_GPL(susfs_hide_sus_mnts_for_non_su_procs);
+          EXPORT_SYMBOL_GPL(susfs_open_redirect_spoof_show_map_vma);
           EOF
-          # 把新建文件加入编译列表
-          echo "obj-y += stack_chk_fix.o" >> kernel/Makefile
-
-          # 3. 给xarray.c追加SUSFS函数导出，匹配调用
+          
+          # 4. 给xarray.c追加SUSFS函数导出，匹配调用
           cat >> fs/xarray.c << 'EOF'
           #include <linux/module.h>
           __weak int susfs_hide_sus_mnts_for_non_su_procs(void) { return 0; }
@@ -154,7 +151,7 @@ jobs:
           EXPORT_SYMBOL_GPL(susfs_open_redirect_spoof_show_map_vma);
           EOF
 
-          # 4. 还原proc文件
+          # 5. 还原proc文件
           git checkout HEAD -- kernel/kallsyms.c
           git checkout HEAD -- fs/proc/task_mmu.c
           git checkout HEAD -- fs/notify/fdinfo.c
@@ -163,7 +160,7 @@ jobs:
           git checkout HEAD -- fs/namespace.c
           git checkout HEAD -- fs/proc_namespace.c
 
-          # 5. 语法修复
+          # 6. 语法修复
           sed -i '17{/^#endif/d}' fs/notify/fdinfo.c
           sed -i '283s/min(/min_t(unsigned int,/' drivers/clk/qcom/clk-rpmh.c
           sed -i '2028s/min(/min_t(unsigned long long,/' net/ipv4/tcp_output.c
