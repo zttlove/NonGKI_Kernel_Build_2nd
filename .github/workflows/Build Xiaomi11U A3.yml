@@ -130,6 +130,7 @@ jobs:
           git checkout -- kernel/kallsyms.c
           git checkout -- fs/notify/fdinfo.c
           git checkout -- fs/proc/task_mmu.c
+          git checkout -- fs/exec.c
           # 删除文件中第17行孤立的 #endif（补丁错位插入的垃圾行）
           sed -i '17{/^#endif/d}' fs/notify/fdinfo.c
           sed -i '357{/^#endif/d}' fs/proc/task_mmu.c
@@ -142,7 +143,7 @@ jobs:
           sed -i '2734s/(u8)of_device_get_match_data/(u8)(uintptr_t)of_device_get_match_data/' drivers/regulator/qpnp-lcdb-regulator.c
           sed -i '6163s/uint8_t mdie\[SIR_MDIE_SIZE\]/uint8_t mdie[]/' drivers/staging/qcacld-3.0/core/mac/src/sys/legacy/src/utils/src/parser_api.c
           sed -i '622s/&rq->csd/__builtin_assume_aligned(\&rq->csd, CACHELINE_SIZE)/' block/blk-mq.c
-          sed -i '/^[[:space:]]*#endif[[:space:]]*$/d' fs/exec.c
+          
 
 
 
