@@ -133,6 +133,7 @@ jobs:
           # 删除文件中第17行孤立的 #endif（补丁错位插入的垃圾行）
           sed -i '17{/^#endif/d}' fs/notify/fdinfo.c
           sed -i '357{/^#endif/d}' fs/proc/task_mmu.c
+          sed -i '283s/min(/min_t(unsigned int,/' drivers/clk/qcom/clk-rpmh.c
 
 
 
