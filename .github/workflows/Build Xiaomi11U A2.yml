@@ -120,7 +120,12 @@ jobs:
         run: |
           set -e  # 遇到错误立即退出，避免在错误状态下继续编译
           cd "$GITHUB_WORKSPACE/device_kernel"
+
+          # 注释掉fdinfo.c里的susfs_def.h头文件
+          sed -i '16s/^#include <linux\/susfs_def.h>/#\/\/include <linux\/susfs_def.h>/' fs/notify/fdinfo.c
+          sed -i '16s/^#include <linux\/susfs_def.h>/#\/\/include <linux\/susfs_def.h>/' kernel/kallsyms.c
           
+
           # 1. 清理可能冲突的宏定义
           sed -i '/^#if 0$/d' init/main.c || true
 
