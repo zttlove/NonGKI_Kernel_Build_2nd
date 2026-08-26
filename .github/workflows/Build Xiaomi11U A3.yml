@@ -128,7 +128,11 @@ jobs:
             cd "$GITHUB_WORKSPACE/device_kernel"
             git checkout HEAD -- kernel/kallsyms.c
             git checkout HEAD -- fs/notify/fdinfo.c
-           
+            git checkout HEAD -- fs/proc/task_mmu.c
+            git checkout HEAD -- fs/exec.c
+            git checkout HEAD -- fs/namei.c
+            git checkout HEAD -- fs/namespace.c
+            git checkout HEAD -- fs/proc_namespace.c
             # 第一步：先修复配置，关闭强栈保护，从根源减少stack_chk报错
             sed -i 's/CONFIG_STACKPROTECTOR_STRONG=y/CONFIG_STACKPROTECTOR_STRONG=n/' arch/arm64/configs/star_defconfig
 
@@ -163,13 +167,7 @@ jobs:
            EXPORT_SYMBOL_GPL(get_data_vma);
            EXPORT_SYMBOL_GPL(show_map_pad_vma);
            EOF
-
-           # 第三步：再回滚其他被补丁污染的文件（不会影响上面已经写入的内容）
-           git checkout -- fs/exec.c
-           git checkout -- fs/namei.c
-           git checkout -- fs/namespace.c
-           git checkout -- fs/proc_namespace.c
-
+           
            # 第四步：代码语法修复
            sed -i '17{/^#endif/d}' fs/notify/fdinfo.c
            sed -i '357{/^#endif/d}' fs/proc/task_mmu.c
