@@ -164,8 +164,7 @@ jobs:
 
            # 第三步：再回滚其他被补丁污染的文件（不会影响上面已经写入的内容）
            git checkout HEAD -- kernel/kallsyms.c
-
-           git checkout -- fs/notify/fdinfo.c
+           git checkout HEAD -- fs/notify/fdinfo.c
            git checkout -- fs/exec.c
            git checkout -- fs/namei.c
            git checkout -- fs/namespace.c
