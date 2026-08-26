@@ -132,6 +132,8 @@ jobs:
           git checkout -- fs/proc/task_mmu.c
           git checkout -- fs/exec.c
           git checkout -- fs/namei.c
+          git checkout -- fs/namespace.c
+
 
           # 删除文件中第17行孤立的 #endif（补丁错位插入的垃圾行）
           sed -i '17{/^#endif/d}' fs/notify/fdinfo.c
