@@ -143,10 +143,7 @@ jobs:
           sed -i '2734s/(u8)of_device_get_match_data/(u8)(uintptr_t)of_device_get_match_data/' drivers/regulator/qpnp-lcdb-regulator.c
           sed -i '6163s/uint8_t mdie\[SIR_MDIE_SIZE\]/uint8_t mdie[]/' drivers/staging/qcacld-3.0/core/mac/src/sys/legacy/src/utils/src/parser_api.c
           sed -i '622s/&rq->csd/__builtin_assume_aligned(\&rq->csd, 64)/' block/blk-mq.c
-          
-
-
-
+          sed -i '180s/int ret;/int ret = 0;/' drivers/android/hwui_mon.c
 
           
       - name: 🚀 Build Process
