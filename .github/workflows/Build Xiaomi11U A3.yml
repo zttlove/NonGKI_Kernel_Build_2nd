@@ -129,10 +129,10 @@ jobs:
           
           git checkout -- kernel/kallsyms.c
           git checkout -- fs/notify/fdinfo.c
-
+          git checkout -- fs/proc/task_mmu.c
           # 删除文件中第17行孤立的 #endif（补丁错位插入的垃圾行）
           sed -i '17{/^#endif/d}' fs/notify/fdinfo.c
-
+          sed -i '357{/^#endif/d}' fs/proc/task_mmu.c
 
 
 
