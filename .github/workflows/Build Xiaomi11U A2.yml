@@ -128,6 +128,14 @@ jobs:
           sed -i '17d' fs/notify/fdinfo.c
           sed -i '16s/^#include <linux\/susfs_def.h>/#\/\/include <linux\/susfs_def.h>/' fs/notify/fdinfo.c
           sed -i '28s/^#include <linux\/susfs_def.h>/#\/\/include <linux\/susfs_def.h>/' kernel/kallsyms.c
+          # 还原被打坏的文件，如果patch失败就不继续
+          git checkout -- fs/notify/fdinfo.c kernel/kallsyms.c
+          # 应用SUSFS，禁止fuzz模糊匹配
+          patch -p1 --fuzz=0 < ${SUSFS_PATH}/susfs.patch || true
+          # 复制全部susfs头文件
+          cp -rf ${SUSFS_PATH}/include/linux/* ${KERNEL_SRC}/include/linux/
+          # 之前fdinfo.c多余#endif修复
+          sed -i '17d' fs/notify/fdinfo.c
 
 
           
