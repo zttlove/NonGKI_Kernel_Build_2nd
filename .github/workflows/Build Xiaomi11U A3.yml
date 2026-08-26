@@ -127,69 +127,11 @@ jobs:
           set -e  # 遇到错误立即退出，避免在错误状态下继续编译
           cd "$GITHUB_WORKSPACE/device_kernel"
           
-          # 1. 清理可能冲突的宏定义
-          sed -i '/^#if 0$/d' init/main.c || true
+          git checkout -- kernel/kallsyms.c
+          git checkout -- fs/notify/fdinfo.c
 
-          # 2. 注入弱符号桩函数（独立文件方式，更干净）
-          if ! grep -q "get_pad_vma" init/main.c; then
-          cat >> init/main.c << 'CEOF'
-
-          /* Weak symbols for pad vma */
-          unsigned long __weak get_pad_vma(struct vm_area_struct *vma) { return 0; }
-          unsigned long __weak get_data_vma(struct vm_area_struct *vma) { return 0; }
-          void __weak show_map_pad_vma(struct seq_file *m, struct vm_area_struct *vma) { }
-          CEOF
-          fi
-
-          # 3. 禁用 pgsize_migration 的 4K 检查
-          if [ -f include/linux/pgsize_migration.h ]; then
-          sed -i 's/^#if PAGE_SIZE == SZ_4K \&\& defined(CONFIG_64BIT)/#if 0/' include/linux/pgsize_migration.h
-          fi
-
-          # 4. 容错校验
-          grep -E "get_pad_vma|show_map_pad_vma" init/main.c || echo "::warning::pad vma weak symbols not found"
-          if [ -f include/linux/pgsize_migration.h ]; then
-          grep -q "^#if 0" include/linux/pgsize_migration.h || echo "::warning::pgsize_migration if0 not set"
-          fi
-
-          # 5. 关闭栈保护
-          sed -i '/CONFIG_STACKPROTECTOR/d' arch/arm64/configs/star_defconfig || true
-          echo "# CONFIG_STACKPROTECTOR is not set" >> arch/arm64/configs/star_defconfig
-
-          # 6. LDFLAGS 追加参数（防重复）
-          if ! grep -q -- "--no-warn-asm-clobber-reserved-registers" Makefile; then
-          sed -i 's/^LDFLAGS +=/LDFLAGS += --no-warn-asm-clobber-reserved-registers /' Makefile
-          fi
-
-          # 使用 -z 参数让 grep 以 null 结尾，配合 xargs -0 处理（虽然这里只是赋值，但养成好习惯）
-          # 直接捕获 grep 的结果，利用 grep 的退出码进行判断，比判断字符串是否为空更优雅
-          if remain=$(grep -rl '"x18"' --include="*.c" fs/ kernel/ 2>/dev/null); then
-          echo "WARNING: still has x18 clobber in files:"
-          echo "$remain"
-          else
-          echo "SUCCESS: All x18 clobbers have been safely removed."
-          fi
-
-
-          # 8. 关闭 KSU 相关配置
-          sed -i '/CONFIG_KSU/d' arch/arm64/configs/star_defconfig || true
-          sed -i '/CONFIG_KSU_SUSFS/d' arch/arm64/configs/star_defconfig || true
-          echo "# CONFIG_KSU is not set" >> arch/arm64/configs/star_defconfig
-          echo "# CONFIG_KSU_SUSFS is not set" >> arch/arm64/configs/star_defconfig
-
-          # 9. 替换结构体类型
-          sed -i 's/struct proc_ops/struct file_operations/g' kernel/kallsyms.c
-          # 替换proc专属成员为旧版file_operations标准成员
-          sed -i 's/\.proc_open/.open/g' kernel/kallsyms.c
-          sed -i 's/\.proc_read/.read/g' kernel/kallsyms.c
-          sed -i 's/\.proc_lseek/.llseek/g' kernel/kallsyms.c
-          sed -i 's/\.proc_release/.release/g' kernel/kallsyms.c
-
-          # 10. 复原被补丁修改的核心文件（防止 kallsyms/proc_ops 冲突）
-           git checkout fs/exec.c fs/open.c fs/read_write.c fs/namei.c kernel/module.c || true
-
-          # 11. 清理构建缓存（按需保留）
-          make clean
+          # 删除文件中第17行孤立的 #endif（补丁错位插入的垃圾行）
+          sed -i '17{/^#endif/d}' fs/notify/fdinfo.c
 
 
 
