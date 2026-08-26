@@ -122,8 +122,13 @@ jobs:
           cd "$GITHUB_WORKSPACE/device_kernel"
 
           # 注释掉fdinfo.c里的susfs_def.h头文件
-          sed -i '16s/^#include <linux\/susfs_def.h>/#\/\/include <linux\/susfs_def.h>/' fs/notify/fdinfo.c
           sed -i '16s/^#include <linux\/susfs_def.h>/#\/\/include <linux\/susfs_def.h>/' kernel/kallsyms.c
+          # 删除44行 show_mark_fhandle(...)
+          sed -i '44d' fs/notify/fdinfo.c
+          sed -i '52d' fs/notify/fdinfo.c
+          sed -i '17d' fs/notify/fdinfo.c
+          sed -i '16s/^#include <linux\/susfs_def.h>/#\/\/include <linux\/susfs_def.h>/' fs/notify/fdinfo.c
+
           
 
           # 1. 清理可能冲突的宏定义
