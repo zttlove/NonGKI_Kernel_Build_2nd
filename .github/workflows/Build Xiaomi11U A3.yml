@@ -150,7 +150,23 @@ jobs:
           sed -i '6163s/uint8_t mdie\[SIR_MDIE_SIZE\]/uint8_t mdie[]/' drivers/staging/qcacld-3.0/core/mac/src/sys/legacy/src/utils/src/parser_api.c
           sed -i '622s/&rq->csd/__builtin_assume_aligned(\&rq->csd, 64)/' block/blk-mq.c
           sed -i '180s/int ret;/int ret = 0;/' drivers/android/hwui_mon.c
-          
+        
+
+          # 生成susfs桩文件，解决susfs未定义符号
+          cat > susfs_stub.c <<'EOF'
+          #include <linux/types.h>
+          #include <linux/compiler.h>
+
+          __weak bool susfs_hide_sus_mnts_for_non_su_procs(void) { return false; }
+          __weak void susfs_open_redirect_spoof_show_map_vma(void) { }
+
+          u64 __stack_chk_guard __read_mostly;
+          EXPORT_SYMBOL(__stack_chk_guard);
+          EOF
+
+          # 加入fs/Makefile编译
+          sed -i '/obj-y\t+=/a obj-y\t+= susfs_stub.o' fs/Makefile
+
 
 
           
