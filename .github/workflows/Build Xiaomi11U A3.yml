@@ -184,8 +184,8 @@ jobs:
            sed -i '622s/&rq->csd/__builtin_assume_aligned(\&rq->csd, 64)/' block/blk-mq.c
            sed -i '180s/int ret;/int ret = 0;/' drivers/android/hwui_mon.c
 
-    # 清理旧编译缓存
-    make clean
+           # 清理旧编译缓存
+           make clean
 
 
 
