@@ -135,6 +135,8 @@ jobs:
           sed -i '357{/^#endif/d}' fs/proc/task_mmu.c
           sed -i '283s/min(/min_t(unsigned int,/' drivers/clk/qcom/clk-rpmh.c
           sed -i '2028s/min(/min_t(unsigned long long,/' net/ipv4/tcp_output.c
+          sed -i '170s/(u32)device->iface_q_table.align_virtual_addr/(u32)(uintptr_t)device->iface_q_table.align_virtual_addr/' techpack/video/msm/vidc/hfi_iris2.c
+          
 
 
           
