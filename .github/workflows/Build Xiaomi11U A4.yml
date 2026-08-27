@@ -122,37 +122,12 @@ jobs:
       - name: 🔧 Patch Hide Stuff
         uses: ./.github/workflows/patch-hide-stuff
           
-      - name: Fix kallsyms incomplete proc_ops
+      - name: Fix kallsyms incomplete proc_ops & susfs weak symbol workaround
         run: |
           set -e
           cd "$GITHUB_WORKSPACE/device_kernel"
 
-          # 1. 关闭强栈保护
-          sed -i 's/CONFIG_STACKPROTECTOR_STRONG=y/CONFIG_STACKPROTECTOR_STRONG=n/' arch/arm64/configs/star_defconfig
-
-          # 2. 移除我们自己创建的重复符号文件，避免冲突
-          rm -f kernel/stack_chk_fix.c
-          sed -i '/stack_chk_fix.o/d' kernel/Makefile
-          
-          # 3. SUSFS弱符号兜底（只声明，不重复定义）
-          cat >> fs/xarray.c << 'EOF'
-          __weak int susfs_hide_sus_mnts_for_non_su_procs(void) { return 0; }
-          __weak int susfs_open_redirect_spoof_show_map_vma(struct seq_file *m, struct vm_area_struct *vma) { return 0; }
-          EXPORT_SYMBOL_GPL(susfs_hide_sus_mnts_for_non_su_procs);
-          EXPORT_SYMBOL_GPL(susfs_open_redirect_spoof_show_map_vma);
-          EOF
-          
-          # 4. vma系列弱符号
-          cat >> fs/proc/task_mmu.c << 'EOF'
-          __weak struct vm_area_struct *get_pad_vma(struct vm_area_struct *vma) { return NULL; }
-          __weak struct vm_area_struct *get_data_vma(struct vm_area_struct *vma) { return NULL; }
-          __weak void show_map_pad_vma(struct seq_file *m, struct vm_area_struct *vma) {}
-          EXPORT_SYMBOL_GPL(get_pad_vma);
-          EXPORT_SYMBOL_GPL(get_data_vma);
-          EXPORT_SYMBOL_GPL(show_map_pad_vma);
-          EOF
-
-          # 5. 还原proc文件
+          # 1. 先还原被污染文件！放在最前面，清理上一轮残留脏修改
           git checkout HEAD -- kernel/kallsyms.c
           git checkout HEAD -- fs/proc/task_mmu.c
           git checkout HEAD -- fs/notify/fdinfo.c
@@ -161,7 +136,39 @@ jobs:
           git checkout HEAD -- fs/namespace.c
           git checkout HEAD -- fs/proc_namespace.c
 
-          # 6. 语法修复
+          # 2. 彻底关闭栈保护，解决 __stack_chk_guard undefined
+          sed -i 's/CONFIG_STACKPROTECTOR=y/CONFIG_STACKPROTECTOR=n/' arch/arm64/configs/star_defconfig
+          sed -i 's/CONFIG_STACKPROTECTOR_STRONG=y/CONFIG_STACKPROTECTOR_STRONG=n/' arch/arm64/configs/star_defconfig
+
+          # 3. 清理旧临时修复文件
+          rm -f kernel/stack_chk_fix.c
+          sed -i '/stack_chk_fix.o/d' kernel/Makefile
+
+          # 4. 创建独立weak_susfs.c 存放弱兜底符号，避免污染原有源码，不会重复追加
+          cat > weak_susfs.c << 'EOF'
+          #include <linux/fs.h>
+          #include <linux/proc_fs.h>
+          #include <linux/mm.h>
+
+          /* SUSFS missing symbols weak fallback */
+          __weak int susfs_hide_sus_mnts_for_non_su_procs(void) { return 0; }
+          __weak int susfs_open_redirect_spoof_show_map_vma(struct seq_file *m, struct vm_area_struct *vma) { return 0; }
+
+          __weak struct vm_area_struct *get_pad_vma(struct vm_area_struct *vma) { return NULL; }
+          __weak struct vm_area_struct *get_data_vma(struct vm_area_struct *vma) { return NULL; }
+          __weak void show_map_pad_vma(struct seq_file *m, struct vm_area_struct *vma) {}
+
+          EXPORT_SYMBOL_GPL(susfs_hide_sus_mnts_for_non_su_procs);
+          EXPORT_SYMBOL_GPL(susfs_open_redirect_spoof_show_map_vma);
+          EXPORT_SYMBOL_GPL(get_pad_vma);
+          EXPORT_SYMBOL_GPL(get_data_vma);
+          EXPORT_SYMBOL_GPL(show_map_pad_vma);
+          EOF
+
+          # 把weak_susfs.c加入内核编译
+          echo "obj-y += weak_susfs.o" >> kernel/Makefile
+
+          # 5. 各类语法/类型强制转换修复
           sed -i '17{/^#endif/d}' fs/notify/fdinfo.c
           sed -i '283s/min(/min_t(unsigned int,/' drivers/clk/qcom/clk-rpmh.c
           sed -i '2028s/min(/min_t(unsigned long long,/' net/ipv4/tcp_output.c
