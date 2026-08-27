@@ -146,14 +146,21 @@ jobs:
           sed -i '/stack_chk_fix\.o/d' kernel/Makefile || true
           sed -i '/EXTRA_OBJS += weak_susfs\.o/d' "$KERNEL_ROOT/Makefile" || true
 
-          # 3. 在根目录生成 weak_susfs.c
+                    
+          # 3. 在根目录生成 weak_susfs.c (使用带 extern __weak 声明的版本)
           echo "Generating weak_susfs.c..."
           cat > weak_susfs.c << 'EOF'
           #include <linux/fs.h>
           #include <linux/proc_fs.h>
           #include <linux/mm.h>
+          #include <linux/module.h>
 
-          /* SUSFS missing symbols weak fallback */
+          extern __weak int susfs_hide_sus_mnts_for_non_su_procs(void);
+          extern __weak int susfs_open_redirect_spoof_show_map_vma(struct seq_file *m, struct vm_area_struct *vma);
+          extern __weak struct vm_area_struct *get_pad_vma(struct vm_area_struct *vma);
+          extern __weak struct vm_area_struct *get_data_vma(struct vm_area_struct *vma);
+          extern __weak void show_map_pad_vma(struct seq_file *m, struct vm_area_struct *vma);
+
           __weak int susfs_hide_sus_mnts_for_non_su_procs(void) { return 0; }
           __weak int susfs_open_redirect_spoof_show_map_vma(struct seq_file *m, struct vm_area_struct *vma) { return 0; }
           __weak struct vm_area_struct *get_pad_vma(struct vm_area_struct *vma) { return NULL; }
@@ -167,9 +174,9 @@ jobs:
           EXPORT_SYMBOL_GPL(show_map_pad_vma);
           EOF
 
-          # 4. 将 weak_susfs.o 追加到顶层 Makefile
-          echo "Appending EXTRA_OBJS to root Makefile..."
-          echo 'EXTRA_OBJS += weak_susfs.o' >> "$KERNEL_ROOT/Makefile"
+          # 4. 将 weak_susfs.o 追加到顶层 Makefile (改用 obj-y)
+          echo "Appending obj-y to root Makefile..."
+          echo 'obj-y += weak_susfs.o' >> "$KERNEL_ROOT/Makefile"
 
           # 5. 各类语法修复 (保持你原有的 sed 逻辑，增加注释)
           echo "Applying syntax patches..."
