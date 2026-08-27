@@ -140,8 +140,8 @@ jobs:
           sed -i 's/CONFIG_STACKPROTECTOR=y/CONFIG_STACKPROTECTOR=n/' arch/arm64/configs/star_defconfig
           sed -i 's/CONFIG_STACKPROTECTOR_STRONG=y/CONFIG_STACKPROTECTOR_STRONG=n/' arch/arm64/configs/star_defconfig
 
-          # 3. 清理旧临时修复文件
-          rm -f kernel/stack_chk_fix.c
+          rm -f kernel/weak_susfs.c kernel/stack_chk_fix.c
+          sed -i '/weak_susfs.o/d' kernel/Makefile
           sed -i '/stack_chk_fix.o/d' kernel/Makefile
 
           # 4. 创建独立weak_susfs.c 存放弱兜底符号，避免污染原有源码，不会重复追加
@@ -165,7 +165,7 @@ jobs:
           EXPORT_SYMBOL_GPL(show_map_pad_vma);
           EOF
 
-          # 把weak_susfs.c加入内核编译
+          # 在kernel/Makefile加入编译，此时文件位于kernel/weak_susfs.c，路径匹配
           echo "obj-y += weak_susfs.o" >> kernel/Makefile
 
           # 5. 各类语法/类型强制转换修复
