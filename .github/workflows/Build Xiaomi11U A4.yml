@@ -192,15 +192,21 @@ jobs:
           sed -i '622s/&rq->csd/__builtin_assume_aligned(\&rq->csd, 64)/' block/blk-mq.c
           sed -i '180s/int ret;/int ret = 0;/' drivers/android/hwui_mon.c
 
-          # 6. 动态提取内核版本信息 (解决硬编码问题)
-          echo "Extracting dynamic kernel version..."
+          # 6. 准备内核配置并动态提取内核版本信息
+          echo "Preparing kernel config and extracting version..."
+          # 如果 .config 不存在，先加载默认配置（防止 make prepare 报错）
+          if [ ! -f .config ]; then
+            echo "No .config found, generating default config..."
+            make defconfig
+          fi
+          
+          # 准备构建环境（生成 autoconf.h 和 auto.conf）
+          make prepare -j$(nproc)
+          
+          # 安全提取内核版本号
           KERNEL_VERSION=$(make kernelrelease -s)
           echo "KERNEL_VERSION=$KERNEL_VERSION" >> $GITHUB_ENV
           echo "✅ Detected Kernel Version: $KERNEL_VERSION"
-
-          # 7. 清理构建目录，使用 Actions 的 CPU 核心数加速
-          echo "Running make clean..."
-          make clean -j$(nproc) || true
 
 
 
