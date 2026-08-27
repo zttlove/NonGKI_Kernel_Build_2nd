@@ -134,6 +134,7 @@ jobs:
           "fs/namei.c"
           "fs/namespace.c"
           "fs/proc_namespace.c"
+          "fs/proc/task_mmu.c"
            )
            # 1. 还原GKI不兼容文件（不碰task_mmu.c和fdinfo.c）
            echo "=== Reverting GKI-incompatible source files ==="
