@@ -1,5 +1,5 @@
 name: Build Xiaomi11U (A4)
-concurrency: 
+
 
 on:
   workflow_call:
