@@ -142,10 +142,7 @@ jobs:
           sed -i '/stack_chk_fix.o/d' kernel/Makefile
           sed -i '/EXTRA_OBJS += weak_susfs.o/d' Makefile
 
-          # 2.彻底关闭栈保护，消除 __stack_chk_guard
-          sed -i 's/CONFIG_STACKPROTECTOR=y/CONFIG_STACKPROTECTOR=n/' arch/arm64/configs/star_defconfig
-          sed -i 's/CONFIG_STACKPROTECTOR_STRONG=y/CONFIG_STACKPROTECTOR_STRONG=n/' arch/arm64/configs/star_defconfig
-
+        
           # 3.根目录生成weak_susfs.c
           cat > weak_susfs.c << 'EOF'
           #include <linux/fs.h>
