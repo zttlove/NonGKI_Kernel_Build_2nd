@@ -136,7 +136,8 @@ jobs:
             fs/exec.c \
             fs/namei.c \
             fs/namespace.c \
-            fs/proc_namespace.c
+            fs/proc_namespace.c \
+            fs/fdinfo.c
 
           # 2.清理历史残留
           echo "Cleaning up old artifacts..."
