@@ -145,9 +145,9 @@ jobs:
           sed -i '/weak_susfs\.o/d' kernel/Makefile || true
           sed -i '/stack_chk_fix\.o/d' kernel/Makefile || true
           sed -i '/EXTRA_OBJS += weak_susfs\.o/d' "$KERNEL_ROOT/Makefile" || true
-
+          sed -i '/obj-y += weak_susfs\.o/d' "$KERNEL_ROOT/Makefile" || true
                     
-          # 3. 在根目录生成 weak_susfs.c (使用带 extern __weak 声明的版本)
+          # 3. 在根目录生成 weak_susfs.c (带 extern __weak 声明)
           echo "Generating weak_susfs.c..."
           cat > weak_susfs.c << 'EOF'
           #include <linux/fs.h>
@@ -174,11 +174,11 @@ jobs:
           EXPORT_SYMBOL_GPL(show_map_pad_vma);
           EOF
 
-          # 4. 将 weak_susfs.o 追加到顶层 Makefile (改用 obj-y)
+          # 4. 将 weak_susfs.o 追加到顶层 Makefile (使用 obj-y)
           echo "Appending obj-y to root Makefile..."
           echo 'obj-y += weak_susfs.o' >> "$KERNEL_ROOT/Makefile"
 
-          # 5. 各类语法修复 (保持你原有的 sed 逻辑，增加注释)
+          # 5. 各类语法修复
           echo "Applying syntax patches..."
           sed -i '17{/^#endif/d}' fs/notify/fdinfo.c
           sed -i '283s/min(/min_t(unsigned int,/' drivers/clk/qcom/clk-rpmh.c
@@ -192,9 +192,16 @@ jobs:
           sed -i '622s/&rq->csd/__builtin_assume_aligned(\&rq->csd, 64)/' block/blk-mq.c
           sed -i '180s/int ret;/int ret = 0;/' drivers/android/hwui_mon.c
 
-          # 6. 清理构建目录，使用 Actions 的 CPU 核心数加速
+          # 6. 动态提取内核版本信息 (解决硬编码问题)
+          echo "Extracting dynamic kernel version..."
+          KERNEL_VERSION=$(make kernelrelease -s)
+          echo "KERNEL_VERSION=$KERNEL_VERSION" >> $GITHUB_ENV
+          echo "✅ Detected Kernel Version: $KERNEL_VERSION"
+
+          # 7. 清理构建目录，使用 Actions 的 CPU 核心数加速
           echo "Running make clean..."
-          make clean -j$(nproc)
+          make clean -j$(nproc) || true
+
 
 
 
