@@ -176,62 +176,122 @@ jobs:
           EXPORT_SYMBOL_GPL(get_data_vma);
 
            void __attribute__((noinline)) show_map_pad_vma(struct seq_file *m, struct vm_area_struct *vma)
-           {
-           }
-           EXPORT_SYMBOL_GPL(show_map_pad_vma);
+      - name: Fix kallsyms incomplete proc_ops & susfs stub workaround
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/device_kernel"
+          KERNEL_ROOT="$GITHUB_WORKSPACE/device_kernel"
 
-           // KSU hook stubs
-           bool __attribute__((noinline)) ksu_is_init_rc_hook_enabled(void)
-           {
-           return false;
-           }
-           EXPORT_SYMBOL_GPL(ksu_is_init_rc_hook_enabled);
+          # GKI不兼容文件列表
+          GKI_INCOMPATIBLE_FILES=(
+            "kernel/kallsyms.c"
+            "fs/exec.c"
+            "fs/namei.c"
+            "fs/namespace.c"
+            "fs/proc_namespace.c"
+          )
 
-           long __attribute__((noinline)) ksu_handle_sys_read(const struct pt_regs *regs)
-           {
-           return 0;
-           }
-           EXPORT_SYMBOL_GPL(ksu_handle_sys_read);
+          # 1. 还原GKI不兼容文件
+          echo "=== Reverting GKI-incompatible source files ==="
+          git checkout HEAD -- "${GKI_INCOMPATIBLE_FILES[@]}"
 
-           void __attribute__((noinline)) ksu_hide_setprocattr(void)
-           {
-           }
-           EXPORT_SYMBOL_GPL(ksu_hide_setprocattr);
+          # 2. 清理历史残留文件
+          echo "=== Cleaning up old artifacts ==="
+          rm -f weak_susfs.c
+          sed -i '/weak_susfs\.o/d' "$KERNEL_ROOT/Makefile" 2>/dev/null || true
 
-             # 4. 将stub添加到Makefile（如果尚未添加）
-             if ! grep -q "weak_susfs\.o" "$KERNEL_ROOT/Makefile"; then
-             echo 'EXTRA_OBJS += weak_susfs.o' >> "$KERNEL_ROOT/Makefile"
-             echo "Added weak_susfs.o to Makefile"
-             else
-             echo "weak_susfs.o already in Makefile, skipping"
-             fi
-             # 5. 应用语法修复补丁（使用数组存储修复命令，便于管理）
-             echo "=== Applying syntax fixes ==="
-             # 定义修复：文件:模式:替换内容（使用|分隔）
-             declare -a FIXES=(
-             "fs/notify/fdinfo.c:17:{/^#endif/d}"
-             "drivers/clk/qcom/clk-rpmh.c:283:s/min(/min_t(unsigned int,/"
-             "net/ipv4/tcp_output.c:2028:s/min(/min_t(unsigned long long,/"
-             "techpack/video/msm/vidc/hfi_iris2.c:170:s/(u32)device->iface_q_table.align_virtual_addr/(u32)(uintptr_t)device->iface_q_table.align_virtual_addr/"
-             "drivers/staging/android/ion/heaps/msm_ion.c:253:s/ION_HEAP_TYPE_SECURE_CARVEOUT/(enum ion_heap_type)ION_HEAP_TYPE_SECURE_CARVEOUT/"
-             "drivers/staging/android/ion/heaps/msm_ion.c:254:s/ION_HEAP_TYPE_SYSTEM_SECURE/(enum ion_heap_type)ION_HEAP_TYPE_SYSTEM_SECURE/"
-             "drivers/staging/android/ion/heaps/msm_ion.c:255:s/ION_HEAP_TYPE_HYP_CMA/(enum ion_heap_type)ION_HEAP_TYPE_HYP_CMA/"
-             "drivers/regulator/qpnp-lcdb-regulator.c:2734:s/(u8)of_device_get_match_data/(u8)(uintptr_t)of_device_get_match_data/"
-             "drivers/staging/qcacld-3.0/core/mac/src/sys/legacy/src/utils/src/parser_api.c:6163:s/uint8_t mdie\\[SIR_MDIE_SIZE\\]/uint8_t mdie[]/"
-             "block/blk-mq.c:622:s/&rq->csd/__builtin_assume_aligned(\\&rq->csd, 64)/"
-             "drivers/android/hwui_mon.c:180:s/int ret;/int ret = 0;/"
-             )
-             # 应用每个修复
-             for fix in "${FIXES[@]}"; do
-             IFS=':' read -r file pattern replacement <<< "$fix"
-             if [[ -f "$file" ]]; then
-             sed -i "$pattern$replacement" "$file" && \
-             echo "  ✓ Fixed $file (line ${pattern//[^0-9]/})"
-             else
-             echo "  ⚠ Warning: $file not found, skipping"
-             fi
-             done
-             echo "=== All fixes applied successfully ===
+          # 3. 生成 weak_susfs.c
+          echo "=== Generating weak_susfs.c stub file ==="
+          cat > weak_susfs.c << 'EOF'
+          #include <linux/fs.h>
+          #include <linux/proc_fs.h>
+          #include <linux/mm.h>
+          #include <linux/seq_file.h>
+          #include <linux/module.h>
+          #include <linux/ptrace.h>
+
+          bool __attribute__((noinline)) susfs_hide_sus_mnts_for_non_su_procs(void) { return false; }
+          EXPORT_SYMBOL_GPL(susfs_hide_sus_mnts_for_non_su_procs);
+
+          void __attribute__((noinline)) susfs_open_redirect_spoof_show_map_vma(void) {}
+          EXPORT_SYMBOL_GPL(susfs_open_redirect_spoof_show_map_vma);
+
+          struct vm_area_struct * __attribute__((noinline)) get_pad_vma(struct vm_area_struct *vma) { return NULL; }
+          EXPORT_SYMBOL_GPL(get_pad_vma);
+
+          struct vm_area_struct * __attribute__((noinline)) get_data_vma(struct vm_area_struct *vma) { return NULL; }
+          EXPORT_SYMBOL_GPL(get_data_vma);
+
+          void __attribute__((noinline)) show_map_pad_vma(struct seq_file *m, struct vm_area_struct *vma) {}
+          EXPORT_SYMBOL_GPL(show_map_pad_vma);
+
+          bool __attribute__((noinline)) ksu_is_init_rc_hook_enabled(void) { return false; }
+          EXPORT_SYMBOL_GPL(ksu_is_init_rc_hook_enabled);
+
+          long __attribute__((noinline)) ksu_handle_sys_read(const struct pt_regs *regs) { return 0; }
+          EXPORT_SYMBOL_GPL(ksu_handle_sys_read);
+
+          void __attribute__((noinline)) ksu_hide_setprocattr(void) {}
+          EXPORT_SYMBOL_GPL(ksu_hide_setprocattr);
+           lEOF
+
+          # 4. 将 stub 添加到 Makefile (强烈建议使用 obj-y 确保链接进 vmlinux)
+          echo "=== Appending obj-y to root Makefile ==="
+          if ! grep -q "weak_susfs\.o" "$KERNEL_ROOT/Makefile"; then
+            echo 'obj-y += weak_susfs.o' >> "$KERNEL_ROOT/Makefile"
+            echo "✅ Added obj-y += weak_susfs.o to Makefile"
+          else
+            echo "⚠️ weak_susfs.o already in Makefile, skipping"
+          fi
+
+          # 5. 应用语法修复补丁
+          echo "=== Applying syntax fixes ==="
+          declare -a FIXES=(
+            "drivers/clk/qcom/clk-rpmh.c:283:s/min(/min_t(unsigned int,/"
+            "net/ipv4/tcp_output.c:2028:s/min(/min_t(unsigned long long,/"
+            "techpack/video/msm/vidc/hfi_iris2.c:170:s/(u32)device->iface_q_table.align_virtual_addr/(u32)(uintptr_t)device->iface_q_table.align_virtual_addr/"
+            "drivers/staging/android/ion/heaps/msm_ion.c:253:s/ION_HEAP_TYPE_SECURE_CARVEOUT/(enum ion_heap_type)ION_HEAP_TYPE_SECURE_CARVEOUT/"
+            "drivers/staging/android/ion/heaps/msm_ion.c:254:s/ION_HEAP_TYPE_SYSTEM_SECURE/(enum ion_heap_type)ION_HEAP_TYPE_SYSTEM_SECURE/"
+            "drivers/staging/android/ion/heaps/msm_ion.c:255:s/ION_HEAP_TYPE_HYP_CMA/(enum ion_heap_type)ION_HEAP_TYPE_HYP_CMA/"
+            "drivers/regulator/qpnp-lcdb-regulator.c:2734:s/(u8)of_device_get_match_data/(u8)(uintptr_t)of_device_get_match_data/"
+            "drivers/staging/qcacld-3.0/core/mac/src/sys/legacy/src/utils/src/parser_api.c:6163:s/uint8_t mdie\\[SIR_MDIE_SIZE\\]/uint8_t mdie[]/"
+            "block/blk-mq.c:622:s/&rq->csd/__builtin_assume_aligned(\\&rq->csd, 64)/"
+            "drivers/android/hwui_mon.c:180:s/int ret;/int ret = 0;/"
+          )
+
+          for fix in "${FIXES[@]}"; do
+            IFS=':' read -r file pattern replacement <<< "$fix"
+            if [[ -f "$file" ]]; then
+              # 使用 # 作为分隔符，避免路径中的 / 导致 sed 报错
+              sed -i "${pattern}#${replacement}#" "$file" && echo "  ✓ Fixed $file"
+            else
+              echo "  ⚠ Warning: $file not found, skipping"
+            fi
+          done
+
+          # 6. 关闭栈保护解决 __stack_chk_guard
+          echo "=== Disabling Stack Protector ==="
+          DEFCONFIG="arch/arm64/configs/star_defconfig"
+          if [[ -f "$DEFCONFIG" ]]; then
+            sed -i '/CONFIG_STACKPROTECTOR/d' "$DEFCONFIG"
+            echo "# CONFIG_STACKPROTECTOR is not set" >> "$DEFCONFIG"
+            echo "✅ Stack protector disabled in $DEFCONFIG"
+          fi
+
+          # 7. 【关键补充】准备内核配置，防止后续 make kernelrelease 报错
+          echo "=== Preparing kernel config ==="
+          if [ ! -f .config ]; then
+            echo "No .config found, generating default config..."
+            make ARCH=arm64 star_defconfig
+          fi
+          make ARCH=arm64 prepare -j$(nproc)
+          
+          # 现在可以安全地提取版本号了
+          KERNEL_VERSION=$(make ARCH=arm64 kernelrelease -s)
+          echo "KERNEL_VERSION=$KERNEL_VERSION" >> $GITHUB_ENV
+          echo "✅ Detected Kernel Version: $KERNEL_VERSION"
+          echo "=== All fixes applied successfully ==="
+          pplied successfully ===
 
           
       - name: 🚀 Build Process
