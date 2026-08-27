@@ -198,7 +198,7 @@ jobs:
           sed -i '6163s/uint8_t mdie\[SIR_MDIE_SIZE\]/uint8_t mdie[]/' drivers/staging/qcacld-3.0/core/mac/src/sys/legacy/src/utils/src/parser_api.c
           sed -i '622s/&rq->csd/__builtin_assume_aligned(\&rq->csd, 64)/' block/blk-mq.c
           sed -i '180s/int ret;/int ret = 0;/' drivers/android/hwui_mon.c
-          sed -i '/#include <linux\/seq_file.h>/a static void show_mark_fhandle(struct seq_file *m, struct inode *inode);\nstatic void show_fdinfo(struct seq_file *m, struct file *f, void (*inotify_fdinfo)(struct seq_file *, struct inode *));' fs/notify/fdinfo.c
+          
 
 
           # 调试输出：确认weak_susfs.c已经生成，内容正确
