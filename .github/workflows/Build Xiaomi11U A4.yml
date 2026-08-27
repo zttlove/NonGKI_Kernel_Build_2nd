@@ -144,45 +144,60 @@ jobs:
            echo "=== Cleaning up old artifacts ==="
            rm -f weak_susfs.c
            sed -i '/weak_susfs\.o/d' "$KERNEL_ROOT/Makefile" 2>/dev/null || true
-           # 3. 生成强符号stub文件（使用noinline规避LTO __weak失效）
-           echo "=== Generating susfs strong stub ==="
-           cat > weak_susfs.c << 'EOF'
+           susfs_hide_sus_mnts_for_non_su_procs(void)
            #include <linux/fs.h>
            #include <linux/proc_fs.h>
            #include <linux/mm.h>
            #include <linux/seq_file.h>
            #include <linux/module.h>
-            bool __attribute__((noinline)) 
-            susfs_hide_sus_mnts_for_non_su_procs(void)
-            {
-            return false;
-            }   
-            EXPORT_SYMBOL_GPL(susfs_hide_sus_mnts_for_non_su_procs);
-            void __attribute__((noinline)) 
-            susfs_open_redirect_spoof_show_map_vma(void)
-            {
-            /* stub: do nothing */
-            }
-            EXPORT_SYMBOL_GPL(susfs_open_redirect_spoof_show_map_vma);
-            struct vm_area_struct * __attribute__((noinline)) 
-            get_pad_vma(struct vm_area_struct *vma)
-             {
-             return NULL;
-             }
-             EXPORT_SYMBOL_GPL(get_pad_vma);
-             struct vm_area_struct * __attribute__((noinline)) 
-             get_data_vma(struct vm_area_struct *vma)
-             {
-             return NULL;
-             }
-             EXPORT_SYMBOL_GPL(get_data_vma);
-             void __attribute__((noinline)) 
-             show_map_pad_vma(struct seq_file *m, struct vm_area_struct *vma)
-             {
-             /* stub: do nothing */
-             }
-             EXPORT_SYMBOL_GPL(show_map_pad_vma);
-             EOF
+           #include <linux/ptrace.h>
+
+           bool __attribute__((noinline)) susfs_hide_sus_mnts_for_non_su_procs(void)
+           {
+           return false;
+          }
+           EXPORT_SYMBOL_GPL(susfs_hide_sus_mnts_for_non_su_procs);
+
+           void __attribute__((noinline)) susfs_open_redirect_spoof_show_map_vma(void)
+           {
+           }
+           EXPORT_SYMBOL_GPL(susfs_open_redirect_spoof_show_map_vma);
+
+           struct vm_area_struct * __attribute__((noinline)) get_pad_vma(struct vm_area_struct *vma)
+           {
+           return NULL;
+           }
+           EXPORT_SYMBOL_GPL(get_pad_vma);
+
+           struct vm_area_struct * __attribute__((noinline)) get_data_vma(struct vm_area_struct *vma)
+           {
+           return NULL;
+           }
+          EXPORT_SYMBOL_GPL(get_data_vma);
+
+           void __attribute__((noinline)) show_map_pad_vma(struct seq_file *m, struct vm_area_struct *vma)
+           {
+           }
+           EXPORT_SYMBOL_GPL(show_map_pad_vma);
+
+           // KSU hook stubs
+           bool __attribute__((noinline)) ksu_is_init_rc_hook_enabled(void)
+           {
+           return false;
+           }
+           EXPORT_SYMBOL_GPL(ksu_is_init_rc_hook_enabled);
+
+           long __attribute__((noinline)) ksu_handle_sys_read(const struct pt_regs *regs)
+           {
+           return 0;
+           }
+           EXPORT_SYMBOL_GPL(ksu_handle_sys_read);
+
+           void __attribute__((noinline)) ksu_hide_setprocattr(void)
+           {
+           }
+           EXPORT_SYMBOL_GPL(ksu_hide_setprocattr);
+
              # 4. 将stub添加到Makefile（如果尚未添加）
              if ! grep -q "weak_susfs\.o" "$KERNEL_ROOT/Makefile"; then
              echo 'EXTRA_OBJS += weak_susfs.o' >> "$KERNEL_ROOT/Makefile"
