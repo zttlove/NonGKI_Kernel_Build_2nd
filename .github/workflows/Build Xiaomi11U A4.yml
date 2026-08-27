@@ -122,91 +122,99 @@ jobs:
       - name: 🔧 Patch Hide Stuff
         uses: ./.github/workflows/patch-hide-stuff
           
-      
       - name: Fix kallsyms incomplete proc_ops & susfs stub workaround
-        run: |
-          set -e
-          cd "$GITHUB_WORKSPACE/device_kernel"
-          KERNEL_ROOT="$GITHUB_WORKSPACE/device_kernel"
-
-          # 1.【只还原GKI不兼容文件！不要碰task_mmu.c fdinfo.c！】
-          echo "Reverting incompatible GKI‑only source files..."
-          git checkout HEAD -- \
-            kernel/kallsyms.c \
-            fs/exec.c \
-            fs/namei.c \
-            fs/namespace.c \
-            fs/proc_namespace.c \
-            
-
-          # 2.清理历史残留
-          echo "Cleaning up old artifacts..."
-          rm -f weak_susfs.c || true
-          sed -i '/weak_susfs\.o/d' "$KERNEL_ROOT/Makefile" || true
-
-          # 3.生成stub，修正函数签名，全部使用强符号+noinline，规避LTO __weak失效
-          echo "Generating susfs strong stub file..."
-          cat > weak_susfs.c << 'EOF'
-          #include <linux/fs.h>
-          #include <linux/proc_fs.h>
-          #include <linux/mm.h>
-          #include <linux/seq_file.h>
-          #include <linux/module.h>
-
-          bool __attribute__((noinline)) susfs_hide_sus_mnts_for_non_su_procs(void)
-          {
-          return false;
-          }
-          EXPORT_SYMBOL_GPL(susfs_hide_sus_mnts_for_non_su_procs);
-
-          void __attribute__((noinline)) susfs_open_redirect_spoof_show_map_vma(void)
-          { 
-          }
-          EXPORT_SYMBOL_GPL(susfs_open_redirect_spoof_show_map_vma);
-
-          struct vm_area_struct * __attribute__((noinline)) get_pad_vma(struct vm_area_struct *vma)
-          {
-          return NULL;
-          }
-          EXPORT_SYMBOL_GPL(get_pad_vma);
-
-          struct vm_area_struct * __attribute__((noinline)) get_data_vma(struct vm_area_struct *vma)
-          {
-          return NULL;
-          }
-          EXPORT_SYMBOL_GPL(get_data_vma);
-
-          void __attribute__((noinline)) show_map_pad_vma(struct seq_file *m, struct vm_area_struct *vma)
-          {
-          }
-          EXPORT_SYMBOL_GPL(show_map_pad_vma);
-          EOF
-
-          # 4.顶层Makefile 使用 EXTRA_OBJS，正确让文件参与vmlinux链接
-          echo 'EXTRA_OBJS += weak_susfs.o' >> "$KERNEL_ROOT/Makefile"
-
-          # 5.语法修复，fdinfo.c保留补丁，仅清理孤立#endif
-          echo "Applying syntax sed fixes..."
-          sed -i '17{/^#endif/d}' fs/notify/fdinfo.c
-          sed -i '283s/min(/min_t(unsigned int,/' drivers/clk/qcom/clk-rpmh.c
-          sed -i '2028s/min(/min_t(unsigned long long,/' net/ipv4/tcp_output.c
-          sed -i '170s/(u32)device->iface_q_table.align_virtual_addr/(u32)(uintptr_t)device->iface_q_table.align_virtual_addr/' techpack/video/msm/vidc/hfi_iris2.c
-          sed -i '253s/ION_HEAP_TYPE_SECURE_CARVEOUT/(enum ion_heap_type)ION_HEAP_TYPE_SECURE_CARVEOUT/' drivers/staging/android/ion/heaps/msm_ion.c
-          sed -i '254s/ION_HEAP_TYPE_SYSTEM_SECURE/(enum ion_heap_type)ION_HEAP_TYPE_SYSTEM_SECURE/' drivers/staging/android/ion/heaps/msm_ion.c
-          sed -i '255s/ION_HEAP_TYPE_HYP_CMA/(enum ion_heap_type)ION_HEAP_TYPE_HYP_CMA/' drivers/staging/android/ion/heaps/msm_ion.c
-          sed -i '2734s/(u8)of_device_get_match_data/(u8)(uintptr_t)of_device_get_match_data/' drivers/regulator/qpnp-lcdb-regulator.c
-          sed -i '6163s/uint8_t mdie\[SIR_MDIE_SIZE\]/uint8_t mdie[]/' drivers/staging/qcacld-3.0/core/mac/src/sys/legacy/src/utils/src/parser_api.c
-          sed -i '622s/&rq->csd/__builtin_assume_aligned(\&rq->csd, 64)/' block/blk-mq.c
-          sed -i '180s/int ret;/int ret = 0;/' drivers/android/hwui_mon.c
-          
-
-
-          # 调试输出：确认weak_susfs.c已经生成，内容正确
-          echo "==== weak_susfs.c content check ===="
-          cat weak_susfs.c
-
-          make clean
-
+       run: |
+         set -euo pipefail
+         cd "$GITHUB_WORKSPACE/device_kernel"
+         KERNEL_ROOT="$GITHUB_WORKSPACE/device_kernel"
+         # 定义需要还原的GKI不兼容文件列表
+         GKI_INCOMPATIBLE_FILES=(
+         "kernel/kallsyms.c"
+          "fs/exec.c"
+          "fs/namei.c"
+          "fs/namespace.c"
+          "fs/proc_namespace.c"
+           )
+           # 1. 还原GKI不兼容文件（不碰task_mmu.c和fdinfo.c）
+           echo "=== Reverting GKI-incompatible source files ==="
+           git checkout HEAD -- "${GKI_INCOMPATIBLE_FILES[@]}"
+           # 2. 清理历史残留文件
+           echo "=== Cleaning up old artifacts ==="
+           rm -f weak_susfs.c
+           sed -i '/weak_susfs\.o/d' "$KERNEL_ROOT/Makefile" 2>/dev/null || true
+           # 3. 生成强符号stub文件（使用noinline规避LTO __weak失效）
+           echo "=== Generating susfs strong stub ==="
+           cat > weak_susfs.c << 'EOF'
+           #include <linux/fs.h>
+           #include <linux/proc_fs.h>
+           #include <linux/mm.h>
+           #include <linux/seq_file.h>
+           #include <linux/module.h>
+            bool __attribute__((noinline)) 
+            susfs_hide_sus_mnts_for_non_su_procs(void)
+            {
+            return false;
+            }   
+            EXPORT_SYMBOL_GPL(susfs_hide_sus_mnts_for_non_su_procs);
+            void __attribute__((noinline)) 
+            susfs_open_redirect_spoof_show_map_vma(void)
+            {
+            /* stub: do nothing */
+            }
+            EXPORT_SYMBOL_GPL(susfs_open_redirect_spoof_show_map_vma);
+            struct vm_area_struct * __attribute__((noinline)) 
+            get_pad_vma(struct vm_area_struct *vma)
+             {
+             return NULL;
+             }
+             EXPORT_SYMBOL_GPL(get_pad_vma);
+             struct vm_area_struct * __attribute__((noinline)) 
+             get_data_vma(struct vm_area_struct *vma)
+             {
+             return NULL;
+             }
+             EXPORT_SYMBOL_GPL(get_data_vma);
+             void __attribute__((noinline)) 
+             show_map_pad_vma(struct seq_file *m, struct vm_area_struct *vma)
+             {
+             /* stub: do nothing */
+             }
+             EXPORT_SYMBOL_GPL(show_map_pad_vma);
+             EOF
+             # 4. 将stub添加到Makefile（如果尚未添加）
+             if ! grep -q "weak_susfs\.o" "$KERNEL_ROOT/Makefile"; then
+             echo 'EXTRA_OBJS += weak_susfs.o' >> "$KERNEL_ROOT/Makefile"
+             echo "Added weak_susfs.o to Makefile"
+             else
+             echo "weak_susfs.o already in Makefile, skipping"
+             fi
+             # 5. 应用语法修复补丁（使用数组存储修复命令，便于管理）
+             echo "=== Applying syntax fixes ==="
+             # 定义修复：文件:模式:替换内容（使用|分隔）
+             declare -a FIXES=(
+             "fs/notify/fdinfo.c:17:{/^#endif/d}"
+             "drivers/clk/qcom/clk-rpmh.c:283:s/min(/min_t(unsigned int,/"
+             "net/ipv4/tcp_output.c:2028:s/min(/min_t(unsigned long long,/"
+             "techpack/video/msm/vidc/hfi_iris2.c:170:s/(u32)device->iface_q_table.align_virtual_addr/(u32)(uintptr_t)device->iface_q_table.align_virtual_addr/"
+             "drivers/staging/android/ion/heaps/msm_ion.c:253:s/ION_HEAP_TYPE_SECURE_CARVEOUT/(enum ion_heap_type)ION_HEAP_TYPE_SECURE_CARVEOUT/"
+             "drivers/staging/android/ion/heaps/msm_ion.c:254:s/ION_HEAP_TYPE_SYSTEM_SECURE/(enum ion_heap_type)ION_HEAP_TYPE_SYSTEM_SECURE/"
+             "drivers/staging/android/ion/heaps/msm_ion.c:255:s/ION_HEAP_TYPE_HYP_CMA/(enum ion_heap_type)ION_HEAP_TYPE_HYP_CMA/"
+             "drivers/regulator/qpnp-lcdb-regulator.c:2734:s/(u8)of_device_get_match_data/(u8)(uintptr_t)of_device_get_match_data/"
+             "drivers/staging/qcacld-3.0/core/mac/src/sys/legacy/src/utils/src/parser_api.c:6163:s/uint8_t mdie\\[SIR_MDIE_SIZE\\]/uint8_t mdie[]/"
+             "block/blk-mq.c:622:s/&rq->csd/__builtin_assume_aligned(\\&rq->csd, 64)/"
+             "drivers/android/hwui_mon.c:180:s/int ret;/int ret = 0;/"
+             )
+             # 应用每个修复
+             for fix in "${FIXES[@]}"; do
+             IFS=':' read -r file pattern replacement <<< "$fix"
+             if [[ -f "$file" ]]; then
+             sed -i "$pattern$replacement" "$file" && \
+             echo "  ✓ Fixed $file (line ${pattern//[^0-9]/})"
+             else
+             echo "  ⚠ Warning: $file not found, skipping"
+             fi
+             done
+             echo "=== All fixes applied successfully ===
 
           
       - name: 🚀 Build Process
