@@ -130,25 +130,24 @@ jobs:
           KERNEL_ROOT="$GITHUB_WORKSPACE/device_kernel"
           # GKI不兼容文件列表
           GKI_INCOMPATIBLE_FILES=(
-            "kernel/kallsyms.c"
-            "fs/exec.c"
-            "fs/namei.c"
-            "fs/namespace.c"
-            "fs/proc_namespace.c"
-            "fs/proc/task_mmu.c"
-            "drivers/android/hwui_mon.c"
+          "kernel/kallsyms.c"
+          "fs/exec.c"
+          "fs/namei.c"
+          "fs/namespace.c"
+          "fs/proc_namespace.c"
+          "fs/proc/task_mmu.c"
+          "drivers/android/hwui_mon.c"
           )
           # 1. 还原GKI不兼容文件
           echo "=== Reverting GKI-incompatible source files ==="
           git checkout HEAD -- "${GKI_INCOMPATIBLE_FILES[@]}"
-                 
-         # 给susfs_hide_sus_mnts_for_non_su_procs调用包裹CONFIG_KSU_SUSFS_SUS_MOUNT条件
-         sed -i 's/susfs_hide_sus_mnts_for_non_su_procs(/#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n\tsusfs_hide_sus_mnts_for_non_su_procs(/' fs/proc/xarray.c
-         sed -i '/susfs_hide_sus_mnts_for_non_su_procs(/a \\#endif' fs/proc/xarray.c
+          # 给susfs_hide_sus_mnts_for_non_su_procs调用包裹CONFIG_KSU_SUSFS_SUS_MOUNT条件
+          sed -i 's/susfs_hide_sus_mnts_for_non_su_procs(/#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n\tsusfs_hide_sus_mnts_for_non_su_procs(/' fs/proc/xarray.c
+          sed -i '/susfs_hide_sus_mnts_for_non_su_procs(/a \\#endif' fs/proc/xarray.c
 
-         # 给susfs_open_redirect_spoof_show_map_vma包裹CONFIG_KSU_SUSFS_OPEN_REDIRECT
-         sed -i 's/susfs_open_redirect_spoof_show_map_vma(/#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT\n\tsusfs_open_redirect_spoof_show_map_vma(/' fs/proc/xarray.c
-         sed -i '/susfs_open_redirect_spoof_show_map_vma(/a \\#endif' fs/proc/xarray.c
+          # 给susfs_open_redirect_spoof_show_map_vma包裹CONFIG_KSU_SUSFS_OPEN_REDIRECT
+          sed -i 's/susfs_open_redirect_spoof_show_map_vma(/#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT\n\tsusfs_open_redirect_spoof_show_map_vma(/' fs/proc/xarray.c
+          sed -i '/susfs_open_redirect_spoof_show_map_vma(/a \\#endif' fs/proc/xarray.c
 
 
           
