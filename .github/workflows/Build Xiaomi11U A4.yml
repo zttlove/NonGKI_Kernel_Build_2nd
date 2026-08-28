@@ -123,87 +123,47 @@ jobs:
       - name: 🔧 Patch Hide Stuff
         uses: ./.github/workflows/patch-hide-stuff
           
-      - name: Fix kallsyms incomplete proc_ops & susfs stub workaround
+      - name: Purge SUSFS code injection (no‑git / no‑patch)
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/device_kernel"
-          KERNEL_ROOT="$GITHUB_WORKSPACE/device_kernel"
-          # GKI不兼容文件列表
-          GKI_INCOMPATIBLE_FILES=(
-          "kernel/kallsyms.c"
-          "fs/exec.c"
-          "fs/namei.c"
-          "fs/namespace.c"
+
+          # 1. 清除defconfig所有SUSFS配置
+          sed -i '/CONFIG_KSU_SUSFS/d' arch/arm64/configs/star_defconfig
+          sed -i '/CONFIG_KSU_SUSFS_/d' arch/arm64/configs/star_defconfig
+
+          # 目标文件列表
+          FILES=(
+          "fs/proc/task_mmu.c"
           "fs/proc_namespace.c"
-         
+          "fs/namespace.c"
+          "fs/namei.c"
+          "fs/exec.c"
+          "fs/notify/fdinfo.c"
+          "kernel/kallsyms.c"
           )
-          # 1. 还原GKI不兼容文件
-          echo "=== Reverting GKI-incompatible source files ==="
-          git checkout HEAD -- "${GKI_INCOMPATIBLE_FILES[@]}"
-          
-      - name: Revert SUSFS proc hunk & clean stale objects
-        run: |
-          set -euo pipefail
-          # 1. 恢复源文件，git优先
-          git checkout -- fs/proc/task_mmu.c fs/proc_namespace.c || true
-          # 2. 打入完整revert patch，清除全部susfs注入代码块
-          cat > /tmp/revert_susfs_proc.patch <<'EOF'
-          diff --git a/fs/proc_namespace.c b/fs/proc_namespace.c
-          index 342bc72..89122c0 100644
-          --- a/fs/proc_namespace.c
-          +++ b/fs/proc_namespace.c
-          @@ -147,8 +147,6 @@ static int show_vfsmnt(struct seq_file *m, struct vfsmount *mnt)
-          int err = 0;
-          struct mount *mnt_real = real_mount(mnt);
-          -	susfs_hide_sus_mnts_for_non_su_procs(m);
-          -
-          seq_putc(m, mnt_real->mnt_mountpoint->d_name.name[0] ? '\t' : ' ');
-          seq_dentry(m, mnt_real->mnt_mountpoint, &mnt_real->mnt_parent->mnt);
-          return err;
-          @@ -213,8 +211,6 @@ static int show_mountinfo(struct seq_file *m, struct vfsmount *mnt)
-          struct mount *mnt_real = real_mount(mnt);
-          int err;
-          -	susfs_hide_sus_mnts_for_non_su_procs(m);
-          -
-          seq_printf(m, "%u %u ", mnt_real->mnt_id, mnt_real->mnt_parent->mnt_id);
-          err = show_mountinfo_major_minor(m, mnt);
-          if (err)
-          diff --git a/fs/proc/task_mmu.c b/fs/proc/task_mmu.c
-          index 90c0318..0177353 100644
-          --- a/fs/proc/task_mmu.c
-          +++ b/fs/proc/task_mmu.c
-          @@ -354,24 +354,11 @@ static void show_map_vma(struct seq_file *m, struct vm_area_struct *vma)
-          unsigned long start = vma->vm_start;
-          unsigned long end = vma->vm_end;
-          -#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
-          -	unsigned long ino;
-          -	dev_t dev;
-          -	char *spoofed_redirected_name;
-          -
-          -	susfs_open_redirect_spoof_show_map_vma(&ino,
-          -					      &dev,
-          -					      &spoofed_redirected_name,
-          -					      m, vma);
-          -
-          -	if (ino != 0 || dev != 0 || spoofed_redirected_name) {
-          -		seq_printf(m, "%08lx-%08lx %c%c%c%c %08lx %02x:%02x %lu",
-          -			   start, end,
-          -			   vma->vm_flags & VM_READ ? 'r' : '-',
-          -			   vma->vm_flags & VM_WRITE ? 'w' : '-',
-          -			   vma->vm_flags & VM_EXEC ? 'x' : '-',
-          -			   vma->vm_flags & VM_SHARED ? 's' : '-',
-          -			   0, MAJOR(dev), MINOR(dev), ino);
-          -	} else
-          -#endif
-          seq_printf(m, "%08lx-%08lx %c%c%c%c %08lx %02x:%02x %lu",
-          start, end,
-          vma->vm_flags & VM_READ ? 'r' : '-',
-          EOF
-          patch -p1 < /tmp/revert_susfs_proc.patch
-          # 3. 强制清理旧obj，解决"xarray.c"虚假报错（旧缓存obj残留）
-          make clean
-          # 4. 清空ccache，防止旧编译单元被复用
+          # 2. 删除susfs_xxx函数调用行、相关#ifdef CONFIG_KSU_SUSFS_xxx整块条件编译代码
+          for f in "${FILES[@]}"; do
+          if [[ -f "$f" ]]; then
+          # 删除susfs函数调用行
+          sed -i '/susfs_/d' "$f"
+          # 删除以CONFIG_KSU_SUSFS开头的#ifdef / #ifndef / #endif块标记行
+          sed -i '/#ifdef CONFIG_KSU_SUSFS/d' "$f"
+          sed -i '/#ifndef CONFIG_KSU_SUSFS/d' "$f"
+          sed -i '/#endif.*CONFIG_KSU_SUSFS/d' "$f"
+          # 清理patch残留diff标记碎片
+          sed -i '/^diff --git/d;/^--- a\//d;/^+++ b\//d' "$f"
+          fi
+          done
+
+          # 3. 删除susfs stub文件，如果之前生成过
+          rm -f kernel/susfs_stub.c
+          sed -i '/susfs_stub.o/d' kernel/Makefile
+
+          # 4. 只清理对应模块obj，避免完整make clean耗时爆炸
+          make fs/ kernel/ drivers/ clean
           ccache -c
+
 
          
 
