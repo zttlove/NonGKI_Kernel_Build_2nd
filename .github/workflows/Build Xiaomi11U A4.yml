@@ -161,7 +161,7 @@ jobs:
           sed -i '/susfs_stub.o/d' kernel/Makefile
 
           # 4. 只清理对应模块obj，避免完整make clean耗时爆炸
-          make fs/ kernel/ drivers/ clean
+        
           ccache -c
 
 
