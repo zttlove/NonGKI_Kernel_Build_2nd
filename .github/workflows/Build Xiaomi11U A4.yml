@@ -141,6 +141,16 @@ jobs:
           # 1. 还原GKI不兼容文件
           echo "=== Reverting GKI-incompatible source files ==="
           git checkout HEAD -- "${GKI_INCOMPATIBLE_FILES[@]}"
+          
+          - name: Patch ReSukiSU disable TP hook
+  run: |
+    set -e
+    cd "$GITHUB_WORKSPACE/device_kernel"
+    #注释Kbuild里TP‑hook强制停止判断
+    sed -i '171s/^/#/' drivers/kernelsu/Kbuild
+    #关闭TP hook编译宏，切到传统syscall ptrace模式
+    sed -i 's/CONFIG_KSU_RESUKISU_TP_SYSCALL_REDIRECT=y/# CONFIG_KSU_RESUKISU_TP_SYSCALL_REDIRECT is not set/' arch/arm64/configs/star_defconfig
+
           sed -i '/CONFIG_KSU_SUSFS/d' arch/arm64/configs/star_defconfig
           
       - name: 🚀 Build Process
