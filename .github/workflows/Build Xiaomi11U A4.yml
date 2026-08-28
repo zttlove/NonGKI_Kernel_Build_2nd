@@ -140,10 +140,7 @@ jobs:
           # 1. 还原GKI不兼容文件
           echo "=== Reverting GKI-incompatible source files ==="
           git checkout HEAD -- "${GKI_INCOMPATIBLE_FILES[@]}"
-          # 删除 fs/proc_namespace.c 全部 susfs_hide_sus_mnts_for_non_su_procs(); 调用行
-          sed -i '/susfs_hide_sus_mnts_for_non_su_procs(/d' fs/proc_namespace.c
-          # 删除 fs/proc/task_mmu.c susfs_open_redirect_spoof_show_map_vma(); 调用行
-          sed -i '/susfs_open_redirect_spoof_show_map_vma(/d' fs/proc/task_mmu.c
+         
 
           
       - name: 🚀 Build Process
