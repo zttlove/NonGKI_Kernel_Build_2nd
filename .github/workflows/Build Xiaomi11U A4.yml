@@ -139,10 +139,12 @@ jobs:
           # 1. 还原GKI不兼容文件
           echo "=== Reverting GKI-incompatible source files ==="
           git checkout HEAD -- "${GKI_INCOMPATIBLE_FILES[@]}"
+
           # 2. 清理历史残留文件
           echo "=== Cleaning up old artifacts ==="
           rm -f weak_susfs.c
           sed -i '/weak_susfs\.o/d' "$KERNEL_ROOT/Makefile" 2>/dev/null || true
+
           # 3. 生成 weak_susfs.c stub 文件
           echo "=== Generating weak_susfs.c stub file ==="
           cat > weak_susfs.c << 'EOF'
@@ -152,6 +154,7 @@ jobs:
           #include <linux/seq_file.h>
           #include <linux/module.h>
           #include <linux/ptrace.h>
+
           bool __attribute__((noinline)) susfs_hide_sus_mnts_for_non_su_procs(void) { return false; }
           EXPORT_SYMBOL_GPL(susfs_hide_sus_mnts_for_non_su_procs);
 
@@ -176,15 +179,17 @@ jobs:
           void __attribute__((noinline)) ksu_hide_setprocattr(void) {}
           EXPORT_SYMBOL_GPL(ksu_hide_setprocattr);
           EOF
-          # 4. 将 stub 添加到 Makefile (obj-y 确保链接进 vmlinux)
-          echo "=== Appending obj-y to root Makefile ==="
+
+          # 4. 根目录Makefile使用EXTRA_OBJS，保证weak_susfs.o链接vmlinux
+          echo "=== Appending EXTRA_OBJS to root Makefile ==="
           if ! grep -q "weak_susfs\.o" "$KERNEL_ROOT/Makefile"; then
-            echo 'obj-y += weak_susfs.o' >> "$KERNEL_ROOT/Makefile"
-            echo "✅ Added obj-y += weak_susfs.o to Makefile"
+            echo 'EXTRA_OBJS += weak_susfs.o' >> "$KERNEL_ROOT/Makefile"
+            echo "✅ Added EXTRA_OBJS += weak_susfs.o to Makefile"
           else
             echo "⚠️ weak_susfs.o already in Makefile, skipping"
           fi
-          # 5. 应用语法修复补丁
+
+          # 5. 应用语法修复补丁，修复sed语法
           echo "=== Applying syntax fixes ==="
           declare -a FIXES=(
             "drivers/clk/qcom/clk-rpmh.c:283:s/min(/min_t(unsigned int,/"
@@ -195,25 +200,21 @@ jobs:
             "drivers/staging/android/ion/heaps/msm_ion.c:255:s/ION_HEAP_TYPE_HYP_CMA/(enum ion_heap_type)ION_HEAP_TYPE_HYP_CMA/"
             "drivers/regulator/qpnp-lcdb-regulator.c:2734:s/(u8)of_device_get_match_data/(u8)(uintptr_t)of_device_get_match_data/"
             "drivers/staging/qcacld-3.0/core/mac/src/sys/legacy/src/utils/src/parser_api.c:6163:s/uint8_t mdie\\[SIR_MDIE_SIZE\\]/uint8_t mdie[]/"
-            "block/blk-mq.c:622:s/&rq->csd/__builtin_assume_aligned(\\&rq->csd, 64)/"
+            "block/blk-mq.c:622:s/&rq->csd/__builtin_assume_aligned(\&rq->csd, 64)/"
             "drivers/android/hwui_mon.c:180:s/int ret;/int ret = 0;/"
           )
+
           for fix in "${FIXES[@]}"; do
-            IFS=':' read -r file pattern replacement <<< "$fix"
+            IFS=':' read -r file sedcmd dummy <<< "$fix"
             if [[ -f "$file" ]]; then
-              sed -i "${pattern}#${replacement}#" "$file" && echo "  ✓ Fixed $file"
+              sed -i "$sedcmd" "$file" && echo "  ✓ Fixed $file"
             else
               echo "  ⚠ Warning: $file not found, skipping"
             fi
           done
-          # 6. 关闭栈保护解决 __stack_chk_guard
-          echo "=== Disabling Stack Protector ==="
-          DEFCONFIG="arch/arm64/configs/star_defconfig"
-          if [[ -f "$DEFCONFIG" ]]; then
-            sed -i '/CONFIG_STACKPROTECTOR/d' "$DEFCONFIG"
-            echo "# CONFIG_STACKPROTECTOR is not set" >> "$DEFCONFIG"
-            echo "✅ Stack protector disabled in $DEFCONFIG"
-          fi
+
+         
+
           # 7. 准备内核配置，防止make kernelrelease报错
           echo "=== Preparing kernel config ==="
           if [ ! -f .config ]; then
@@ -225,7 +226,12 @@ jobs:
           KERNEL_VERSION=$(make ARCH=arm64 kernelrelease -s)
           echo "KERNEL_VERSION=$KERNEL_VERSION" >> $GITHUB_ENV
           echo "✅ Detected Kernel Version: $KERNEL_VERSION"
+
+          echo "==== DEBUG dump weak_susfs.c ===="
+          cat weak_susfs.c
+          grep weak_susfs.o "$KERNEL_ROOT/Makefile"
           echo "=== All fixes applied successfully ==="
+
 
           
       - name: 🚀 Build Process
