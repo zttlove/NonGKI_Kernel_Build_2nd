@@ -123,65 +123,11 @@ jobs:
       - name: 🔧 Patch Hide Stuff
         uses: ./.github/workflows/patch-hide-stuff
           
-      - name: Fix kallsyms incomplete proc_ops & susfs stub workaround
-        run: |
-         set -euo pipefail
-         cd "$GITHUB_WORKSPACE/device_kernel"
-         KERNEL_ROOT="$GITHUB_WORKSPACE/device_kernel"
-         # 定义需要还原的GKI不兼容文件列表
-         GKI_INCOMPATIBLE_FILES=(
-         "kernel/kallsyms.c"
-          "fs/exec.c"
-          "fs/namei.c"
-          "fs/namespace.c"
-          "fs/proc_namespace.c"
-          "fs/proc/task_mmu.c"
-           )
-           # 1. 还原GKI不兼容文件（不碰task_mmu.c和fdinfo.c）
-           echo "=== Reverting GKI-incompatible source files ==="
-           git checkout HEAD -- "${GKI_INCOMPATIBLE_FILES[@]}"
-           # 2. 清理历史残留文件
-           echo "=== Cleaning up old artifacts ==="
-           rm -f weak_susfs.c
-           sed -i '/weak_susfs\.o/d' "$KERNEL_ROOT/Makefile" 2>/dev/null || true
-           susfs_hide_sus_mnts_for_non_su_procs(void)
-           #include <linux/fs.h>
-           #include <linux/proc_fs.h>
-           #include <linux/mm.h>
-           #include <linux/seq_file.h>
-           #include <linux/module.h>
-           #include <linux/ptrace.h>
-
-           bool __attribute__((noinline)) susfs_hide_sus_mnts_for_non_su_procs(void)
-           {
-           return false;
-          }
-           EXPORT_SYMBOL_GPL(susfs_hide_sus_mnts_for_non_su_procs);
-
-           void __attribute__((noinline)) susfs_open_redirect_spoof_show_map_vma(void)
-           {
-           }
-           EXPORT_SYMBOL_GPL(susfs_open_redirect_spoof_show_map_vma);
-
-           struct vm_area_struct * __attribute__((noinline)) get_pad_vma(struct vm_area_struct *vma)
-           {
-           return NULL;
-           }
-           EXPORT_SYMBOL_GPL(get_pad_vma);
-
-           struct vm_area_struct * __attribute__((noinline)) get_data_vma(struct vm_area_struct *vma)
-           {
-           return NULL;
-           }
-          EXPORT_SYMBOL_GPL(get_data_vma);
-
-           void __attribute__((noinline)) show_map_pad_vma(struct seq_file *m, struct vm_area_struct *vma)
-      - name: Fix kallsyms incomplete proc_ops & susfs stub workaround
+          - name: Fix kallsyms incomplete proc_ops & susfs stub workaround
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/device_kernel"
           KERNEL_ROOT="$GITHUB_WORKSPACE/device_kernel"
-
           # GKI不兼容文件列表
           GKI_INCOMPATIBLE_FILES=(
             "kernel/kallsyms.c"
@@ -190,17 +136,14 @@ jobs:
             "fs/namespace.c"
             "fs/proc_namespace.c"
           )
-
           # 1. 还原GKI不兼容文件
           echo "=== Reverting GKI-incompatible source files ==="
           git checkout HEAD -- "${GKI_INCOMPATIBLE_FILES[@]}"
-
           # 2. 清理历史残留文件
           echo "=== Cleaning up old artifacts ==="
           rm -f weak_susfs.c
           sed -i '/weak_susfs\.o/d' "$KERNEL_ROOT/Makefile" 2>/dev/null || true
-
-          # 3. 生成 weak_susfs.c
+          # 3. 生成 weak_susfs.c stub 文件
           echo "=== Generating weak_susfs.c stub file ==="
           cat > weak_susfs.c << 'EOF'
           #include <linux/fs.h>
@@ -209,7 +152,6 @@ jobs:
           #include <linux/seq_file.h>
           #include <linux/module.h>
           #include <linux/ptrace.h>
-
           bool __attribute__((noinline)) susfs_hide_sus_mnts_for_non_su_procs(void) { return false; }
           EXPORT_SYMBOL_GPL(susfs_hide_sus_mnts_for_non_su_procs);
 
@@ -233,9 +175,8 @@ jobs:
 
           void __attribute__((noinline)) ksu_hide_setprocattr(void) {}
           EXPORT_SYMBOL_GPL(ksu_hide_setprocattr);
-           lEOF
-
-          # 4. 将 stub 添加到 Makefile (强烈建议使用 obj-y 确保链接进 vmlinux)
+          EOF
+          # 4. 将 stub 添加到 Makefile (obj-y 确保链接进 vmlinux)
           echo "=== Appending obj-y to root Makefile ==="
           if ! grep -q "weak_susfs\.o" "$KERNEL_ROOT/Makefile"; then
             echo 'obj-y += weak_susfs.o' >> "$KERNEL_ROOT/Makefile"
@@ -243,7 +184,6 @@ jobs:
           else
             echo "⚠️ weak_susfs.o already in Makefile, skipping"
           fi
-
           # 5. 应用语法修复补丁
           echo "=== Applying syntax fixes ==="
           declare -a FIXES=(
@@ -258,17 +198,14 @@ jobs:
             "block/blk-mq.c:622:s/&rq->csd/__builtin_assume_aligned(\\&rq->csd, 64)/"
             "drivers/android/hwui_mon.c:180:s/int ret;/int ret = 0;/"
           )
-
           for fix in "${FIXES[@]}"; do
             IFS=':' read -r file pattern replacement <<< "$fix"
             if [[ -f "$file" ]]; then
-              # 使用 # 作为分隔符，避免路径中的 / 导致 sed 报错
               sed -i "${pattern}#${replacement}#" "$file" && echo "  ✓ Fixed $file"
             else
               echo "  ⚠ Warning: $file not found, skipping"
             fi
           done
-
           # 6. 关闭栈保护解决 __stack_chk_guard
           echo "=== Disabling Stack Protector ==="
           DEFCONFIG="arch/arm64/configs/star_defconfig"
@@ -277,8 +214,7 @@ jobs:
             echo "# CONFIG_STACKPROTECTOR is not set" >> "$DEFCONFIG"
             echo "✅ Stack protector disabled in $DEFCONFIG"
           fi
-
-          # 7. 【关键补充】准备内核配置，防止后续 make kernelrelease 报错
+          # 7. 准备内核配置，防止make kernelrelease报错
           echo "=== Preparing kernel config ==="
           if [ ! -f .config ]; then
             echo "No .config found, generating default config..."
@@ -286,12 +222,10 @@ jobs:
           fi
           make ARCH=arm64 prepare -j$(nproc)
           
-          # 现在可以安全地提取版本号了
           KERNEL_VERSION=$(make ARCH=arm64 kernelrelease -s)
           echo "KERNEL_VERSION=$KERNEL_VERSION" >> $GITHUB_ENV
           echo "✅ Detected Kernel Version: $KERNEL_VERSION"
           echo "=== All fixes applied successfully ==="
-          pplied successfully ===
 
           
       - name: 🚀 Build Process
