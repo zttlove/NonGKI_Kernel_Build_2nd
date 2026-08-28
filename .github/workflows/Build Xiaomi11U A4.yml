@@ -123,7 +123,7 @@ jobs:
       - name: 🔧 Patch Hide Stuff
         uses: ./.github/workflows/patch-hide-stuff
           
-          - name: Fix kallsyms incomplete proc_ops & susfs stub workaround
+      - name: Fix kallsyms incomplete proc_ops & susfs stub workaround
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/device_kernel"
