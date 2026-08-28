@@ -144,27 +144,7 @@ jobs:
           )
           echo "=== Reverting GKI-incompatible source files ==="
           git checkout HEAD -- "${GKI_INCOMPATIBLE_FILES[@]}"
-          # 2. 删除susfs_xxx函数调用行、相关#ifdef CONFIG_KSU_SUSFS_xxx整块条件编译代码
-          for f in "${FILES[@]}"; do
-          if [[ -f "$f" ]]; then
-          # 删除susfs函数调用行
-          sed -i '/susfs_/d' "$f"
-          # 删除以CONFIG_KSU_SUSFS开头的#ifdef / #ifndef / #endif块标记行
-          sed -i '/#ifdef CONFIG_KSU_SUSFS/d' "$f"
-          sed -i '/#ifndef CONFIG_KSU_SUSFS/d' "$f"
-          sed -i '/#endif.*CONFIG_KSU_SUSFS/d' "$f"
-          # 清理patch残留diff标记碎片
-          sed -i '/^diff --git/d;/^--- a\//d;/^+++ b\//d' "$f"
-          fi
-          done
-
-          # 3. 删除susfs stub文件，如果之前生成过
-          rm -f kernel/susfs_stub.c
-          sed -i '/susfs_stub.o/d' kernel/Makefile
-
-          # 4. 只清理对应模块obj，避免完整make clean耗时爆炸
-        
-          ccache -c
+          
 
 
          
