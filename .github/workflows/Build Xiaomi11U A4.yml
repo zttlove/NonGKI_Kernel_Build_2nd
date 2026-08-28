@@ -136,6 +136,7 @@ jobs:
             "fs/namespace.c"
             "fs/proc_namespace.c"
             "fs/proc/task_mmu.c"
+            ”drivers/android/hwui_mon.c”
           )
           # 1. 还原GKI不兼容文件
           echo "=== Reverting GKI-incompatible source files ==="
