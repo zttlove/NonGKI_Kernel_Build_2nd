@@ -122,7 +122,7 @@ jobs:
           cd "${GITHUB_WORKSPACE}/device_kernel" || exit 1
 
           GKI_INCOMPATIBLE_FILES=(
-          
+          "fs/proc/task_mmu.c"
           )
           echo "=== Reverting GKI-incompatible source files ==="
           git checkout HEAD -- "${GKI_INCOMPATIBLE_FILES[@]}"
