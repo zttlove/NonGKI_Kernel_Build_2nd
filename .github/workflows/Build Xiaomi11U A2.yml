@@ -121,23 +121,7 @@ jobs:
           
         
 
-          # 9. 替换结构体类型
-          sed -i 's/struct proc_ops/struct file_operations/g' kernel/kallsyms.c
-          # 替换proc专属成员为旧版file_operations标准成员
-          sed -i 's/\.proc_open/.open/g' kernel/kallsyms.c
-          sed -i 's/\.proc_read/.read/g' kernel/kallsyms.c
-          sed -i 's/\.proc_lseek/.llseek/g' kernel/kallsyms.c
-          sed -i 's/\.proc_release/.release/g' kernel/kallsyms.c
-
-          # 10. 复原被补丁修改的核心文件（防止 kallsyms/proc_ops 冲突）
-           git checkout fs/exec.c fs/open.c fs/read_write.c fs/namei.c kernel/module.c || true
-
-          # 11. 清理构建缓存（按需保留）
-          make clean
-
-
-
-
+          
           
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process1
