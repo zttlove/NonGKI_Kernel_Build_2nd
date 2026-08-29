@@ -121,6 +121,12 @@ jobs:
           set -e
           cd "${GITHUB_WORKSPACE}/device_kernel" || exit 1
 
+          GKI_INCOMPATIBLE_FILES=(
+          
+          )
+          echo "=== Reverting GKI-incompatible source files ==="
+          git checkout HEAD -- "${GKI_INCOMPATIBLE_FILES[@]}"
+          
           # 1. 关闭强栈保护
           DEFCONFIG="arch/arm64/configs/${DEFCONFIG_NAME}"
           if [ -f "$DEFCONFIG" ]; then
