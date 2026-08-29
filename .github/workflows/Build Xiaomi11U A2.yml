@@ -135,23 +135,19 @@ jobs:
           find fs kernel drivers -name "*.c" -exec grep -l 'asm volatile.*"x18"' {} \; | \
           xargs -r sed -i 's/,"x18"//g; s/"x18",//g'
 
-          # 3.回滚被补丁篡改文件
+          # 3. 强制恢复原版文件
           for f in fs/proc/task_mmu.c kernel/kallsyms.c fs/notify/fdinfo.c fs/namespace.c; do
           git checkout -- "$f" 2>/dev/null || true
           done
-          # 清理残留孤立#endif、susfs_def.h include
           sed -i '/^#endif[[:space:]]*$/d' fs/proc/task_mmu.c fs/notify/fdinfo.c
           sed -i '/#include <linux\/susfs_def.h>/d' fs/namespace.c
-          # 校验fdinfo.c条件编译块是否配对
-          cd fs/notify
-          cnt_if=$(grep -c '^#if' fdinfo.c)
-          cnt_endif=$(grep -c '^#endif' fdinfo.c)
-          echo "fdinfo.c preproc stat: if=$cnt_if endif=$cnt_endif"
-          if [ "$cnt_if" -ne "$cnt_endif" ];then
-          echo "ERROR: fdinfo preprocessor unbalanced, restore original file"
-          git checkout -- fdinfo.c
+          # 校验task_mmu.c文件行数，原生5.4 task_mmu.c大约2200行左右
+          TASKMMU_LINES=$(wc -l < fs/proc/task_mmu.c)
+          echo "task_mmu.c line count: $TASKMMU_LINES"
+          if [ "$TASKMMU_LINES" -lt 2100 ];then
+          echo "!!! WARNING task_mmu.c truncated! restore original!!!"
+          git checkout -- fs/proc/task_mmu.c
           fi
-          cd -
 
           # 4. 生成stub
           cat > kernel/ksu_susfs_stub.c <<'EOF'
