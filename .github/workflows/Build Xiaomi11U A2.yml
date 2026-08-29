@@ -121,11 +121,9 @@ jobs:
           set -e
           cd "${GITHUB_WORKSPACE}/device_kernel" || exit 1
 
-          GKI_INCOMPATIBLE_FILES=(
-          "fs/proc/task_mmu.c"
-          )
-          echo "=== Reverting GKI-incompatible source files ==="
-          git checkout HEAD -- "${GKI_INCOMPATIBLE_FILES[@]}"
+          
+          
+  
           
           # 1. 关闭强栈保护
           DEFCONFIG="arch/arm64/configs/${DEFCONFIG_NAME}"
@@ -150,13 +148,16 @@ jobs:
           # 4. 生成stub
           cat > kernel/ksu_susfs_stub.c <<'EOF'
           #include <linux/types.h>
-          #include <linux/vmarea.h>
           #include <linux/seq_file.h>
+          #include <linux/mm.h>  /* 添加 mm.h 替代 vmarea.h */
 
           /* 如果原生未定义，才提供弱符号 */
           #ifndef CONFIG_STACKPROTECTOR
           __weak unsigned long __stack_chk_guard;
           #endif
+
+          /* 前向声明 vm_area_struct */
+          struct vm_area_struct;
 
           __weak unsigned long get_pad_vma(struct vm_area_struct *vma) { return 0; }
           __weak unsigned long get_data_vma(struct vm_area_struct *vma) { return 0; }
@@ -169,7 +170,6 @@ jobs:
           __weak long ksu_handle_sys_read(void) { return -ENOSYS; }
           __weak void ksu_hide_setprocattr(void) { }
           EOF
-
           # 写入Makefile（使用ASCII连字符）
           sed -i '/obj-y += ksu_susfs_stub.o/d' kernel/Makefile
           echo "obj-y += ksu_susfs_stub.o" >> kernel/Makefile
