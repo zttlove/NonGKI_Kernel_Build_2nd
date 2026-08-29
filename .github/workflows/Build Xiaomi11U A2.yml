@@ -1,4 +1,4 @@
-name: Build Xiaomi11U A2
+/name: Build Xiaomi11U A2
 
 on:
   workflow_call:
@@ -121,9 +121,7 @@ jobs:
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/device_kernel"
 
-          # 1. 清除defconfig所有SUSFS配置
-          sed -i '/CONFIG_KSU_SUSFS/d' arch/arm64/configs/star_defconfig
-          sed -i '/CONFIG_KSU_SUSFS_/d' arch/arm64/configs/star_defconfig
+        
 
           # 目标文件列表
           GKI_INCOMPATIBLE_FILES=(
