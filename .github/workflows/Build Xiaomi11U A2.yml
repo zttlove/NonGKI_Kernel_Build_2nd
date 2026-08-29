@@ -135,26 +135,7 @@ jobs:
           find fs kernel drivers -name "*.c" -exec grep -l 'asm volatile.*"x18"' {} \; | \
           xargs -r sed -i 's/,"x18"//g; s/"x18",//g'
 
-          # 3.恢复原生文件
-          for f in fs/proc/task_mmu.c kernel/kallsyms.c fs/notify/fdinfo.c fs/namespace.c; do
-          git checkout -- "$f" 2>/dev/null || true
-          done
-          sed -i '/^#endif[[:space:]]*$/d' fs/proc/task_mmu.c fs/notify/fdinfo.c
-          sed -i '/#include <linux\/susfs_def.h>/d' fs/namespace.c
-          # 文件长度校验，防止补丁截断
-          FDINFO_LINES=$(wc -l < fs/notify/fdinfo.c)
-          TASKMMU_LINES=$(wc -l < fs/proc/task_mmu.c)
-          echo "fdinfo.c lines:${FDINFO_LINES} task_mmu.c lines:${TASKMMU_LINES}"
-           # 5.4内核fdinfo.c原生行数约330行，task_mmu.c约2200行，低于阈值说明文件被截断
-           if [ "$FDINFO_LINES" -lt 300 ];then
-           echo "fdinfo.c TRUNCATED! restore original"
-           git checkout -- fs/notify/fdinfo.c
-           fi
-           if [ "$TASKMMU_LINES" -lt 2100 ];then
-           echo "task_mmu.c TRUNCATED! restore original"
-           git checkout -- fs/proc/task_mmu.c
-           fi
-
+        
           # 4. 生成stub
           cat > kernel/ksu_susfs_stub.c <<'EOF'
           #include <linux/types.h>
