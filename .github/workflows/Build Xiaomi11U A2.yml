@@ -131,7 +131,8 @@ jobs:
           echo "=== Reverting GKI-incompatible source files ==="
           git checkout HEAD -- "${GKI_INCOMPATIBLE_FILES[@]}"
           
-
+          git checkout -- fs/namespace.c
+          sed -i '/#include <linux\/susfs_def.h>/d' fs/namespace.c
           
         
 
