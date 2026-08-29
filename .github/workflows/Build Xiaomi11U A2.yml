@@ -116,7 +116,23 @@ jobs:
       - name: 🔒 Patch Kernel of Baseband Guard
         uses: ./.github/workflows/patch-baseband-guard
         
+      - name: Purge SUSFS code injection (no‑git / no‑patch)
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/device_kernel"
 
+          # 1. 清除defconfig所有SUSFS配置
+          sed -i '/CONFIG_KSU_SUSFS/d' arch/arm64/configs/star_defconfig
+          sed -i '/CONFIG_KSU_SUSFS_/d' arch/arm64/configs/star_defconfig
+
+          # 目标文件列表
+          GKI_INCOMPATIBLE_FILES=(
+          "fs/exec.c"
+          "kernel/kallsyms.c"
+          )
+          echo "=== Reverting GKI-incompatible source files ==="
+          git checkout HEAD -- "${GKI_INCOMPATIBLE_FILES[@]}"
+          
 
           
         
