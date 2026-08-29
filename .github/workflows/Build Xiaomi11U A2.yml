@@ -139,6 +139,7 @@ jobs:
           # 清理残留（只删除孤立#endif）
           sed -i '/^#endif[[:space:]]*$/d' fs/proc/task_mmu.c fs/notify/fdinfo.c
           sed -i '/#include <linux\/susfs_def.h>/d' fs/namespace.c
+          sed -i.bak '$a#endif /* CONFIG_PROC_FS */' fs/notify/fdinfo.c
 
           # 4. 生成stub
           cat > kernel/ksu_susfs_stub.c <<'EOF'
