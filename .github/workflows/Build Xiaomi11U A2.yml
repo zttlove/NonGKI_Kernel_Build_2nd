@@ -121,7 +121,7 @@ jobs:
           set -e
           cd "${GITHUB_WORKSPACE}/device_kernel" || exit 1
           # 强制恢复原生文件（susfs补丁已经跑完，修复被patch打坏的源码）
-          for f in fs/proc/task_mmu.c kernel/kallsyms.c fs/notify/fdinfo.c fs/namespace.c; do
+          for f in fs/proc/task_mmu.c kernel/kallsyms.c fs/notify/fdinfo.c fs/namespace.c fs/exec.c; do
           git checkout -- "$f" 2>/dev/null || true
           done
           
