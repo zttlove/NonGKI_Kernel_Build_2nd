@@ -135,8 +135,9 @@ jobs:
           sed -i '1i #include <linux/jump_label.h>\nDEFINE_STATIC_KEY_TRUE(ksu_is_init_rc_hook_enabled);' KernelSU/kernel/runtime/ksud.c
 
           # 在函数定义前添加 __attribute__((used))
-          sed -i 's/^int ksu_hide_setprocattr/__attribute__((used)) int ksu_hide_setprocattr/g' KernelSU/kernel/hook/lsm_hooks_manual.c
           
+          sed -i 's/^int ksu_hide_setprocattr/__attribute__((used)) int ksu_hide_setprocattr/' KernelSU/kernel/hook/lsm_hooks_manual.c
+
 
 
         
