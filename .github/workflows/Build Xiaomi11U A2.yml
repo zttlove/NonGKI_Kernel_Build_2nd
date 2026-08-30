@@ -468,15 +468,8 @@ jobs:
           # ============================================================
           echo "=== Checking KernelSU source files ==="
     
-          # 查找所有 KernelSU 相关源文件
-          find . -path "*/kernelsu/*" -name "*.c" -type f | while read -r file; do
-          echo "Found: $file"
-          done | head -20
-    
-          # ============================================================
-          # 2. 检查关键函数是否存在
-          # ============================================================
-          echo "=== Checking for required functions ==="
+          
+          
     
           KSU_DIR=$(find . -type d -name "kernelsu" | head -1)
     
@@ -535,30 +528,7 @@ jobs:
     
           XARRAY_FILE=$(find . -name "xarray.c" -path "*/lib/*" | head -1)
           if [ -f "$XARRAY_FILE" ]; then
-          echo "Found xarray.c: $XARRAY_FILE"
-        
-          # 备份
-          cp "$XARRAY_FILE" "$XARRAY_FILE.bak"
-        
-          # 检查是否包含 KernelSU 相关的错误引用
-          if grep -q "ksu_ksud_init\|ksu_hide_setprocattr" "$XARRAY_FILE" 2>/dev/null; then
-            echo "⚠️  xarray.c contains KernelSU references!"
-            echo "These should not be in xarray.c"
-            
-            # 移除这些引用（它们不应该在 xarray.c 中）
-            sed -i '/ksu_ksud_init/d' "$XARRAY_FILE"
-            sed -i '/ksu_hide_setprocattr/d' "$XARRAY_FILE"
-            sed -i '/on_module_mounted/d' "$XARRAY_FILE"
-            sed -i '/on_post_fs_data/d' "$XARRAY_FILE"
-            sed -i '/on_boot_completed/d' "$XARRAY_FILE"
-            sed -i '/ksu_is_safe_mode/d' "$XARRAY_FILE"
-            sed -i '/nuke_ext4_sysfs/d' "$XARRAY_FILE"
-            sed -i '/ksu_install_rc_hook/d' "$XARRAY_FILE"
-            
-            echo "✓ Removed KernelSU references from xarray.c"
-            fi
-            fi
-    
+          
             # ============================================================
             # 5. 创建缺失函数的存根（如果文件被删除）
             # ============================================================
