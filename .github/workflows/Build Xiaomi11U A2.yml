@@ -137,8 +137,7 @@ jobs:
           # 在函数定义前添加 __attribute__((used))
           
           sed -i 's/^int ksu_hide_setprocattr/__attribute__((used)) int ksu_hide_setprocattr/' KernelSU/kernel/hook/lsm_hooks_manual.c
-
-
+          make clean
 
         
 
