@@ -481,126 +481,111 @@ jobs:
            #else
            DEFINE_STATIC_KEY_FALSE(ksu_is_init_rc_hook_enabled);
            #endif
-
-/**
- * ksu_handle_sys_read_fd - Handle system read operations
- * @fd: file descriptor
- * @buf: user buffer
- * @count: read count
- * 
- * This function is called from sys_read to handle KernelSU-specific
- * read operations. It is placed here to avoid LTO optimization issues.
- */
-#ifdef CONFIG_KSU_EXPORT_SYMBOLS
-__attribute__((noinline)) 
-void ksu_handle_sys_read_fd(unsigned int fd, const char __user *buf, size_t count)
-#else
-static __attribute__((noinline)) 
-void ksu_handle_sys_read_fd(unsigned int fd, const char __user *buf, size_t count)
-#endif
-{
-    struct fd f;
-    int ret;
-    char *data;
-    size_t copy_len;
-    
-    /* 获取文件结构 */
-    f = fdget(fd);
-    if (!f.file) {
-        return;
-    }
-    
-    /* 安全检查 - 仅当启用时 */
-    if (static_branch_unlikely(&ksu_is_init_rc_hook_enabled)) {
-        /* 这里添加KernelSU的具体处理逻辑 */
-        /* 这是示例实现，请根据实际需求修改 */
-        
-        /* 限制复制长度 */
-        copy_len = min(count, (size_t)PAGE_SIZE);
-        data = kmalloc(copy_len + 1, GFP_KERNEL);
-        if (data) {
+           /**
+           * ksu_handle_sys_read_fd - Handle system read operations
+           * @fd: file descriptor
+           * @buf: user buffer
+           * @count: read count
+           * 
+           * This function is called from sys_read to handle KernelSU-specific
+           * read operations. It is placed here to avoid LTO optimization issues.
+           */
+           #ifdef CONFIG_KSU_EXPORT_SYMBOLS
+           __attribute__((noinline)) 
+           void ksu_handle_sys_read_fd(unsigned int fd, const char __user *buf, size_t count)
+           #else
+           static __attribute__((noinline)) 
+           void ksu_handle_sys_read_fd(unsigned int fd, const char __user *buf, size_t count)
+           #endif
+           {
+           struct fd f;
+           int ret;
+           char *data;
+           size_t copy_len;
+           /* 获取文件结构 */
+           f = fdget(fd)
+           if (!f.file) {
+           return;
+           }
+           /* 安全检查 - 仅当启用时 */
+           if (static_branch_unlikely(&ksu_is_init_rc_hook_enabled)) {
+           /* 这里添加KernelSU的具体处理逻辑 */
+           /* 这是示例实现，请根据实际需求修改 */
+           /* 限制复制长度 */
+           copy_len = min(count, (size_t)PAGE_SIZE);
+           data = kmalloc(copy_len + 1, GFP_KERNEL);
+           if (data) {
             ret = copy_from_user(data, buf, copy_len);
             if (!ret) {
                 data[copy_len] = '\0';
                 /* 处理数据... */
                 pr_debug("KernelSU: read from fd %d: %s\n", fd, data);
-            }
-            kfree(data);
-        }
-    }
+                }
+                kfree(data);
+                }
+                }
     
-    fdput(f);
-}
+               fdput(f);
+                }
 
-/* 导出符号（如果需要） */
-#ifdef CONFIG_KSU_EXPORT_SYMBOLS
-EXPORT_SYMBOL(ksu_handle_sys_read_fd);
-#endif
-
-/* 初始化函数 */
-static int __init ksu_runtime_init(void)
-{
-    pr_info("KernelSU runtime initialized\n");
-    return 0;
-}
-
-static void __exit ksu_runtime_exit(void)
-{
-    pr_info("KernelSU runtime exit\n");
-}
-
-module_init(ksu_runtime_init);
-module_exit(ksu_runtime_exit);
-
-MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("KernelSU Runtime Core");
-MODULE_AUTHOR("KernelSU Team");
-EOF
-        
-        mv "$KSUD_FILE.new" "$KSUD_FILE"
-        echo "✓ Complete replacement applied"
-    fi
+              /* 导出符号（如果需要） */
+              #ifdef CONFIG_KSU_EXPORT_SYMBOLS
+              EXPORT_SYMBOL(ksu_handle_sys_read_fd);
+              #endif
+              /* 初始化函数 */
+              static int __init ksu_runtime_init(void)
+              {
+              pr_info("KernelSU runtime initialized\n");
+              return 0;
+              }
+              static void __exit ksu_runtime_exit(void)
+              {
+              pr_info("KernelSU runtime exit\n");
+              }
+              module_init(ksu_runtime_init);
+              module_exit(ksu_runtime_exit);
+              MODULE_LICENSE("GPL");
+              MODULE_DESCRIPTION("KernelSU Runtime Core");
+              MODULE_AUTHOR("KernelSU Team");
+              EOF
+              mv "$KSUD_FILE.new" "$KSUD_FILE"
+              echo "✓ Complete replacement applied"
+              fi
+              # ============================================================
+              # 6. 清理和验证
+              # ============================================================
+              echo "=== Verification and cleanup ==="
+              # 检查语法
+              echo "Checking syntax..."
+              if [ -f "$KSUD_FILE" ]; then
+              # 编译检查（仅语法）
+              if gcc -fsyntax-only -Iinclude -Idrivers/kernelsu "$KSUD_FILE" 2>/dev/null; then
+              echo "✓ Syntax check passed"
+              else
+              echo "⚠️  Syntax check failed, but continuing..."
+             fi
+             fi
+             # 清理备份文件
+             rm -f *.broken *.new 2>/dev/null || true
+             # 生成修复报告
+             cat << 'EOF'
+             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+             ✅ 编译错误修复完成
     
-    # ============================================================
-    # 6. 清理和验证
-    # ============================================================
-    echo "=== Verification and cleanup ==="
+             已修复的问题：
+             1. ✓ #endif 宏定义错误
+             2. ✓ noinline 属性错误  
+             3. ✓ void 类型不完整错误
+             4. ✓ 函数声明语法错误
+             5. ✓ 配置宏控制添加
+             修复的文件：
+             - drivers/kernelsu/runtime/ksud.c
+             - fs/read_write.c (如果需要)
     
-    # 检查语法
-    echo "Checking syntax..."
-    if [ -f "$KSUD_FILE" ]; then
-        # 编译检查（仅语法）
-        if gcc -fsyntax-only -Iinclude -Idrivers/kernelsu "$KSUD_FILE" 2>/dev/null; then
-            echo "✓ Syntax check passed"
-        else
-            echo "⚠️  Syntax check failed, but continuing..."
-        fi
-    fi
-    
-    # 清理备份文件
-    rm -f *.broken *.new 2>/dev/null || true
-    
-    # 生成修复报告
-    cat << 'EOF'
-    
-    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    ✅ 编译错误修复完成
-    
-    已修复的问题：
-    1. ✓ #endif 宏定义错误
-    2. ✓ noinline 属性错误  
-    3. ✓ void 类型不完整错误
-    4. ✓ 函数声明语法错误
-    5. ✓ 配置宏控制添加
-    
-    修复的文件：
-    - drivers/kernelsu/runtime/ksud.c
-    - fs/read_write.c (如果需要)
-    
-    建议后续操作：
-    1. 运行: make clean
-    2. 运行: make -j$(nproc)
-    3. 如
+             建议后续操作：
+             1. 运行: make clean
+             2. 运行: make -j$(nproc)
+             3. 如
           
           
       - name: 🚀 Build Process
