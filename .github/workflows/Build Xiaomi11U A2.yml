@@ -417,67 +417,65 @@ jobs:
           # 首先找到函数定义的起始行
           FUNC_LINE=$(grep -n "ksu_handle_sys_read_fd" "$KSUD_FILE" | head -1 | cut -d: -f1)
           if [ -n "$FUNC_LINE" ]; then
-            # 删除被破坏的函数定义
-            sed -i "${FUNC_LINE},/^}/d" "$KSUD_FILE"
-            
-            # 在正确位置插入修复后的函数
-            # 找到插入位置（在文件末尾之前）
-            sed -i "/^#endif \/\* unsigned int fd \*\//r /tmp/ksud_fix.c" "$KSUD_FILE"
-            echo "✓ Function declaration fixed"
-            fi
-            echo "✓ $KSUD_FILE fixed"
-            else
-            echo "⚠️  $KSUD_FILE not found"
-            fi
-            # ============================================================
-            # 3. 修复 ksud.c - 宏定义问题
-            # ============================================================
-           echo "=== Fixing macro definitions ==="
-           if [ -f "$KSUD_FILE" ]; then
-           # 修复任何残留的宏定义问题
-           sed -i 's/DEFINE_STATIC_KEY_TRUE(ksu_is_init_rc_hook_enabled);/#ifdef CONFIG_KSU_SECURE_ENABLE\nDEFINE_STATIC_KEY_TRUE(ksu_is_init_rc_hook_enabled);\n#else\nDEFINE_STATIC_KEY_FALSE(ksu_is_init_rc_hook_enabled);\n#endif/' "$KSUD_FILE"
-           echo "✓ Macro definitions fixed"
-           fi
-           # ============================================================
-           # 4. 修复 read_write.c
-           # ============================================================
-           echo "=== Fixing read_write.c ==="
-           RW_FILE="fs/read_write.c"
-           if [ -f "$RW_FILE" ]; then
-           cp "$RW_FILE" "$RW_FILE.broken"
+          # 删除被破坏的函数定义
+          sed -i "${FUNC_LINE},/^}/d" "$KSUD_FILE"
+          # 在正确位置插入修复后的函数
+          # 找到插入位置（在文件末尾之前）
+          sed -i "/^#endif \/\* unsigned int fd \*\//r /tmp/ksud_fix.c" "$KSUD_FILE"
+          echo "✓ Function declaration fixed"
+          fi
+          echo "✓ $KSUD_FILE fixed"
+          else
+          echo "⚠️  $KSUD_FILE not found"
+          fi
+          # ============================================================
+          # 3. 修复 ksud.c - 宏定义问题
+          # ============================================================
+          echo "=== Fixing macro definitions ==="
+          if [ -f "$KSUD_FILE" ]; then
+          # 修复任何残留的宏定义问题
+          sed -i 's/DEFINE_STATIC_KEY_TRUE(ksu_is_init_rc_hook_enabled);/#ifdef CONFIG_KSU_SECURE_ENABLE\nDEFINE_STATIC_KEY_TRUE(ksu_is_init_rc_hook_enabled);\n#else\nDEFINE_STATIC_KEY_FALSE(ksu_is_init_rc_hook_enabled);\n#endif/' "$KSUD_FILE"
+          echo "✓ Macro definitions fixed"
+          fi
+          # ============================================================
+          # 4. 修复 read_write.c
+          # ============================================================
+          echo "=== Fixing read_write.c ==="
+          RW_FILE="fs/read_write.c"
+          if [ -f "$RW_FILE" ]; then
+          cp "$RW_FILE" "$RW_FILE.broken"
            # 确保函数调用正确
-           sed -i 's/ksu_handle_sys_read_fd(/ksu_handle_sys_read_fd(/g' "$RW_FILE"
-           # 添加必要的头文件
-           if ! grep -q "#include <linux/fdtable.h>" "$RW_FILE"; then
-           sed -i '1i #include <linux/fdtable.h>' "$RW_FILE"
-           fi
-           echo "✓ $RW_FILE fixed"
-           fi
-    
-           # ============================================================
-           # 5. 完整替换方案（如果上述修复失败）
-           # ============================================================
-           echo "=== Complete replacement (if needed) ==="
-           # 如果文件仍然有问题，使用完整正确的版本
-           if grep -q "error" "$KSUD_FILE" 2>/dev/null; then
-           echo "⚠️  Applying complete replacement"
-           # 重新生成正确的 ksud.c
-           cat > "$KSUD_FILE.new" << 'EOF'
-           // SPDX-License-Identifier: GPL-2.0
-           /*
-           * KernelSU runtime core
-           * Copyright (C) 2023-2024 KernelSU Team
-           */
-           #include <linux/module.h>
-           #include <linux/fs.h>
-           #include <linux/file.h>
-           #include <linux/uaccess.h>
-           #include <linux/slab.h>
-           #include <linux/cred.h>
-           #include <linux/jump_label.h>
-           /* 配置控制 */
-           #ifdef CONFIG_KSU_SECURE_ENABLE
-           DEFINE_STATIC_KEY_TRUE(ksu_is_init_rc_hook_enabled);
+          sed -i 's/ksu_handle_sys_read_fd(/ksu_handle_sys_read_fd(/g' "$RW_FILE"
+          # 添加必要的头文件
+          if ! grep -q "#include <linux/fdtable.h>" "$RW_FILE"; then
+          sed -i '1i #include <linux/fdtable.h>' "$RW_FILE"
+          fi
+          echo "✓ $RW_FILE fixed"
+          fi
+          # ============================================================
+          # 5. 完整替换方案（如果上述修复失败）
+          # ============================================================
+          echo "=== Complete replacement (if needed) ==="
+          # 如果文件仍然有问题，使用完整正确的版本
+          if grep -q "error" "$KSUD_FILE" 2>/dev/null; then
+          echo "⚠️  Applying complete replacement"
+          # 重新生成正确的 ksud.c
+          cat > "$KSUD_FILE.new" << 'EOF'
+          // SPDX-License-Identifier: GPL-2.0
+          /*
+          * KernelSU runtime core
+          * Copyright (C) 2023-2024 KernelSU Team
+          */
+          #include <linux/module.h>
+          #include <linux/fs.h>
+          #include <linux/file.h>
+          #include <linux/uaccess.h>
+          #include <linux/slab.h>
+          #include <linux/cred.h>
+          #include <linux/jump_label.h>
+          /* 配置控制 */
+          #ifdef CONFIG_KSU_SECURE_ENABLE
+          DEFINE_STATIC_KEY_TRUE(ksu_is_init_rc_hook_enabled);
            #else
            DEFINE_STATIC_KEY_FALSE(ksu_is_init_rc_hook_enabled);
            #endif
