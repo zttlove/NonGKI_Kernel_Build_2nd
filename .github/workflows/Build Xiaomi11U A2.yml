@@ -126,7 +126,17 @@ jobs:
           done
           grep -rn "ksu_is_init_rc_hook_enabled\|ksu_handle_sys_read\|ksu_hide_setprocattr" --include="*.c" --include="*.h" 
           
-  
+          # 将 ksu_handle_sys_read 替换为 ksu_handle_sys_read_fd
+          sed -i 's/ksu_handle_sys_read/ksu_handle_sys_read_fd/g' fs/read_write.c
+          # 1. 去掉函数前的 static 关键字
+          sed -i 's/static noinline void ksu_handle_sys_read_fd/noinline void ksu_handle_sys_read_fd/g' KernelSU/kernel/runtime/ksud.c
+
+          # 2. 在文件顶部（第1行前）插入静态键定义
+          sed -i '1i #include <linux/jump_label.h>\nDEFINE_STATIC_KEY_TRUE(ksu_is_init_rc_hook_enabled);' KernelSU/kernel/runtime/ksud.c
+
+          # 在函数定义前添加 __attribute__((used))
+          sed -i 's/^int ksu_hide_setprocattr/__attribute__((used)) int ksu_hide_setprocattr/g' KernelSU/kernel/hook/lsm_hooks_manual.c
+
         
 
           
