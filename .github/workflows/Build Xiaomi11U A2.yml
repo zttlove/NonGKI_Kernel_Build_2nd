@@ -124,7 +124,7 @@ jobs:
           for f in fs/proc/task_mmu.c kernel/kallsyms.c fs/notify/fdinfo.c fs/namespace.c fs/exec.c; do
           git checkout -- "$f" 2>/dev/null || true
           done
-          
+         grep -rn "ksu_is_init_rc_hook_enabled\|ksu_handle_sys_read\|ksu_hide_setprocattr" --include="*.c" --include="*.h" 
           
   
         
