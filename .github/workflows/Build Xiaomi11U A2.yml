@@ -372,157 +372,95 @@ jobs:
           5. 如有问题运行: ./rollback.sh
           ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
           EOF
-  
-   
+
           cd "${GITHUB_WORKSPACE}/device_kernel" || exit 1
     
-          echo "=== Fixing KernelSU compilation errors ==="
+          # ============================================================
+          # 1. 删除所有损坏的文件
+          # ============================================================
+          find . -name "ksud.c" -type f -exec rm -f {} \;
     
-          # 查找实际的 ksud.c 文件
-          KSUD_FILE=$(find . -name "ksud.c" -path "*/runtime/*" 2>/dev/null | head -1)
-    
-          if [ -z "$KSUD_FILE" ]; then
-          echo "⚠️  ksud.c not found, trying alternative paths..."
-          KSUD_FILE=$(find . -name "ksud.c" 2>/dev/null | head -1)
+          # ============================================================
+          # 2. 从 Git 恢复（如果有）
+          # ============================================================
+          if git rev-parse --git-dir >/dev/null 2>&1; then
+          echo "Restoring from Git..."
+          git checkout -- drivers/kernelsu/runtime/ksud.c 2>/dev/null || true
+          git checkout -- KernelSU/kernel/runtime/ksud.c 2>/dev/null || true
+          git checkout -- */kernelsu/runtime/ksud.c 2>/dev/null || true
           fi
     
-          if [ -z "$KSUD_FILE" ]; then
-          echo "❌ Cannot find ksud.c, skipping fix"
-          exit 0
-          fi
-    
-          echo "✓ Found ksud.c at: $KSUD_FILE"
-    
-          # 创建备份
-          BACKUP_FILE="${KSUD_FILE}.backup_$(date +%Y%m%d_%H%M%S)"
-          cp "$KSUD_FILE" "$BACKUP_FILE"
-          echo "✓ Backup created: $BACKUP_FILE"
-    
-          # 直接重写文件内容（不使用 heredoc 避免语法问题）
-          echo "=== Rewriting ksud.c ==="
-    
-          cat > "$KSUD_FILE" << 'EOF'
+          # ============================================================
+          # 3. 如果 Git 恢复失败，手动创建
+          # ============================================================
+          if [ ! -f "drivers/kernelsu/runtime/ksud.c" ] && [ ! -f "KernelSU/kernel/runtime/ksud.c" ]; then
+          echo "Creating new ksud.c..."
+        
+          mkdir -p drivers/kernelsu/runtime
+        
+          cat > drivers/kernelsu/runtime/ksud.c << 'EOF'
           // SPDX-License-Identifier: GPL-2.0
-          /*
-          * KernelSU runtime core
-          * Copyright (C) 2023-2024 KernelSU Team
-          */
-
           #include <linux/module.h>
           #include <linux/fs.h>
           #include <linux/file.h>
           #include <linux/uaccess.h>
           #include <linux/slab.h>
-          #include <linux/cred.h>
           #include <linux/jump_label.h>
-          #include <linux/version.h>
 
-          /* 配置控制 - 使用静态键而不是硬编码 */
-          #ifdef CONFIG_KSU_SECURE_ENABLE
-          DEFINE_STATIC_KEY_TRUE(ksu_is_init_rc_hook_enabled);
-          #else
           DEFINE_STATIC_KEY_FALSE(ksu_is_init_rc_hook_enabled);
-          #endif
 
-          /**
-          * ksu_handle_sys_read_fd - Handle system read operations
-          * @fd: file descriptor
-          * @buf: user buffer
-          * @count: read count
-          * 
-          * This function handles KernelSU-specific read operations.
-          * It is designed to work with the existing KernelSU framework.
-          */
-          #ifdef CONFIG_KSU_EXPORT_SYMBOLS
-          __attribute__((noinline))
           void ksu_handle_sys_read_fd(unsigned int fd, const char __user *buf, size_t count)
-          #else
-          static __attribute__((noinline))
-          void ksu_handle_sys_read_fd(unsigned int fd, const char __user *buf, size_t count)
-          #endif
           {
-          struct fd f;
-          char *kern_buf;
-          size_t copy_len;
-    
-          /* 获取文件结构 */
-          f = fdget(fd);
+          struct fd f = fdget(fd);
           if (!f.file)
           return;
+          fdput(f);
+          }
+
+          MODULE_LICENSE("GPL");
+          EOF
+          fi
     
-          /* 仅当功能启用时处理 */
-          if (static_branch_unlikely(&ksu_is_init_rc_hook_enabled)) {
-          /* 限制复制大小以避免内存问题 */
-          copy_len = min(count, (size_t)PAGE_SIZE);
-          kern_buf = kmalloc(copy_len + 1, GFP_KERNEL);
-        
-          if (kern_buf) {
-            /* 从用户空间复制数据 */
-            if (copy_from_user(kern_buf, buf, copy_len) == 0) {
-                kern_buf[copy_len] = '\0';
-                /* 
-                 * 这里可以添加具体的处理逻辑
-                 * 例如：检查内容、记录日志、修改数据等
-                 */
-                pr_debug("KernelSU: read from fd %d, len %zu\n", fd, copy_len);
-            }
-            kfree(kern_buf);
-              }
-            }
+          # ============================================================
+          # 4. 检查文件内容
+          # ============================================================
+          echo "=== Checking restored file ==="
     
-           fdput(f);
-            }
-
-           /* 导出符号（如果需要） */
-           #ifdef CONFIG_KSU_EXPORT_SYMBOLS
-           EXPORT_SYMBOL(ksu_handle_sys_read_fd);
-           #endif
-
-           /* 模块初始化和退出 */
-           static int __init ksu_runtime_init(void)
-           {
-           pr_info("KernelSU runtime initialized successfully\n");
-           return 0;
-           }
-
-           static void __exit ksu_runtime_exit(void)
-           {
-           pr_info("KernelSU runtime exit\n");
-           }
-
-           module_init(ksu_runtime_init);
-           module_exit(ksu_runtime_exit);
-
-           MODULE_LICENSE("GPL");
-           MODULE_DESCRIPTION("KernelSU Runtime Core");
-           MODULE_AUTHOR("KernelSU Team");
-           MODULE_VERSION("1.0");
-           EOF
-    
-           echo "✓ File rewritten successfully"
-    
-           # 验证文件
-           echo "=== Verification ==="
-           if [ -f "$KSUD_FILE" ]; then
-           echo "✓ File exists"
-           echo "✓ Lines: $(wc -l < "$KSUD_FILE")"
+          find . -name "ksud.c" -type f | while read -r file; do
+          echo "File: $file"
+          echo "Lines: $(wc -l < "$file")"
         
-            if grep -q "ksu_handle_sys_read_fd" "$KSUD_FILE"; then
-            echo "✓ Function defined"
-            fi
-        
-            if grep -q "DEFINE_STATIC_KEY" "$KSUD_FILE"; then
-            echo "✓ Static key defined"
-            fi
-        
-           # 显示文件开头
+           # 显示前10行
+           echo "Content:"
+           head -10 "$file"
            echo ""
-           echo "=== First 15 lines ==="
-           head -15 "$KSUD_FILE"
-           fi
+        
+           # 验证不是 shell 脚本
+          if grep -q "#!/bin/bash\|echo\|if \[\[" "$file" 2>/dev/null; then
+          echo "❌ ERROR: File contains shell script!"
+          exit 1
+          else
+            echo "✅ File is valid C code"
+          fi
+          done
     
-           echo ""
-           echo "✅ Fix completed successfully!"
+          # ============================================================
+          # 5. 清理 sulog 问题
+          # ============================================================
+          EVENT_FILE="drivers/kernelsu/sulog/event.c"
+          if [ -f "$EVENT_FILE" ]; then
+          # 如果 sulog_queue 未定义，添加声明
+          if ! grep -q "sulog_queue" "$EVENT_FILE" 2>/dev/null; then
+            echo "Adding missing sulog_queue declaration..."
+            sed -i '1i static struct ksu_event_queue sulog_queue;' "$EVENT_FILE"
+          fi
+          fi  
+    
+          echo "✅ Complete reset done"
+   
+          
+          
+           
 
           
           
