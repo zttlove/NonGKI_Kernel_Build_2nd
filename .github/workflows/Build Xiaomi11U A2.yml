@@ -390,7 +390,229 @@ jobs:
           echo "✓ Backup: $BACKUP_DIR"
           echo "✓ Rollback: ./rollback.sh"
           
-           
+          cd "${GITHUB_WORKSPACE}/device_kernel" || exit 1
+          echo "=== Fixing event_queue structure ==="
+          EVENT_QUEUE_H=$(find . -name "event_queue.h" 2>/dev/null | head -1)
+          if [ -z "$EVENT_QUEUE_H" ]; then
+          echo "Creating event_queue.h..."
+          EVENT_QUEUE_H="drivers/kernelsu/infra/event_queue.h"
+          mkdir -p drivers/kernelsu/infra
+          fi
+          echo "Found event_queue.h: $EVENT_QUEUE_H"
+          cat > "$EVENT_QUEUE_H" << 'EVENT_EOF'
+          #ifndef _KSU_EVENT_QUEUE_H_
+          #define _KSU_EVENT_QUEUE_H_
+          #include <linux/types.h>
+          #include <linux/spinlock.h>
+          #include <linux/mutex.h>
+          #include <linux/wait.h>
+          #include <linux/list.h>
+          /* 事件记录头 */
+          struct ksu_event_record_hdr {
+          int type;
+          int pid;
+          int uid;
+          unsigned int seq;
+          unsigned long timestamp;
+          };
+          /* 事件队列结构 - 完整定义 */
+          struct ksu_event_queue {
+          spinlock_t lock;              /* 保护队列的锁 */
+          struct mutex read_lock;       /* 读取锁 */
+          wait_queue_head_t read_wait;  /* 等待队列 */
+          struct list_head pending;     /* 待处理事件列表 */
+          struct list_head inflight;    /* 正在处理的事件 */
+        
+          int queued;                   /* 当前队列长度 */
+          int max_queued;              /* 最大队列长度 */
+          int max_payload_len;         /* 最大负载长度 */
+        
+          bool closed;                 /* 队列是否关闭 */
+          unsigned int seq_counter;    /* 序列号计数器 */
+          /* 丢弃统计 */
+          unsigned int dropped_total;
+          unsigned int dropped_pending;
+          unsigned int dropped_inflight;
+          unsigned int dropped_first_seq;
+          unsigned int dropped_last_seq;
+          };
+    
+          /* 队列操作函数 */
+          int ksu_event_queue_init(struct ksu_event_queue *queue, int max_queued, int max_payload_len);
+          void ksu_event_queue_destroy(struct ksu_event_queue *queue);
+          int ksu_event_queue_push(struct ksu_event_queue *queue, int type, int pid, void *payload, int payload_len, gfp_t gfp);
+          void ksu_event_queue_drop(struct ksu_event_queue *queue);
+          bool ksu_event_queue_has_pending(struct ksu_event_queue *queue);
+    
+          #endif
+          EVENT_EOF
+    
+          echo "✓ Created complete event_queue.h"
+    
+          EVENT_C=$(find . -name "event_queue.c" -path "*/infra/*" 2>/dev/null | head -1)
+          if [ -z "$EVENT_C" ]; then
+          echo "Creating event_queue.c stub..."
+          EVENT_C="drivers/kernelsu/infra/event_queue.c"
+          cat > "$EVENT_C" << 'EVENT_C_EOF'
+          // SPDX-License-Identifier: GPL-2.0
+          #include <linux/module.h>
+          #include <linux/slab.h>
+          #include <linux/sched.h>
+          #include "event_queue.h"
+    
+          int ksu_event_queue_init(struct ksu_event_queue *queue, int max_queued, int max_payload_len)
+          {
+          if (!queue)
+          return -EINVAL;
+        
+          spin_lock_init(&queue->lock);
+          mutex_init(&queue->read_lock);
+          init_waitqueue_head(&queue->read_wait);
+          INIT_LIST_HEAD(&queue->pending);
+          INIT_LIST_HEAD(&queue->inflight);
+        
+          queue->queued = 0;
+          queue->max_queued = max_queued;
+          queue->max_payload_len = max_payload_len;
+          queue->closed = false;
+          queue->seq_counter = 0;
+          queue->dropped_total = 0;
+          queue->dropped_pending = 0;
+          queue->dropped_inflight = 0;
+          queue->dropped_first_seq = 0;
+          queue->dropped_last_seq = 0;
+        
+          return 0;
+          }
+          EXPORT_SYMBOL(ksu_event_queue_init);
+    
+          void ksu_event_queue_destroy(struct ksu_event_queue *queue)
+          {
+          if (!queue)
+            return;
+        
+          spin_lock_irqsave(&queue->lock, unsigned long flags);
+          queue->closed = true;
+          spin_unlock_irqrestore(&queue->lock, flags);
+          wake_up_all(&queue->read_wait);
+          }
+          EXPORT_SYMBOL(ksu_event_queue_destroy);
+    
+          int ksu_event_queue_push(struct ksu_event_queue *queue, int type, int pid, 
+                              void *payload, int payload_len, gfp_t gfp)
+          {
+          struct ksu_event_record_hdr *record;
+        
+          if (!queue || queue->closed)
+            return -EINVAL;
+        
+           spin_lock_irqsave(&queue->lock, unsigned long flags);
+        
+          if (queue->queued >= queue->max_queued) {
+            queue->dropped_total++;
+            spin_unlock_irqrestore(&queue->lock, flags);
+            return -ENOMEM;
+           }
+        
+           record = kmalloc(sizeof(struct ksu_event_record_hdr) + payload_len, gfp);
+           if (!record) {
+            spin_unlock_irqrestore(&queue->lock, flags);
+            return -ENOMEM;
+           }
+        
+            record->type = type;
+            record->pid = pid;
+            record->uid = current_uid().val;
+            record->seq = queue->seq_counter++;
+            record->timestamp = jiffies;
+        
+            if (payload && payload_len > 0) {
+            int copy_len = min(payload_len, queue->max_payload_len);
+            memcpy((void *)(record + 1), payload, copy_len);
+            }
+        
+            list_add_tail(&queue->pending, (struct list_head *)(record + 1));
+            queue->queued++;
+        
+            spin_unlock_irqrestore(&queue->lock, flags);
+            wake_up(&queue->read_wait);
+        
+            return 0;
+            }
+            EXPORT_SYMBOL(ksu_event_queue_push);
+    
+            void ksu_event_queue_drop(struct ksu_event_queue *queue)
+            {
+            if (!queue)
+            return;
+        
+            spin_lock_irqsave(&queue->lock, unsigned long flags);
+            queue->closed = true;
+            spin_unlock_irqrestore(&queue->lock, flags);
+        
+            wake_up_all(&queue->read_wait);
+            }
+            EXPORT_SYMBOL(ksu_event_queue_drop);
+    
+            bool ksu_event_queue_has_pending(struct ksu_event_queue *queue)
+            {
+            if (!queue)
+            return false;
+            return queue->dropped_pending || queue->dropped_inflight || 
+            !list_empty(&queue->pending);
+            }
+            EXPORT_SYMBOL(ksu_event_queue_has_pending);
+    
+            MODULE_LICENSE("GPL");
+            EVENT_C_EOF
+            echo "✓ Created event_queue.c stub"
+            else
+            echo "Found existing event_queue.c: $EVENT_C"
+            fi
+            mkdir -p drivers/kernelsu/sulog
+            cat > drivers/kernelsu/sulog/sulog.h << 'SULOG_EOF'
+            #ifndef _KSU_SULOG_H_
+            #define _KSU_SULOG_H_
+    
+            #include "../infra/event_queue.h"
+    
+            /* sulog 特定结构 */
+            struct sulog_entry {
+            int pid;
+            int uid;
+            char command[64];
+            char message[256];
+             };
+    
+            /* sulog_queue 声明 */
+            extern struct ksu_event_queue sulog_queue;
+    
+            #endif
+            SULOG_EOF
+            echo "✓ Updated sulog.h"
+    
+            echo ""
+            echo "=== Verification ==="
+    
+            if [ -f "$EVENT_QUEUE_H" ]; then
+            echo "✓ event_queue.h exists"
+            echo "  Lines: $(wc -l < "$EVENT_QUEUE_H")"
+        
+            echo "  Checking members:"
+            for member in lock read_lock read_wait pending queued max_queued closed; do
+            if grep -q "$member" "$EVENT_QUEUE_H"; then
+                echo "    ✓ $member"
+            else
+                echo "    ✗ $member missing"
+            fi
+            done
+            fi
+           if [ -f "$EVENT_C" ]; then
+           echo "✓ event_queue.c exists"
+           echo "  Lines: $(wc -l < "$EVENT_C")"
+           fi
+           echo ""
+           echo "✅ event_queue structure fixed!"          
 
           
           
