@@ -524,51 +524,51 @@ jobs:
           echo "Now run: make -j\$(nproc)"
 
       - name: Clean up SUSFS references
-  run: |
-    cd "${GITHUB_WORKSPACE}/device_kernel" || exit 1
-    
-    echo "=== Cleaning up SUSFS references ==="
-    
-    # ============================================================
-    # 1. 从 kallsyms.c 移除 SUSFS 引用
-    # ============================================================
-    if [ -f "kernel/kallsyms.c" ]; then
-      echo "Removing SUSFS from kallsyms.c..."
-      sed -i '/susfs/d' kernel/kallsyms.c
-      sed -i '/SUSFS/d' kernel/kallsyms.c
-      echo "✓ Cleaned kallsyms.c"
-    fi
-    
-    # ============================================================
-    # 2. 删除 SUSFS 头文件（如果存在）
-    # ============================================================
-    rm -f include/linux/susfs*.h 2>/dev/null || true
-    echo "✓ Removed SUSFS headers"
-    
-    # ============================================================
-    # 3. 删除 SUSFS 源文件（如果存在）
-    # ============================================================
-    find . -name "susfs*.c" -type f -delete 2>/dev/null || true
-    echo "✓ Removed SUSFS source files"
-    
-    # ============================================================
-    # 4. 验证
-    # ============================================================
-    echo ""
-    echo "=== Verification ==="
-    
-    SUSFS_FILES=$(find . -name "*susfs*" -type f 2>/dev/null | wc -l)
-    if [ "$SUSFS_FILES" -eq 0 ]; then
-      echo "✓ No SUSFS files found in kernel tree"
-    else
-      echo "⚠️  Found $SUSFS_FILES SUSFS-related files:"
-      find . -name "*susfs*" -type f 2>/dev/null | head -10
-    fi
-    
-    echo ""
-    echo "✅ SUSFS cleanup completed!"
-    echo ""
-    echo "Now run: make -j\$(nproc)"
+        run: |
+          cd "${GITHUB_WORKSPACE}/device_kernel" || exit 1
+
+          echo "=== Cleaning up SUSFS references ==="
+
+          # ============================================================
+          # 1. 从 kallsyms.c 移除 SUSFS 引用
+          # ============================================================
+          if [ -f "kernel/kallsyms.c" ]; then
+            echo "Removing SUSFS from kallsyms.c..."
+            sed -i '/susfs/d' kernel/kallsyms.c
+            sed -i '/SUSFS/d' kernel/kallsyms.c
+            echo "✓ Cleaned kallsyms.c"
+          fi
+
+          # ============================================================
+          # 2. 删除 SUSFS 头文件（如果存在）
+          # ============================================================
+          rm -f include/linux/susfs*.h 2>/dev/null || true
+          echo "✓ Removed SUSFS headers"
+
+          # ============================================================
+          # 3. 删除 SUSFS 源文件（如果存在）
+          # ============================================================
+          find . -name "susfs*.c" -type f -delete 2>/dev/null || true
+          echo "✓ Removed SUSFS source files"
+
+          # ============================================================
+          # 4. 验证
+          # ============================================================
+          echo ""
+          echo "=== Verification ==="
+
+          SUSFS_FILES=$(find . -name "*susfs*" -type f 2>/dev/null | wc -l)
+          if [ "$SUSFS_FILES" -eq 0 ]; then
+            echo "✓ No SUSFS files found in kernel tree"
+          else
+            echo "⚠️  Found $SUSFS_FILES SUSFS-related files:"
+            find . -name "*susfs*" -type f 2>/dev/null | head -10
+          fi
+
+          echo ""
+          echo "✅ SUSFS cleanup completed!"
+          echo ""
+          echo "Now run: make -j\$(nproc)"
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process1
