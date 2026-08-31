@@ -96,7 +96,12 @@ jobs:
 
       - name: 🔧 Get necessary tools
         uses: ./.github/workflows/build-ready1
-        git checkout -- fs/proc/task_mmu.c
+    
+      - name: Purge SUSFS code injection (no‑git / no‑patch)
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/device_kernel"
+          git checkout -- fs/proc/task_mmu.c
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process1
