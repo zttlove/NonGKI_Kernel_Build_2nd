@@ -104,7 +104,7 @@ jobs:
           git checkout -- fs/proc/task_mmu.c
           git checkout -- kernel/kallsyms.c
           git checkout -- fs/exec.c
-        
+          git checkout -- fs/namespace.c
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process1
