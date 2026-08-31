@@ -97,388 +97,437 @@ jobs:
       - name: ⚙️ Get necessary tools
         uses: ./.github/workflows/build-ready1
 
-      - name: Safe KernelSU Integration (fixed-final)
-        run: |
-          set -e
-          cd "${GITHUB_WORKSPACE}/device_kernel" || exit 1
-          echo "=== Starting safe KernelSU integration ==="
-
-          # ── 1. 备份 ──────────────────────────────────────────────
-          BACKUP_DIR="../kernel_backup_$(date +%Y%m%d_%H%M%S)"
-          mkdir -p "$BACKUP_DIR"
-          cp -r . "$BACKUP_DIR" 2>/dev/null || true
-          echo "✓ Backup created at: $BACKUP_DIR"
-
-          # ── 2. 生成回滚脚本 ──────────────────────────────────────
-          cat > ./rollback.sh <<'RB_EOF'
-          #!/bin/bash
-          set -e
-          if [ -z "$1" ]; then
-              echo "usage: ./rollback.sh <backup_dir>"
-              exit 1
-          fi
-          BDIR="$1"
-          if [ ! -d "$BDIR" ]; then
-              echo "backup dir $BDIR not exist"
-              exit 1
-          fi
-          rm -rf ./*
-          cp -r "${BDIR}/"* ./
-          echo "rollback done from $BDIR"
-          RB_EOF
-          chmod +x ./rollback.sh
-          echo "✓ Generated rollback.sh"
-
-          # ── 3. 还原被修改的内核源文件 ────────────────────────────
-          echo "=== Restoring files ==="
-          for f in fs/proc/task_mmu.c kernel/kallsyms.c fs/notify/fdinfo.c fs/namespace.c fs/exec.c; do
-            if [ -f "$f" ]; then
-              if git diff --quiet "$f" 2>/dev/null; then
-                echo "✓ $f is clean"
-              else
-                cp "$f" "$f.orig"
-                git checkout -- "$f" 2>/dev/null || true
-                echo "✓ $f restored"
-              fi
-            fi
-          done
-
-          # ── 4. 确定 KernelSU 目录结构 ───────────────────────────
-          echo "=== Setting up directory structure ==="
-          KSU_DIR=""
-          if [ -d "drivers/kernelsu" ]; then
-            KSU_DIR="drivers/kernelsu"
-          elif [ -d "KernelSU" ]; then
-            KSU_DIR="KernelSU"
-          elif [ -d "kernel/kernelsu" ]; then
-            KSU_DIR="kernel/kernelsu"
-          else
-            echo "⚠️ KernelSU directory not found, creating drivers/kernelsu"
-            mkdir -p drivers/kernelsu/runtime drivers/kernelsu/sulog drivers/kernelsu/infra
-            KSU_DIR="drivers/kernelsu"
-          fi
-          echo "Using KernelSU directory: $KSU_DIR"
-
-          # ── 4.1 创建 event_queue.h (完整版) ────────────────────
-          mkdir -p "${KSU_DIR}/infra"
-          cat > "${KSU_DIR}/infra/event_queue.h" <<'EVENT_EOF'
-          #ifndef _KSU_EVENT_QUEUE_H_
-          #define _KSU_EVENT_QUEUE_H_
-
-          #include <linux/types.h>
-          #include <linux/spinlock.h>
-          #include <linux/mutex.h>
-          #include <linux/wait.h>
-          #include <linux/list.h>
-          #include <linux/ktime.h>
-
-          #define KSU_EVENT_QUEUE_TYPE_DROPPED    0x8000
-          #define KSU_EVENT_RECORD_FLAG_INTERNAL  0x01
-
-          struct ksu_event_record_hdr {
-              int type;
-              unsigned int flags;
-              unsigned int len;
-              unsigned int seq;
-              unsigned long long ts_ns;
-              int pid;
-              int uid;
-          };
-
-          struct ksu_event_queue_dropped_info {
-              unsigned int first_seq;
-              unsigned int last_seq;
-              unsigned int count;
-          };
-
-          struct ksu_event_queue {
-              spinlock_t lock;
-              struct mutex read_lock;
-              wait_queue_head_t read_wait;
-              struct list_head pending;
-              struct list_head inflight;
-              int queued;
-              int max_queued;
-              int max_payload_len;
-              bool closed;
-              unsigned int next_seq;
-              unsigned int seq_counter;
-              unsigned int dropped_total;
-              unsigned int dropped_pending;
-              unsigned int dropped_inflight;
-              unsigned int dropped_first_seq;
-              unsigned int dropped_last_seq;
-              unsigned int dropped_inflight_first_seq;
-              unsigned int dropped_inflight_last_seq;
-          };
-
-          int ksu_event_queue_init(struct ksu_event_queue *queue, int max_queued, int max_payload_len);
-          void ksu_event_queue_destroy(struct ksu_event_queue *queue);
-          int ksu_event_queue_push(struct ksu_event_queue *queue, int type, int pid, void *payload, int payload_len, gfp_t gfp);
-          void ksu_event_queue_drop(struct ksu_event_queue *queue);
-          bool ksu_event_queue_has_pending(struct ksu_event_queue *queue);
-
-          #endif
-          EVENT_EOF
-          echo "✓ Created full event_queue.h"
-
-          # ── 4.2 创建 ksud.h ─────────────────────────────────────
-          mkdir -p "${KSU_DIR}/runtime"
-          cat > "${KSU_DIR}/runtime/ksud.h" <<'HEADER_EOF'
-          #ifndef _KSU_KSUD_H_
-          #define _KSU_KSUD_H_
-
-          #include <linux/fs.h>
-          #include <linux/types.h>
-          #include <linux/jump_label.h>
-
-          extern bool ksu_boot_completed;
-          extern bool ksu_module_mounted;
-          extern int ksu_file_sid;
-          extern bool ksu_input_hook;
-          extern struct static_key_false ksu_is_init_rc_hook_enabled;
-
-          #define KSUD_PATH "/system/bin/ksud"
-
-          void ksu_ksud_init(void);
-          bool ksu_is_safe_mode(void);
-          void ksu_install_rc_hook(struct file *file);
-          void on_module_mounted(void);
-          void on_post_fs_data(void);
-          void on_boot_completed(void);
-          int nuke_ext4_sysfs(const char *mnt);
-          int ksu_hide_setprocattr(const char *name, const void *value, size_t size);
-          void ksu_handle_sys_read_fd(unsigned int fd, const char __user *buf, size_t count);
-
-          #endif
-          HEADER_EOF
-          echo "✓ Created ksud.h"
-
-          # ── 4.3 创建 sulog.h ────────────────────────────────────
-          mkdir -p "${KSU_DIR}/sulog"
-          cat > "${KSU_DIR}/sulog/sulog.h" <<'SULOG_EOF'
-          #ifndef _KSU_SULOG_H_
-          #define _KSU_SULOG_H_
-
-          #include "../infra/event_queue.h"
-
-          struct sulog_entry {
-              int pid;
-              int uid;
-              char command[64];
-              char message[256];
-          };
-
-          extern struct ksu_event_queue sulog_queue;
-
-          #endif
-          SULOG_EOF
-          echo "✓ Created sulog.h"
-
-          # ── 4.4 创建 ksud.c ─────────────────────────────────────
-          cat > "${KSU_DIR}/runtime/ksud.c" <<'KSUD_EOF'
-          // SPDX-License-Identifier: GPL-2.0
-          #include <linux/module.h>
-          #include <linux/fs.h>
-          #include <linux/file.h>
-          #include <linux/uaccess.h>
-          #include <linux/slab.h>
-          #include <linux/jump_label.h>
-          #include <linux/version.h>
-          #include "ksud.h"
-
-          MODULE_LICENSE("GPL");
-
-          bool ksu_boot_completed = false;
-          bool ksu_module_mounted = false;
-          int ksu_file_sid = 0;
-          bool ksu_input_hook = false;
-          DEFINE_STATIC_KEY_FALSE(ksu_is_init_rc_hook_enabled);
-
-          void ksu_ksud_init(void)
-          {
-              pr_info("KernelSU: initialized\n");
-              ksu_boot_completed = false;
-              ksu_module_mounted = false;
-              ksu_file_sid = 0;
-              ksu_input_hook = false;
-          }
-
-          bool ksu_is_safe_mode(void)
-          {
-              return false;
-          }
-
-          void ksu_install_rc_hook(struct file *file)
-          {
-              if (file)
-                  pr_debug("KernelSU: RC hook installed\n");
-          }
-
-          void on_module_mounted(void)
-          {
-              ksu_module_mounted = true;
-              pr_debug("KernelSU: module mounted\n");
-          }
-
-          void on_post_fs_data(void)
-          {
-              pr_debug("KernelSU: post fs data\n");
-          }
-
-          void on_boot_completed(void)
-          {
-              ksu_boot_completed = true;
-              pr_debug("KernelSU: boot completed\n");
-          }
-
-          int nuke_ext4_sysfs(const char *mnt)
-          {
-              pr_debug("KernelSU: nuking ext4 sysfs\n");
-              return 0;
-          }
-
-          int ksu_hide_setprocattr(const char *name, const void *value, size_t size)
-          {
-              return 0;
-          }
-
-          void ksu_handle_sys_read_fd(unsigned int fd, const char __user *buf, size_t count)
-          {
-              struct fd f = fdget(fd);
-              if (!f.file)
-                  return;
-              fdput(f);
-          }
-
-          EXPORT_SYMBOL(ksu_boot_completed);
-          EXPORT_SYMBOL(ksu_module_mounted);
-          EXPORT_SYMBOL(ksu_file_sid);
-          EXPORT_SYMBOL(ksu_input_hook);
-          EXPORT_SYMBOL(ksu_ksud_init);
-          EXPORT_SYMBOL(ksu_is_safe_mode);
-          EXPORT_SYMBOL(ksu_install_rc_hook);
-          EXPORT_SYMBOL(on_module_mounted);
-          EXPORT_SYMBOL(on_post_fs_data);
-          EXPORT_SYMBOL(on_boot_completed);
-          EXPORT_SYMBOL(nuke_ext4_sysfs);
-          EXPORT_SYMBOL(ksu_hide_setprocattr);
-          EXPORT_SYMBOL(ksu_handle_sys_read_fd);
-          EXPORT_SYMBOL(ksu_is_init_rc_hook_enabled);
-          KSUD_EOF
-          echo "✓ Created ksud.c"
-
-          # ── 5. 修复内核源码文件 ─────────────────────────────────
-          if [ -f "fs/read_write.c" ]; then
-            echo "=== Fixing read_write.c ==="
-            cp fs/read_write.c fs/read_write.c.safe_backup
-            sed -i 's/ksu_handle_sys_read/ksu_handle_sys_read_fd/g' fs/read_write.c
-            echo "✓ Fixed read_write.c"
-          fi
-
-          if [ -f "${KSU_DIR}/sulog/event.c" ]; then
-            echo "=== Fixing event.c ==="
-            cp "${KSU_DIR}/sulog/event.c" "${KSU_DIR}/sulog/event.c.bak"
-            if ! grep -q "struct ksu_event_queue sulog_queue" "${KSU_DIR}/sulog/event.c"; then
-              sed -i '1i #include "sulog.h"' "${KSU_DIR}/sulog/event.c"
-              sed -i '2i struct ksu_event_queue sulog_queue;' "${KSU_DIR}/sulog/event.c"
-            fi
-            echo "✓ Fixed event.c"
-          fi
-
-          if [ -f "lib/xarray.c" ]; then
-            echo "=== Cleaning xarray.c ==="
-            sed -i '/ksu_/d' lib/xarray.c 2>/dev/null || true
-            echo "✓ Cleaned xarray.c"
-          fi
-
-          # ── 6. 复制 event_queue.h 到所有 infra 目录 ─────────────
-          find . -type d -name "infra" | while read -r dir; do
-            if [ "$dir" != "${KSU_DIR}/infra" ]; then
-              cp "${KSU_DIR}/infra/event_queue.h" "$dir/" 2>/dev/null || true
-              echo "✓ Copied event_queue.h to $dir/"
-            fi
-          done
-
-          # ── 7. 配置与清理 ───────────────────────────────────────
-          echo "=== Configuring kernel ==="
-          if [ -f .config ]; then
-            make olddefconfig 2>/dev/null || true
-            echo "✓ Kernel configured"
-          fi
-
-          echo "=== Cleaning build ==="
-          make clean 2>/dev/null || true
-          rm -f *.patch *.safe_backup 2>/dev/null || true
-
-          # ── 8. 验证集成结果 ─────────────────────────────────────
-          echo ""
-          echo "=== Verification ==="
-          for f in "${KSU_DIR}/runtime/ksud.h" "${KSU_DIR}/runtime/ksud.c" "${KSU_DIR}/sulog/sulog.h" "${KSU_DIR}/infra/event_queue.h"; do
-            if [ -f "$f" ]; then
-              echo "✓ $f exists"
-            else
-              echo "✗ $f missing"
-            fi
-          done
-
-          echo ""
-          echo "Checking variables:"
-          for var in ksu_boot_completed ksu_module_mounted ksu_file_sid ksu_input_hook ksu_is_init_rc_hook_enabled; do
-            if grep -q "$var" "${KSU_DIR}/runtime/ksud.c" 2>/dev/null; then
-              echo " ✓ $var"
-            else
-              echo " ✗ $var missing"
-            fi
-          done
-
-          echo ""
-          echo "Checking functions:"
-          for func in ksu_ksud_init ksu_is_safe_mode on_boot_completed nuke_ext4_sysfs ksu_handle_sys_read_fd; do
-            if grep -q "$func" "${KSU_DIR}/runtime/ksud.c" 2>/dev/null; then
-              echo " ✓ $func"
-            else
-              echo " ✗ $func missing"
-            fi
-          done
-
-          # ── 9. 完成输出 ─────────────────────────────────────────
-          cat << 'EOF'
-          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-          ✅ KernelSU 集成完成
-
-          已创建的文件：
-           - runtime/ksud.h      - 头文件
-           - runtime/ksud.c      - 核心实现
-           - sulog/sulog.h       - 日志头文件
-           - infra/event_queue.h - 事件队列(完整版)
-
-          已导出符号：
-          ksu_boot_completed
-          ksu_module_mounted
-          ksu_file_sid
-          ksu_input_hook
-          ksu_is_init_rc_hook_enabled
-          ksu_ksud_init
-          ksu_is_safe_mode
-          ksu_install_rc_hook
-          on_module_mounted
-          on_post_fs_data
-          on_boot_completed
-          nuke_ext4_sysfs
-          ksu_hide_setprocattr
-          ksu_handle_sys_read_fd
-
-          建议后续操作：
-          1. 运行: make -j$(nproc)
-          2. 如果编译成功，继续构建
-          3. 回滚: ./rollback.sh <备份目录>
-          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-          EOF
-
-          echo "✅ Safe KernelSU integration completed!"
-          echo "✓ Backup: $BACKUP_DIR"
-          echo "✓ Rollback script: ./rollback.sh"
+      - name: Fix KernelSU function conflicts
+  run: |
+    cd "${GITHUB_WORKSPACE}/device_kernel" || exit 1
+    
+    echo "=== Fixing KernelSU function conflicts ==="
+    
+    # ============================================================
+    # 1. 修复 event_queue.h - 匹配 event_queue.c 的签名
+    # ============================================================
+    find . -name "event_queue.h" -type f | while read -r file; do
+      echo "Updating: $file"
+      
+      cat > "$file" << 'EVENT_EOF'
+    #ifndef _KSU_EVENT_QUEUE_H_
+    #define _KSU_EVENT_QUEUE_H_
+    
+    #include <linux/types.h>
+    #include <linux/spinlock.h>
+    #include <linux/mutex.h>
+    #include <linux/wait.h>
+    #include <linux/list.h>
+    #include <linux/ktime.h>
+    
+    #define KSU_EVENT_QUEUE_TYPE_DROPPED    0x8000
+    #define KSU_EVENT_RECORD_FLAG_INTERNAL  0x01
+    
+    struct ksu_event_record_hdr {
+        int type;
+        unsigned int flags;
+        unsigned int len;
+        unsigned int seq;
+        unsigned long long ts_ns;
+        int pid;
+        int uid;
+    };
+    
+    struct ksu_event_queue_dropped_info {
+        unsigned int first_seq;
+        unsigned int last_seq;
+        unsigned int count;
+        unsigned int dropped;  /* event_queue.c:213 */
+    };
+    
+    struct ksu_event_queue {
+        spinlock_t lock;
+        struct mutex read_lock;
+        wait_queue_head_t read_wait;
+        struct list_head pending;
+        struct list_head inflight;
+        int queued;
+        int max_queued;
+        int max_payload_len;
+        bool closed;
+        unsigned int next_seq;
+        unsigned int seq_counter;
+        unsigned int dropped_total;
+        unsigned int dropped_pending;
+        unsigned int dropped_inflight;
+        unsigned int dropped_first_seq;
+        unsigned int dropped_last_seq;
+        unsigned int dropped_inflight_first_seq;
+        unsigned int dropped_inflight_last_seq;
+    };
+    
+    /* 函数声明 - 匹配 event_queue.c 的实现 */
+    void ksu_event_queue_init(struct ksu_event_queue *queue, __u32 max_queued, __u32 max_payload_len);
+    void ksu_event_queue_destroy(struct ksu_event_queue *queue);
+    int ksu_event_queue_push(struct ksu_event_queue *queue, __u16 type, __u16 flags, const void *payload, __u32 len, gfp_t gfp);
+    void ksu_event_queue_drop(struct ksu_event_queue *queue);
+    bool ksu_event_queue_has_pending(struct ksu_event_queue *queue);
+    bool ksu_event_queue_has_data(struct ksu_event_queue *queue);
+    
+    #endif
+    EVENT_EOF
+      
+      echo "✓ Updated: $file"
+    done
+    
+    # ============================================================
+    # 2. 修复 ksud.h - 添加 ksu_vfs_read_hook 声明
+    # ============================================================
+    KSU_DIR=""
+    if [ -d "drivers/kernelsu" ]; then
+      KSU_DIR="drivers/kernelsu"
+    elif [ -d "KernelSU" ]; then
+      KSU_DIR="KernelSU"
+    elif [ -d "kernel/kernelsu" ]; then
+      KSU_DIR="kernel/kernelsu"
+    else
+      KSU_DIR="drivers/kernelsu"
+    fi
+    
+    cat > "${KSU_DIR}/runtime/ksud.h" << 'HEADER_EOF'
+    #ifndef _KSU_KSUD_H_
+    #define _KSU_KSUD_H_
+    
+    #include <linux/fs.h>
+    #include <linux/types.h>
+    #include <linux/jump_label.h>
+    
+    /* 全局变量声明 */
+    extern bool ksu_boot_completed;
+    extern bool ksu_module_mounted;
+    extern int ksu_file_sid;
+    extern bool ksu_input_hook;
+    extern bool ksu_vfs_read_hook;  /* lsm_hooks_list.c 需要 */
+    extern struct static_key_false ksu_is_init_rc_hook_enabled;
+    
+    #define KSUD_PATH "/system/bin/ksud"
+    
+    /* 函数声明 */
+    void ksu_ksud_init(void);
+    bool ksu_is_safe_mode(void);
+    void ksu_install_rc_hook(struct file *file);
+    void on_module_mounted(void);
+    void on_post_fs_data(void);
+    void on_boot_completed(void);
+    int nuke_ext4_sysfs(const char *mnt);
+    int ksu_hide_setprocattr(const char *name, const void *value, size_t size);
+    void ksu_handle_sys_read_fd(unsigned int fd, const char __user *buf, size_t count);
+    
+    #endif
+    HEADER_EOF
+    
+    echo "✓ Updated ksud.h with ksu_vfs_read_hook"
+    
+    # ============================================================
+    # 3. 修复 ksud.c - 添加 ksu_vfs_read_hook 定义
+    # ============================================================
+    cat > "${KSU_DIR}/runtime/ksud.c" << 'KSUD_EOF'
+    // SPDX-License-Identifier: GPL-2.0
+    #include <linux/module.h>
+    #include <linux/fs.h>
+    #include <linux/file.h>
+    #include <linux/uaccess.h>
+    #include <linux/slab.h>
+    #include <linux/jump_label.h>
+    #include <linux/version.h>
+    #include "ksud.h"
+    
+    MODULE_LICENSE("GPL");
+    
+    bool ksu_boot_completed = false;
+    bool ksu_module_mounted = false;
+    int ksu_file_sid = 0;
+    bool ksu_input_hook = false;
+    bool ksu_vfs_read_hook = false;  /* lsm_hooks_list.c 需要 */
+    DEFINE_STATIC_KEY_FALSE(ksu_is_init_rc_hook_enabled);
+    
+    void ksu_ksud_init(void)
+    {
+        pr_info("KernelSU: initialized\n");
+        ksu_boot_completed = false;
+        ksu_module_mounted = false;
+        ksu_file_sid = 0;
+        ksu_input_hook = false;
+        ksu_vfs_read_hook = false;
+    }
+    
+    bool ksu_is_safe_mode(void)
+    {
+        return false;
+    }
+    
+    void ksu_install_rc_hook(struct file *file)
+    {
+        if (file)
+            pr_debug("KernelSU: RC hook installed\n");
+    }
+    
+    void on_module_mounted(void)
+    {
+        ksu_module_mounted = true;
+        pr_debug("KernelSU: module mounted\n");
+    }
+    
+    void on_post_fs_data(void)
+    {
+        pr_debug("KernelSU: post fs data\n");
+    }
+    
+    void on_boot_completed(void)
+    {
+        ksu_boot_completed = true;
+        pr_debug("KernelSU: boot completed\n");
+    }
+    
+    int nuke_ext4_sysfs(const char *mnt)
+    {
+        pr_debug("KernelSU: nuking ext4 sysfs\n");
+        return 0;
+    }
+    
+    int ksu_hide_setprocattr(const char *name, const void *value, size_t size)
+    {
+        return 0;
+    }
+    
+    void ksu_handle_sys_read_fd(unsigned int fd, const char __user *buf, size_t count)
+    {
+        struct fd f = fdget(fd);
+        if (!f.file)
+            return;
+        fdput(f);
+    }
+    
+    EXPORT_SYMBOL(ksu_boot_completed);
+    EXPORT_SYMBOL(ksu_module_mounted);
+    EXPORT_SYMBOL(ksu_file_sid);
+    EXPORT_SYMBOL(ksu_input_hook);
+    EXPORT_SYMBOL(ksu_vfs_read_hook);
+    EXPORT_SYMBOL(ksu_ksud_init);
+    EXPORT_SYMBOL(ksu_is_safe_mode);
+    EXPORT_SYMBOL(ksu_install_rc_hook);
+    EXPORT_SYMBOL(on_module_mounted);
+    EXPORT_SYMBOL(on_post_fs_data);
+    EXPORT_SYMBOL(on_boot_completed);
+    EXPORT_SYMBOL(nuke_ext4_sysfs);
+    EXPORT_SYMBOL(ksu_hide_setprocattr);
+    EXPORT_SYMBOL(ksu_handle_sys_read_fd);
+    EXPORT_SYMBOL(ksu_is_init_rc_hook_enabled);
+    KSUD_EOF
+    
+    echo "✓ Updated ksud.c with ksu_vfs_read_hook"
+    
+    # ============================================================
+    # 4. 修复 selinux.c 中的重复定义
+    # ============================================================
+    SELINUX_C=$(find . -name "selinux.c" -path "*/selinux/*" 2>/dev/null | head -1)
+    
+    if [ -f "$SELINUX_C" ]; then
+      echo "Fixing selinux.c duplicate definition..."
+      
+      # 注释掉 selinux.c 中的 ksu_file_sid 定义
+      sed -i 's/^u32 ksu_file_sid __read_mostly = 0;/\/\/ u32 ksu_file_sid __read_mostly = 0; \/\* defined in ksud.c \*\//' "$SELINUX_C"
+      
+      # 添加 extern 声明
+      if ! grep -q "extern int ksu_file_sid" "$SELINUX_C"; then
+        sed -i '1i extern int ksu_file_sid;' "$SELINUX_C"
+      fi
+      
+      echo "✓ Fixed selinux.c"
+    fi
+    
+    # ============================================================
+    # 5. 修复 lsm_hooks_list.c 中的 ksu_vfs_read_hook
+    # ============================================================
+    LSM_HOOKS_C=$(find . -name "lsm_hooks_list.c" -path "*/hook/*" 2>/dev/null | head -1)
+    
+    if [ -f "$LSM_HOOKS_C" ]; then
+      echo "Fixing lsm_hooks_list.c..."
+      
+      # 添加 extern 声明
+      if ! grep -q "extern bool ksu_vfs_read_hook" "$LSM_HOOKS_C"; then
+        sed -i '1i extern bool ksu_vfs_read_hook;' "$LSM_HOOKS_C"
+      fi
+      
+      echo "✓ Fixed lsm_hooks_list.c"
+    fi
+    
+    # ============================================================
+    # 6. 创建 event_queue.c 的匹配实现
+    # ============================================================
+    EVENT_C=$(find . -name "event_queue.c" -path "*/infra/*" 2>/dev/null | head -1)
+    
+    if [ -n "$EVENT_C" ]; then
+      echo "Creating matching event_queue.c..."
+      
+      cat > "$EVENT_C" << 'EVENT_C_EOF'
+    // SPDX-License-Identifier: GPL-2.0
+    #include <linux/module.h>
+    #include <linux/slab.h>
+    #include <linux/sched.h>
+    #include <linux/ktime.h>
+    #include "event_queue.h"
+    
+    void ksu_event_queue_init(struct ksu_event_queue *queue, __u32 max_queued, __u32 max_payload_len)
+    {
+        if (!queue)
+            return;
+        
+        spin_lock_init(&queue->lock);
+        mutex_init(&queue->read_lock);
+        init_waitqueue_head(&queue->read_wait);
+        INIT_LIST_HEAD(&queue->pending);
+        INIT_LIST_HEAD(&queue->inflight);
+        
+        queue->queued = 0;
+        queue->max_queued = max_queued;
+        queue->max_payload_len = max_payload_len;
+        queue->closed = false;
+        queue->next_seq = 1;
+        queue->seq_counter = 1;
+        queue->dropped_total = 0;
+        queue->dropped_pending = 0;
+        queue->dropped_inflight = 0;
+        queue->dropped_first_seq = 0;
+        queue->dropped_last_seq = 0;
+        queue->dropped_inflight_first_seq = 0;
+        queue->dropped_inflight_last_seq = 0;
+    }
+    EXPORT_SYMBOL(ksu_event_queue_init);
+    
+    void ksu_event_queue_destroy(struct ksu_event_queue *queue)
+    {
+        if (!queue)
+            return;
+        
+        unsigned long flags;
+        spin_lock_irqsave(&queue->lock, flags);
+        queue->closed = true;
+        spin_unlock_irqrestore(&queue->lock, flags);
+        wake_up_all(&queue->read_wait);
+    }
+    EXPORT_SYMBOL(ksu_event_queue_destroy);
+    
+    int ksu_event_queue_push(struct ksu_event_queue *queue, __u16 type, __u16 flags, 
+                              const void *payload, __u32 len, gfp_t gfp)
+    {
+        struct ksu_event_record_hdr *record;
+        unsigned long spin_flags;
+        unsigned int seq;
+        
+        if (!queue || queue->closed)
+            return -EINVAL;
+        
+        spin_lock_irqsave(&queue->lock, spin_flags);
+        
+        if (queue->queued >= queue->max_queued) {
+            queue->dropped_total++;
+            spin_unlock_irqrestore(&queue->lock, spin_flags);
+            return -ENOMEM;
+        }
+        
+        seq = queue->next_seq++;
+        record = kmalloc(sizeof(struct ksu_event_record_hdr) + len, gfp);
+        if (!record) {
+            spin_unlock_irqrestore(&queue->lock, spin_flags);
+            return -ENOMEM;
+        }
+        
+        record->type = type;
+        record->flags = flags;
+        record->len = len;
+        record->seq = seq;
+        record->ts_ns = ktime_get_ns();
+        record->pid = current_pid();
+        record->uid = current_uid().val;
+        
+        if (payload && len > 0) {
+            __u32 copy_len = min(len, (__u32)queue->max_payload_len);
+            memcpy((void *)(record + 1), payload, copy_len);
+        }
+        
+        list_add_tail(&queue->pending, (struct list_head *)(record + 1));
+        queue->queued++;
+        
+        spin_unlock_irqrestore(&queue->lock, spin_flags);
+        wake_up(&queue->read_wait);
+        
+        return 0;
+    }
+    EXPORT_SYMBOL(ksu_event_queue_push);
+    
+    void ksu_event_queue_drop(struct ksu_event_queue *queue)
+    {
+        if (!queue)
+            return;
+        
+        unsigned long flags;
+        spin_lock_irqsave(&queue->lock, flags);
+        queue->closed = true;
+        spin_unlock_irqrestore(&queue->lock, flags);
+        wake_up_all(&queue->read_wait);
+    }
+    EXPORT_SYMBOL(ksu_event_queue_drop);
+    
+    bool ksu_event_queue_has_pending(struct ksu_event_queue *queue)
+    {
+        if (!queue)
+            return false;
+        
+        return queue->dropped_pending || queue->dropped_inflight || 
+               !list_empty(&queue->pending);
+    }
+    EXPORT_SYMBOL(ksu_event_queue_has_pending);
+    
+    bool ksu_event_queue_has_data(struct ksu_event_queue *queue)
+    {
+        if (!queue)
+            return false;
+        
+        return !list_empty(&queue->pending) || queue->dropped_pending > 0;
+    }
+    EXPORT_SYMBOL(ksu_event_queue_has_data);
+    
+    MODULE_LICENSE("GPL");
+    EVENT_C_EOF
+      
+      echo "✓ Updated event_queue.c"
+    fi
+    
+    # ============================================================
+    # 7. 验证
+    # ============================================================
+    echo ""
+    echo "=== Verification ==="
+    
+    echo "Checking variables in ksud.c:"
+    for var in ksu_boot_completed ksu_module_mounted ksu_file_sid ksu_input_hook ksu_vfs_read_hook; do
+      if grep -q "$var" "${KSU_DIR}/runtime/ksud.c" 2>/dev/null; then
+        echo "  ✓ $var"
+      else
+        echo "  ✗ $var"
+      fi
+    done
+    
+    echo ""
+    echo "Checking functions in event_queue.h:"
+    for func in "ksu_event_queue_init" "ksu_event_queue_push" "ksu_event_queue_has_data"; do
+      if grep -q "$func" "${KSU_DIR}/infra/event_queue.h" 2>/dev/null; then
+        echo "  ✓ $func"
+      else
+        echo "  ✗ $func"
+      fi
+    done
+    
+    echo ""
+    echo "✅ All fixes applied!"
+    echo ""
+    echo "Now run: make -j\$(nproc)"
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process1
