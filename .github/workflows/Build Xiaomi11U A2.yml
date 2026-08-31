@@ -32,7 +32,7 @@ env:
   KERNELSU_SOURCE: ""
   KERNELSU_BRANCH: ""
   KERNELSU_AUTO_GET: "true"
-  KERNELSU_AUTO_FORK: "xxksu" # xxksu, rsuntk, next, resukisu and sukisu
+  KERNELSU_AUTO_FORK: "xxksu"
 
   SUSFS_ENABLE: false
   SUSFS_FIXED: false
@@ -97,8 +97,6 @@ jobs:
       - name: ⚙️ Get necessary tools
         uses: ./.github/workflows/build-ready1
 
-     
-
       - name: Safe KernelSU Integration (fixed-final)
         run: |
           set -e
@@ -161,67 +159,87 @@ jobs:
           fi
           echo "Using KernelSU directory: $KSU_DIR"
 
-          # 4.1 创建 event_queue.h (完整版)
+          # ── 4.1 创建 event_queue.h (完整版) ────────────────────
           mkdir -p "${KSU_DIR}/infra"
           cat > "${KSU_DIR}/infra/event_queue.h" <<'EVENT_EOF'
           #ifndef _KSU_EVENT_QUEUE_H_
           #define _KSU_EVENT_QUEUE_H_
+
           #include <linux/types.h>
           #include <linux/spinlock.h>
           #include <linux/mutex.h>
           #include <linux/wait.h>
           #include <linux/list.h>
+          #include <linux/ktime.h>
+
+          #define KSU_EVENT_QUEUE_TYPE_DROPPED    0x8000
+          #define KSU_EVENT_RECORD_FLAG_INTERNAL  0x01
 
           struct ksu_event_record_hdr {
-           int type;
-           int pid;
-           int uid;
-           unsigned int seq;
-           unsigned long timestamp;
+              int type;
+              unsigned int flags;
+              unsigned int len;
+              unsigned int seq;
+              unsigned long long ts_ns;
+              int pid;
+              int uid;
+          };
+
+          struct ksu_event_queue_dropped_info {
+              unsigned int first_seq;
+              unsigned int last_seq;
+              unsigned int count;
           };
 
           struct ksu_event_queue {
-           spinlock_t lock;
-           struct mutex read_lock;
-           wait_queue_head_t read_wait;
-           struct list_head pending;
-           struct list_head inflight;
-           int queued;
-           int max_queued;
-           int max_payload_len;
-           bool closed;
-           unsigned int seq_counter;
-           unsigned int dropped_total;
-           unsigned int dropped_pending;
-           unsigned int dropped_inflight;
-           unsigned int dropped_first_seq;
-           unsigned int dropped_last_seq;
+              spinlock_t lock;
+              struct mutex read_lock;
+              wait_queue_head_t read_wait;
+              struct list_head pending;
+              struct list_head inflight;
+              int queued;
+              int max_queued;
+              int max_payload_len;
+              bool closed;
+              unsigned int next_seq;
+              unsigned int seq_counter;
+              unsigned int dropped_total;
+              unsigned int dropped_pending;
+              unsigned int dropped_inflight;
+              unsigned int dropped_first_seq;
+              unsigned int dropped_last_seq;
+              unsigned int dropped_inflight_first_seq;
+              unsigned int dropped_inflight_last_seq;
           };
+
+          int ksu_event_queue_init(struct ksu_event_queue *queue, int max_queued, int max_payload_len);
+          void ksu_event_queue_destroy(struct ksu_event_queue *queue);
+          int ksu_event_queue_push(struct ksu_event_queue *queue, int type, int pid, void *payload, int payload_len, gfp_t gfp);
+          void ksu_event_queue_drop(struct ksu_event_queue *queue);
+          bool ksu_event_queue_has_pending(struct ksu_event_queue *queue);
 
           #endif
           EVENT_EOF
           echo "✓ Created full event_queue.h"
 
-          # 4.2 创建 ksud.h
+          # ── 4.2 创建 ksud.h ─────────────────────────────────────
           mkdir -p "${KSU_DIR}/runtime"
           cat > "${KSU_DIR}/runtime/ksud.h" <<'HEADER_EOF'
           #ifndef _KSU_KSUD_H_
           #define _KSU_KSUD_H_
+
           #include <linux/fs.h>
           #include <linux/types.h>
           #include <linux/jump_label.h>
 
-          /* 全局变量声明 */
           extern bool ksu_boot_completed;
           extern bool ksu_module_mounted;
           extern int ksu_file_sid;
           extern bool ksu_input_hook;
           extern struct static_key_false ksu_is_init_rc_hook_enabled;
 
-          /* 路径定义 */
           #define KSUD_PATH "/system/bin/ksud"
 
-          /* 函数声明 */
           void ksu_ksud_init(void);
           bool ksu_is_safe_mode(void);
           void ksu_install_rc_hook(struct file *file);
@@ -236,23 +254,31 @@ jobs:
           HEADER_EOF
           echo "✓ Created ksud.h"
 
-          # 4.3 创建 sulog.h
+          # ── 4.3 创建 sulog.h ────────────────────────────────────
           mkdir -p "${KSU_DIR}/sulog"
           cat > "${KSU_DIR}/sulog/sulog.h" <<'SULOG_EOF'
           #ifndef _KSU_SULOG_H_
           #define _KSU_SULOG_H_
+
           #include "../infra/event_queue.h"
+
+          struct sulog_entry {
+              int pid;
+              int uid;
+              char command[64];
+              char message[256];
+          };
+
           extern struct ksu_event_queue sulog_queue;
+
           #endif
           SULOG_EOF
           echo "✓ Created sulog.h"
 
-          # 4.4 创建 ksud.c (核心实现)
+          # ── 4.4 创建 ksud.c ─────────────────────────────────────
           cat > "${KSU_DIR}/runtime/ksud.c" <<'KSUD_EOF'
           // SPDX-License-Identifier: GPL-2.0
           #include <linux/module.h>
-          MODULE_LICENSE("GPL");
-
           #include <linux/fs.h>
           #include <linux/file.h>
           #include <linux/uaccess.h>
@@ -261,60 +287,70 @@ jobs:
           #include <linux/version.h>
           #include "ksud.h"
 
-          /* 全局变量定义 */
+          MODULE_LICENSE("GPL");
+
           bool ksu_boot_completed = false;
           bool ksu_module_mounted = false;
           int ksu_file_sid = 0;
           bool ksu_input_hook = false;
           DEFINE_STATIC_KEY_FALSE(ksu_is_init_rc_hook_enabled);
 
-          /* 函数实现 */
-          void ksu_ksud_init(void) {
-           pr_info("KernelSU: initialized\n");
-           ksu_boot_completed = false;
-           ksu_module_mounted = false;
-           ksu_file_sid = 0;
-           ksu_input_hook = false;
+          void ksu_ksud_init(void)
+          {
+              pr_info("KernelSU: initialized\n");
+              ksu_boot_completed = false;
+              ksu_module_mounted = false;
+              ksu_file_sid = 0;
+              ksu_input_hook = false;
           }
 
-          bool ksu_is_safe_mode(void) {
-           return false;
+          bool ksu_is_safe_mode(void)
+          {
+              return false;
           }
 
-          void ksu_install_rc_hook(struct file *file) {
-           if (file) pr_debug("KernelSU: RC hook installed\n");
+          void ksu_install_rc_hook(struct file *file)
+          {
+              if (file)
+                  pr_debug("KernelSU: RC hook installed\n");
           }
 
-          void on_module_mounted(void) {
-           ksu_module_mounted = true;
-           pr_debug("KernelSU: module mounted\n");
+          void on_module_mounted(void)
+          {
+              ksu_module_mounted = true;
+              pr_debug("KernelSU: module mounted\n");
           }
 
-          void on_post_fs_data(void) {
-           pr_debug("KernelSU: post fs data\n");
+          void on_post_fs_data(void)
+          {
+              pr_debug("KernelSU: post fs data\n");
           }
 
-          void on_boot_completed(void) {
-           ksu_boot_completed = true;
-           pr_debug("KernelSU: boot completed\n");
+          void on_boot_completed(void)
+          {
+              ksu_boot_completed = true;
+              pr_debug("KernelSU: boot completed\n");
           }
 
-          int nuke_ext4_sysfs(const char *mnt) {
-           pr_debug("KernelSU: nuking ext4 sysfs\n");
-           return 0;
+          int nuke_ext4_sysfs(const char *mnt)
+          {
+              pr_debug("KernelSU: nuking ext4 sysfs\n");
+              return 0;
           }
 
-          int ksu_hide_setprocattr(const char *name, const void *value, size_t size) {
-           return 0;
+          int ksu_hide_setprocattr(const char *name, const void *value, size_t size)
+          {
+              return 0;
           }
 
-          void ksu_handle_sys_read_fd(unsigned int fd, const char __user *buf, size_t count) {
-           struct fd f = fdget(fd);
-           if (!f.file) return;
-           fdput(f);
+          void ksu_handle_sys_read_fd(unsigned int fd, const char __user *buf, size_t count)
+          {
+              struct fd f = fdget(fd);
+              if (!f.file)
+                  return;
+              fdput(f);
           }
 
-          /* 导出符号 */
           EXPORT_SYMBOL(ksu_boot_completed);
           EXPORT_SYMBOL(ksu_module_mounted);
           EXPORT_SYMBOL(ksu_file_sid);
@@ -356,7 +392,15 @@ jobs:
             echo "✓ Cleaned xarray.c"
           fi
 
-          # ── 6. 配置与清理 ───────────────────────────────────────
+          # ── 6. 复制 event_queue.h 到所有 infra 目录 ─────────────
+          find . -type d -name "infra" | while read -r dir; do
+            if [ "$dir" != "${KSU_DIR}/infra" ]; then
+              cp "${KSU_DIR}/infra/event_queue.h" "$dir/" 2>/dev/null || true
+              echo "✓ Copied event_queue.h to $dir/"
+            fi
+          done
+
+          # ── 7. 配置与清理 ───────────────────────────────────────
           echo "=== Configuring kernel ==="
           if [ -f .config ]; then
             make olddefconfig 2>/dev/null || true
@@ -367,7 +411,7 @@ jobs:
           make clean 2>/dev/null || true
           rm -f *.patch *.safe_backup 2>/dev/null || true
 
-          # ── 7. 验证集成结果 ─────────────────────────────────────
+          # ── 8. 验证集成结果 ─────────────────────────────────────
           echo ""
           echo "=== Verification ==="
           for f in "${KSU_DIR}/runtime/ksud.h" "${KSU_DIR}/runtime/ksud.c" "${KSU_DIR}/sulog/sulog.h" "${KSU_DIR}/infra/event_queue.h"; do
@@ -398,18 +442,11 @@ jobs:
             fi
           done
 
-          # 同步 event_queue.h 到其他 infra 目录
-          find . -type d -name "infra" | while read -r dir; do
-            if [ "$dir" != "${KSU_DIR}/infra" ]; then
-              cp "${KSU_DIR}/infra/event_queue.h" "$dir/" 2>/dev/null || true
-              echo "✓ Copied event_queue.h to $dir/"
-            fi
-          done
-
-          # ── 8. 完成输出 ─────────────────────────────────────────
+          # ── 9. 完成输出 ─────────────────────────────────────────
           cat << 'EOF'
           ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
           ✅ KernelSU 集成完成
+
           已创建的文件：
            - runtime/ksud.h      - 头文件
            - runtime/ksud.c      - 核心实现
@@ -438,311 +475,10 @@ jobs:
           3. 回滚: ./rollback.sh <备份目录>
           ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
           EOF
+
           echo "✅ Safe KernelSU integration completed!"
           echo "✓ Backup: $BACKUP_DIR"
           echo "✓ Rollback script: ./rollback.sh"
-
-
-      - name: Fix event_queue.h to match event_queue.c
-  run: |
-    cd "${GITHUB_WORKSPACE}/device_kernel" || exit 1
-    
-    echo "=== Fixing event_queue.h to match event_queue.c ==="
-    
-    # ============================================================
-    # 1. 删除所有旧的 event_queue.h
-    # ============================================================
-    find . -name "event_queue.h" -type f -exec rm -f {} \;
-    
-    # ============================================================
-    # 2. 创建完全匹配 event_queue.c 的 event_queue.h
-    # ============================================================
-    mkdir -p drivers/kernelsu/infra
-    
-    cat > drivers/kernelsu/infra/event_queue.h << 'EOF'
-    #ifndef _KSU_EVENT_QUEUE_H_
-    #define _KSU_EVENT_QUEUE_H_
-    
-    #include <linux/types.h>
-    #include <linux/spinlock.h>
-    #include <linux/mutex.h>
-    #include <linux/wait.h>
-    #include <linux/list.h>
-    #include <linux/ktime.h>
-    
-    /* 事件类型定义 - event_queue.c 中使用 */
-    #define KSU_EVENT_QUEUE_TYPE_DROPPED    0x8000
-    #define KSU_EVENT_RECORD_FLAG_INTERNAL  0x01
-    
-    /* 事件记录头 - 包含 event_queue.c 使用的所有成员 */
-    struct ksu_event_record_hdr {
-        int type;
-        unsigned int flags;      /* event_queue.c:104, 208 */
-        unsigned int len;        /* event_queue.c:105, 209 */
-        unsigned int seq;
-        unsigned long long ts_ns; /* event_queue.c:106, 129, 211 */
-        int pid;
-        int uid;
-    };
-    
-    /* 丢弃信息结构 */
-    struct ksu_event_queue_dropped_info {
-        unsigned int first_seq;
-        unsigned int last_seq;
-        unsigned int count;
-    };
-    
-    /* 事件队列 - 包含 event_queue.c 使用的所有成员 */
-    struct ksu_event_queue {
-        spinlock_t lock;
-        struct mutex read_lock;
-        wait_queue_head_t read_wait;
-        struct list_head pending;
-        struct list_head inflight;
-        
-        int queued;
-        int max_queued;
-        int max_payload_len;
-        bool closed;
-        
-        unsigned int next_seq;          /* event_queue.c:45, 120, 159 */
-        unsigned int seq_counter;
-        
-        /* 丢弃统计 - event_queue.c 使用 */
-        unsigned int dropped_total;
-        unsigned int dropped_pending;
-        unsigned int dropped_inflight;
-        unsigned int dropped_first_seq;
-        unsigned int dropped_last_seq;
-        unsigned int dropped_inflight_first_seq;  /* event_queue.c:51, 75, 218 */
-        unsigned int dropped_inflight_last_seq;   /* event_queue.c:52, 76, 219 */
-    };
-    
-    /* 函数声明 */
-    int ksu_event_queue_init(struct ksu_event_queue *queue, int max_queued, int max_payload_len);
-    void ksu_event_queue_destroy(struct ksu_event_queue *queue);
-    int ksu_event_queue_push(struct ksu_event_queue *queue, int type, int pid, void *payload, int payload_len, gfp_t gfp);
-    void ksu_event_queue_drop(struct ksu_event_queue *queue);
-    bool ksu_event_queue_has_pending(struct ksu_event_queue *queue);
-    
-    #endif
-    EOF
-    
-    echo "✓ Created complete event_queue.h"
-    
-    # ============================================================
-    # 3. 复制到所有 infra 目录
-    # ============================================================
-    find . -type d -name "infra" | while read -r dir; do
-        if [ "$dir" != "drivers/kernelsu/infra" ]; then
-            cp drivers/kernelsu/infra/event_queue.h "$dir/" 2>/dev/null || true
-            echo "✓ Copied to $dir/"
-        fi
-    done
-    
-    # ============================================================
-    # 4. 更新 sulog.h 使用正确的 event_queue.h
-    # ============================================================
-    mkdir -p drivers/kernelsu/sulog
-    
-    cat > drivers/kernelsu/sulog/sulog.h << 'EOF'
-    #ifndef _KSU_SULOG_H_
-    #define _KSU_SULOG_H_
-    
-    #include "../infra/event_queue.h"
-    
-    struct sulog_entry {
-        int pid;
-        int uid;
-        char command[64];
-        char message[256];
-    };
-    
-    extern struct ksu_event_queue sulog_queue;
-    
-    #endif
-    EOF
-    
-    echo "✓ Updated sulog.h"
-    
-    # ============================================================
-    # 5. 如果 event_queue.c 不存在，创建存根
-    # ============================================================
-    EVENT_C=$(find . -name "event_queue.c" -path "*/infra/*" 2>/dev/null | head -1)
-    
-    if [ -z "$EVENT_C" ]; then
-        echo "Creating event_queue.c stub..."
-        EVENT_C="drivers/kernelsu/infra/event_queue.c"
-        
-        cat > "$EVENT_C" << 'EVENT_C_EOF'
-    // SPDX-License-Identifier: GPL-2.0
-    #include <linux/module.h>
-    #include <linux/slab.h>
-    #include <linux/sched.h>
-    #include <linux/ktime.h>
-    #include "event_queue.h"
-    
-    int ksu_event_queue_init(struct ksu_event_queue *queue, int max_queued, int max_payload_len)
-    {
-        if (!queue)
-            return -EINVAL;
-        
-        spin_lock_init(&queue->lock);
-        mutex_init(&queue->read_lock);
-        init_waitqueue_head(&queue->read_wait);
-        INIT_LIST_HEAD(&queue->pending);
-        INIT_LIST_HEAD(&queue->inflight);
-        
-        queue->queued = 0;
-        queue->max_queued = max_queued;
-        queue->max_payload_len = max_payload_len;
-        queue->closed = false;
-        queue->next_seq = 1;
-        queue->seq_counter = 1;
-        queue->dropped_total = 0;
-        queue->dropped_pending = 0;
-        queue->dropped_inflight = 0;
-        queue->dropped_first_seq = 0;
-        queue->dropped_last_seq = 0;
-        queue->dropped_inflight_first_seq = 0;
-        queue->dropped_inflight_last_seq = 0;
-        
-        return 0;
-    }
-    EXPORT_SYMBOL(ksu_event_queue_init);
-    
-    void ksu_event_queue_destroy(struct ksu_event_queue *queue)
-    {
-        if (!queue)
-            return;
-        
-        unsigned long flags;
-        spin_lock_irqsave(&queue->lock, flags);
-        queue->closed = true;
-        spin_unlock_irqrestore(&queue->lock, flags);
-        wake_up_all(&queue->read_wait);
-    }
-    EXPORT_SYMBOL(ksu_event_queue_destroy);
-    
-    int ksu_event_queue_push(struct ksu_event_queue *queue, int type, int pid, 
-                              void *payload, int payload_len, gfp_t gfp)
-    {
-        struct ksu_event_record_hdr *record;
-        unsigned long flags;
-        unsigned int seq;
-        
-        if (!queue || queue->closed)
-            return -EINVAL;
-        
-        spin_lock_irqsave(&queue->lock, flags);
-        
-        if (queue->queued >= queue->max_queued) {
-            queue->dropped_total++;
-            spin_unlock_irqrestore(&queue->lock, flags);
-            return -ENOMEM;
-        }
-        
-        seq = queue->next_seq++;
-        record = kmalloc(sizeof(struct ksu_event_record_hdr) + payload_len, gfp);
-        if (!record) {
-            spin_unlock_irqrestore(&queue->lock, flags);
-            return -ENOMEM;
-        }
-        
-        record->type = type;
-        record->flags = 0;
-        record->len = payload_len;
-        record->seq = seq;
-        record->ts_ns = ktime_get_ns();
-        record->pid = pid;
-        record->uid = current_uid().val;
-        
-        if (payload && payload_len > 0) {
-            int copy_len = min(payload_len, queue->max_payload_len);
-            memcpy((void *)(record + 1), payload, copy_len);
-        }
-        
-        list_add_tail(&queue->pending, (struct list_head *)(record + 1));
-        queue->queued++;
-        
-        spin_unlock_irqrestore(&queue->lock, flags);
-        wake_up(&queue->read_wait);
-        
-        return 0;
-    }
-    EXPORT_SYMBOL(ksu_event_queue_push);
-    
-    void ksu_event_queue_drop(struct ksu_event_queue *queue)
-    {
-        if (!queue)
-            return;
-        
-        unsigned long flags;
-        spin_lock_irqsave(&queue->lock, flags);
-        queue->closed = true;
-        spin_unlock_irqrestore(&queue->lock, flags);
-        wake_up_all(&queue->read_wait);
-    }
-    EXPORT_SYMBOL(ksu_event_queue_drop);
-    
-    bool ksu_event_queue_has_pending(struct ksu_event_queue *queue)
-    {
-        if (!queue)
-            return false;
-        
-        return queue->dropped_pending || queue->dropped_inflight || 
-               !list_empty(&queue->pending);
-    }
-    EXPORT_SYMBOL(ksu_event_queue_has_pending);
-    
-    MODULE_LICENSE("GPL");
-    EVENT_C_EOF
-        
-        echo "✓ Created event_queue.c"
-    fi
-    
-    # ============================================================
-    # 6. 验证
-    # ============================================================
-    echo ""
-    echo "=== Verification ==="
-    
-    if [ -f "drivers/kernelsu/infra/event_queue.h" ]; then
-        echo "✓ event_queue.h exists"
-        
-        echo ""
-        echo "Checking required members:"
-        for member in next_seq dropped_inflight_first_seq dropped_inflight_last_seq flags len ts_ns; do
-            if grep -q "$member" drivers/kernelsu/infra/event_queue.h; then
-                echo "  ✓ $member"
-            else
-                echo "  ✗ $member MISSING"
-            fi
-        done
-        
-        echo ""
-        echo "Checking required defines:"
-        for def in KSU_EVENT_QUEUE_TYPE_DROPPED KSU_EVENT_RECORD_FLAG_INTERNAL; do
-            if grep -q "$def" drivers/kernelsu/infra/event_queue.h; then
-                echo "  ✓ $def"
-            else
-                echo "  ✗ $def MISSING"
-            fi
-        done
-        
-        echo ""
-        echo "Checking struct ksu_event_queue_dropped_info:"
-        if grep -q "struct ksu_event_queue_dropped_info" drivers/kernelsu/infra/event_queue.h; then
-            echo "  ✓ defined"
-        else
-            echo "  ✗ MISSING"
-        fi
-    fi
-    
-    echo ""
-    echo "✅ event_queue.h fixed!"
-    echo ""
-    echo "Now run: make -j\$(nproc)"
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process1
@@ -768,20 +504,16 @@ jobs:
             exit 1
           fi
 
-          # 1. 准备打包目录
           rm -rf "${ZIP_DIR}"
           mkdir -p "${ZIP_DIR}"
 
-          # 2. 获取 Anykernel3 (如果未预先下载)
           if [ ! -d "Anykernel3" ]; then
             git clone --depth=1 -b "${AK3_BRANCH}" "${AK3_SOURCE}" Anykernel3
           fi
 
-          # 3. 复制 AK3 基础文件
           cp -rf Anykernel3/* "${ZIP_DIR}/"
           rm -rf "${ZIP_DIR}/.git"
 
-          # 4. 替换并配置 anykernel.sh
           curl -fsL https://raw.githubusercontent.com/zttlove/NonGKI_Kernel_Build_2nd/mainline/Patches/anykernel.sh -o "${ZIP_DIR}/anykernel.sh" || true
 
           sed -i \
@@ -791,10 +523,8 @@ jobs:
             -e 's/^BLOCK=.*/BLOCK=boot/' \
             "${ZIP_DIR}/anykernel.sh"
 
-          # 5. 复制内核镜像
           cp -fv "${IMG_PATH}" "${ZIP_DIR}/"
 
-          # 6. 复制模块 (可选)
           if [[ "${PACK_KMODULES}" == "true" ]]; then
             MOD_DIR="${ZIP_DIR}/modules/vendor/lib/modules"
             mkdir -p "${MOD_DIR}"
@@ -804,11 +534,9 @@ jobs:
             fi
           fi
 
-          # 7. 修复权限
           chmod -R 755 "${ZIP_DIR}/META-INF"
           chmod 755 "${ZIP_DIR}/anykernel.sh"
 
-          # 8. 打包
           cd "${ZIP_DIR}"
           zip -r9 "${GITHUB_WORKSPACE}/${DEVICE_CODENAME}-${ROM_TEXT}-${TIME}-Ak3.zip" *
 
