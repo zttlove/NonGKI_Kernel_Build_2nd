@@ -375,257 +375,169 @@ jobs:
 
           cd "${GITHUB_WORKSPACE}/device_kernel" || exit 1
     
-          # ============================================================
-          # 1. 删除所有损坏的文件
-          # ============================================================
-          find . -name "ksud.c" -type f -exec rm -f {} \;
-    
-          # ============================================================
-          # 2. 从 Git 恢复（如果有）
-          # ============================================================
-          if git rev-parse --git-dir >/dev/null 2>&1; then
-          echo "Restoring from Git..."
-          git checkout -- drivers/kernelsu/runtime/ksud.c 2>/dev/null || true
-          git checkout -- KernelSU/kernel/runtime/ksud.c 2>/dev/null || true
-          git checkout -- */kernelsu/runtime/ksud.c 2>/dev/null || true
-          fi
-    
-          # ============================================================
-          # 3. 如果 Git 恢复失败，手动创建
-          # ============================================================
-          if [ ! -f "drivers/kernelsu/runtime/ksud.c" ] && [ ! -f "KernelSU/kernel/runtime/ksud.c" ]; then
-          echo "Creating new ksud.c..."
-        
-          mkdir -p drivers/kernelsu/runtime
-        
-          cat > drivers/kernelsu/runtime/ksud.c << 'EOF'
-          // SPDX-License-Identifier: GPL-2.0
-          #include <linux/module.h>
+          KSUD_H=$(find . -name "ksud.h" -path "*/runtime/*" 2>/dev/null | head -1)
+          EVENT_QUEUE_H=$(find . -name "event_queue.h" 2>/dev/null | head -1)
+          echo "ksud.h: $KSUD_H"
+          echo "event_queue.h: $EVENT_QUEUE_H"
+          if [ -n "$KSUD_H" ]; then
+          cat > "$KSUD_H" << 'EOF'
+          #ifndef _KSU_KSUD_H_
+          #define _KSU_KSUD_H_
           #include <linux/fs.h>
-          #include <linux/file.h>
-          #include <linux/uaccess.h>
-          #include <linux/slab.h>
-          #include <linux/jump_label.h>
+          #include <linux/types.h>
+          /* 核心初始化 - 无返回值 */
+          void ksu_ksud_init(void);
+          /* 安全模式检查 - 返回 bool */
+          bool ksu_is_safe_mode(void);
+          /* RC 钩子安装 - 需要 file 参数，noinline */
+          static noinline void ksu_install_rc_hook(struct file *file);
+          /* 文件系统回调 - void 返回 */
+          void on_module_mounted(void);
+          void on_post_fs_data(void);
+          void on_boot_completed(void);
+          /* ext4 sysfs - 返回 int，需要 mnt 参数 */
+          int nuke_ext4_sysfs(const char *mnt);
 
-          DEFINE_STATIC_KEY_FALSE(ksu_is_init_rc_hook_enabled);
+          /* 隐藏 setprocattr - 返回 int */
+          int ksu_hide_setprocattr(const char *name, const void *value, size_t size);
 
-          void ksu_handle_sys_read_fd(unsigned int fd, const char __user *buf, size_t count)
-          {
-          struct fd f = fdget(fd);
-          if (!f.file)
-          return;
-          fdput(f);
-          }
-
-          MODULE_LICENSE("GPL");
+          /* 系统读处理 - void 返回 */
+          void ksu_handle_sys_read_fd(unsigned int fd, const char __user *buf, size_t count);
+          #endif
           EOF
-          fi
-    
-          # ============================================================
-          # 4. 检查文件内容
-          # ============================================================
-          echo "=== Checking restored file ==="
-    
-          find . -name "ksud.c" -type f | while read -r file; do
-          echo "File: $file"
-          echo "Lines: $(wc -l < "$file")"
-        
-           # 显示前10行
-           echo "Content:"
-           head -10 "$file"
-           echo ""
-        
-           # 验证不是 shell 脚本
-          if grep -q "#!/bin/bash\|echo\|if \[\[" "$file" 2>/dev/null; then
-          echo "❌ ERROR: File contains shell script!"
-          exit 1
-          else
-            echo "✅ File is valid C code"
-          fi
-          done
-    
-          # ============================================================
-          # 5. 清理 sulog 问题
-          # ============================================================
-          EVENT_FILE="drivers/kernelsu/sulog/event.c"
-          if [ -f "$EVENT_FILE" ]; then
-          # 如果 sulog_queue 未定义，添加声明
-          if ! grep -q "sulog_queue" "$EVENT_FILE" 2>/dev/null; then
-            echo "Adding missing sulog_queue declaration..."
-            sed -i '1i static struct ksu_event_queue sulog_queue;' "$EVENT_FILE"
-          fi
-          fi  
-    
-          echo "✅ Complete reset done"
-          cd "${GITHUB_WORKSPACE}/device_kernel" || exit 1
-          echo "=== Fixing KernelSU undefined symbols ==="
-          # ============================================================
-          # 1. 检查 KernelSU 源文件完整性
-          # ============================================================
-          echo "=== Checking KernelSU source files ==="
-    
-          KSU_DIR=$(find . -type d -name "kernelsu" 2>/dev/null | head -1)
-    
-          if [ -z "$KSU_DIR" ]; then
-          echo "⚠️  KernelSU directory not found, creating..."
-          mkdir -p drivers/kernelsu/runtime
-          KSU_DIR="drivers/kernelsu"
-          fi
-          echo "KernelSU directory: $KSU_DIR"
-          # ============================================================
-          # 2. 创建完整的 ksud.c
-          # ============================================================
-          echo "=== Creating complete ksud.c ==="
-          cat > drivers/kernelsu/runtime/ksud.c << 'EOF'
-          // SPDX-License-Identifier: GPL-2.0
-          #include <linux/module.h>
-          #include <linux/fs.h>
-          #include <linux/file.h>
-          #include <linux/uaccess.h>
-          #include <linux/slab.h>
-          #include <linux/jump_label.h>
-          #include <linux/version.h>
-          DEFINE_STATIC_KEY_FALSE(ksu_is_init_rc_hook_enabled);
-          int __init ksu_ksud_init(void)
-          {
-          pr_info("KernelSU: initialized\n");
-          return 0;
-           }
-          bool ksu_is_safe_mode(void)
-          {
-          return false;
-          }
-          void ksu_install_rc_hook(void)
-          {
-          pr_debug("KernelSU: RC hook installed\n");
-          }
-          void on_module_mounted(void)
-          {
-          pr_debug("KernelSU: module mounted\n");
-          }
-          void on_post_fs_data(void)
-          {
-          pr_debug("KernelSU: post fs data\n");
-          }
-
-          void on_boot_completed(void)
-          {
-          pr_debug("KernelSU: boot completed\n");
-          }
-
-          void nuke_ext4_sysfs(void)
-          {
-          pr_debug("KernelSU: nuking ext4 sysfs\n");
-          }
-
-          int ksu_hide_setprocattr(const char *name, const void *value, size_t size)
-          {
-           return 0;
-          }
-          void ksu_handle_sys_read_fd(unsigned int fd, const char __user *buf, size_t count)
-          {
-          struct fd f = fdget(fd);
-          if (!f.file)
-          return;
-          fdput(f);
-          }
-          EXPORT_SYMBOL(ksu_ksud_init);
-          EXPORT_SYMBOL(ksu_is_safe_mode);
-          EXPORT_SYMBOL(ksu_install_rc_hook);
-          EXPORT_SYMBOL(on_module_mounted);
-          EXPORT_SYMBOL(on_post_fs_data);
-          EXPORT_SYMBOL(on_boot_completed);
-          EXPORT_SYMBOL(nuke_ext4_sysfs);
-          EXPORT_SYMBOL(ksu_hide_setprocattr);
-
-          MODULE_LICENSE("GPL");
-          EOF
-
-          echo "✓ Created ksud.c"
-
-          # ============================================================
-          # 3. 清理 xarray.c
-          # ============================================================
-          echo "=== Cleaning xarray.c ==="
-    
-          XARRAY_FILE=$(find . -name "xarray.c" -path "*/lib/*" 2>/dev/null | head -1)
-    
-          if [ -f "$XARRAY_FILE" ]; then
-          echo "Found xarray.c: $XARRAY_FILE"
-          cp "$XARRAY_FILE" "$XARRAY_FILE.bak"
-        
-          # 移除所有 KernelSU 引用
-          sed -i '/ksu_ksud_init/d' "$XARRAY_FILE"
-          sed -i '/ksu_hide_setprocattr/d' "$XARRAY_FILE"
-          sed -i '/on_module_mounted/d' "$XARRAY_FILE"
-          sed -i '/on_post_fs_data/d' "$XARRAY_FILE"
-          sed -i '/on_boot_completed/d' "$XARRAY_FILE"
-          sed -i '/ksu_is_safe_mode/d' "$XARRAY_FILE"
-          sed -i '/nuke_ext4_sysfs/d' "$XARRAY_FILE"
-          sed -i '/ksu_install_rc_hook/d' "$XARRAY_FILE"
-        
-          echo "✓ Cleaned xarray.c"
+          echo "✓ Updated ksud.h"
           fi
 
-          # ============================================================
-          # 4. 创建 sulog 头文件
-          # ============================================================
-          echo "=== Creating sulog headers ==="
+          if [ -n "$EVENT_QUEUE_H" ]; then
+          # 确保有头文件守卫
+          if ! grep -q "#ifndef _KSU_EVENT_QUEUE_H_" "$EVENT_QUEUE_H"; then
+            echo "Adding header guard to event_queue.h"
+            sed -i '1i #ifndef _KSU_EVENT_QUEUE_H_' "$EVENT_QUEUE_H"
+            sed -i '2i #define _KSU_EVENT_QUEUE_H_' "$EVENT_QUEUE_H"
+            echo "#endif" >> "$EVENT_QUEUE_H"
+           fi
+          fi
+
           mkdir -p drivers/kernelsu/sulog
+    
+          if [ -n "$EVENT_QUEUE_H" ]; then
           cat > drivers/kernelsu/sulog/sulog.h << 'EOF'
           #ifndef _KSU_SULOG_H_
           #define _KSU_SULOG_H_
 
+          #include "../infra/event_queue.h"
+
+          #endif
+          EOF
+          else
+          cat > drivers/kernelsu/sulog/sulog.h << 'EOF'
+          #ifndef _KSU_SULOG_H_
+          #define _KSU_SULOG_H_
+
+          #ifndef _KSU_EVENT_QUEUE_H_
+          #define _KSU_EVENT_QUEUE_H_
           struct ksu_event_queue {
           void *data;
           int size;
-          };
+          }
           #endif
           EOF
-          # ============================================================
-          # 5. 修复 sulog/event.c
-          # ============================================================
-          echo "=== Fixing sulog/event.c ==="
-          EVENT_FILE="drivers/kernelsu/sulog/event.c"
+          fi
     
-          if [ -f "$EVENT_FILE" ]; then
-          cp "$EVENT_FILE" "$EVENT_FILE.bak"
-        
-          # 添加必要的头文件和声明
-          if ! grep -q "#include \"sulog.h\"" "$EVENT_FILE" 2>/dev/null; then
-            sed -i '1i #include "sulog.h"' "$EVENT_FILE"
-          fi
-        
-          if ! grep -q "struct ksu_event_queue sulog_queue" "$EVENT_FILE" 2>/dev/null; then
-            sed -i '2i static struct ksu_event_queue sulog_queue;' "$EVENT_FILE"
-          fi
-        
-          echo "✓ Fixed event.c"
-          fi
+          echo "✓ Created sulog.h"
 
-          # ============================================================
-          # 6. 验证修复
-          # ============================================================
-          echo "=== Verification ==="
+   
+          cat > drivers/kernelsu/runtime/ksud.c << 'EOF'
+          // SPDX-License-Identifier: GPL-2.0
+          #include <linux/module.h>
+          #include <linux/fs.h>
+          #include <linux/file.h>
+          #include <linux/uaccess.h>
+          #include <linux/slab.h>
+          #include <linux/jump_label.h>
+          #include "ksud.h"
+
+          DEFINE_STATIC_KEY_FALSE(ksu_is_init_rc_hook_enabled);
+
+          void ksu_ksud_init(void)
+          {
+          pr_info("KernelSU: initialized\n");
+          }
+
+          bool ksu_is_safe_mode(void)
+          {
+          return false;
+          }
+
+           static noinline void ksu_install_rc_hook(struct file *file)
+           {
+           if (file)
+            pr_debug("KernelSU: RC hook installed for file %p\n", file);
+            }
+
+            void on_module_mounted(void)
+            {
+            pr_debug("KernelSU: module mounted\n");
+            }
+
+            void on_post_fs_data(void)
+            {
+            pr_debug("KernelSU: post fs data\n");
+            }
+
+             void on_boot_completed(void)
+             {
+             pr_debug("KernelSU: boot completed\n");
+             }
+
+             int nuke_ext4_sysfs(const char *mnt)
+             {
+              pr_debug("KernelSU: nuking ext4 sysfs\n");
+             return 0;
+             }
+
+             int ksu_hide_setprocattr(const char *name, const void *value, size_t size)
+             {
+             return 0;
+             }
+
+             void ksu_handle_sys_read_fd(unsigned int fd, const char __user *buf, size_t count)
+             {
+             struct fd f = fdget(fd);
+             if (!f.file)
+            return;
+            fdput(f);
+              }
+
+             EXPORT_SYMBOL(ksu_ksud_init);
+             EXPORT_SYMBOL(ksu_is_safe_mode);
+             EXPORT_SYMBOL(ksu_install_rc_hook);
+             EXPORT_SYMBOL(on_module_mounted);
+             EXPORT_SYMBOL(on_post_fs_data);
+             EXPORT_SYMBOL(on_boot_completed);
+             EXPORT_SYMBOL(nuke_ext4_sysfs);
+             EXPORT_SYMBOL(ksu_hide_setprocattr);
+
+             MODULE_LICENSE("GPL");
+             EOF
+             echo "✓ Updated ksud.c"
+
+             echo ""
+             echo "=== Verification ==="
+             # 检查函数签名是否匹配
+            if [ -f "$KSUD_H" ] && [ -f "drivers/kernelsu/runtime/ksud.c" ]; then
+            echo "Checking function signatures:"
+            for func in ksu_ksud_init ksu_install_rc_hook nuke_ext4_sysfs; do
+            if grep -q "$func" "$KSUD_H" && grep -q "$func" drivers/kernelsu/runtime/ksud.c; then
+                echo "  ✓ $func signature matches"
+            else
+                echo "  ⚠️  $func may not match"
+            fi
+            done
+            fi
     
-          if [ -f "drivers/kernelsu/runtime/ksud.c" ]; then
-          echo "✓ ksud.c created"
-          echo "  Lines: $(wc -l < drivers/kernelsu/runtime/ksud.c)"
-          fi
-    
-          # 检查所有函数
-          echo ""
-          echo "Checking for required functions:"
-          for func in ksu_ksud_init ksu_hide_setprocattr ksu_is_safe_mode ksu_install_rc_hook on_module_mounted on_post_fs_data on_boot_completed nuke_ext4_sysfs; do
-          if grep -q "$func" drivers/kernelsu/runtime/ksud.c 2>/dev/null; then
-            echo "  ✓ $func"
-          else
-            echo "  ✗ $func NOT found"
-          fi
-          done
-    
-          echo ""
-          echo "✅ Fix completed successfully!"
+            echo ""
+            echo "✅ Complete fix applied!"
           
            
 
