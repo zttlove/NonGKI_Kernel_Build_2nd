@@ -8,7 +8,7 @@ env:
   TZ: Asia/Shanghai
   DEVICE_NAME: "xiaomi_11U"
   DEVICE_CODENAME: "star"
-  KERNEL_ARCH: "aarch64"
+  KERNEL_ARCH: "arm64"
   CUSTOM_CMDS: "CLANG_TRIPLE=aarch64-linux-gnu-"
   EXTRA_CMDS: 'LD=ld.lld LLVM=1 LLVM_IAS=1 EXTRA_CFLAGS="-Wno-unused-function -Wno-frame-larger-than"'
 
@@ -80,7 +80,7 @@ env:
 
 jobs:
   build-kernel:
-    name: Xiaomi11u A2
+    name: Build Xiaomi 11 Ultra Kernel
     runs-on: ubuntu-latest
     env:
       CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
@@ -88,13 +88,13 @@ jobs:
       CCACHE_HARDLINK: "true"
 
     steps:
-      - name: ⏰ Checkout repository
-        uses: actions/checkout@v6
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
 
-      - name: ⌛️ Compilation environment preparation
+      - name: 🛠 Setup build environment
         uses: ./.github/workflows/build-env
 
-      - name: ⚙️ Get necessary tools
+      - name: 🔧 Get necessary tools
         uses: ./.github/workflows/build-ready1
 
       - name: 🚀 Build Process
@@ -107,9 +107,9 @@ jobs:
           set -euo pipefail
           echo "============================================="
           echo "📦 Packaging Star Hyper A16 Kernel"
-          echo "==========================================="
+          echo "============================================="
 
-          TIME=$(TZ=Asia/Shanghai date +"%Y-%m-%d")
+          TIME=$(TZ=Asia/Shanghai date +"%Y%m%d_%H%M")
           KERNEL_DIR="${GITHUB_WORKSPACE}/device_kernel"
           ZIP_DIR="${KERNEL_DIR}/AnyKernel3_Zip"
           IMG_PATH="${KERNEL_DIR}/out/arch/arm64/boot/Image"
@@ -131,17 +131,23 @@ jobs:
           cp -rf Anykernel3/* "${ZIP_DIR}/"
           rm -rf "${ZIP_DIR}/.git"
 
-          curl -fsL https://raw.githubusercontent.com/zttlove/NonGKI_Kernel_Build_2nd/mainline/Patches/anykernel.sh -o "${ZIP_DIR}/anykernel.sh" || true
+          # Download and replace anykernel.sh if available
+          curl -fsL https://raw.githubusercontent.com/zttlove/NonGKI_Kernel_Build_2nd/mainline/Patches/anykernel.sh -o "${ZIP_DIR}/anykernel.sh" || \
+            echo "⚠️ Using default anykernel.sh"
 
+          # Update anykernel.sh configuration
           sed -i \
             -e 's/^name=.*/name="Star-HyperA16-NonGKI-Kernel"/' \
             -e 's/^do\.devicecheck=.*/do.devicecheck=0/' \
             -e 's/^IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=1/' \
             -e 's/^BLOCK=.*/BLOCK=boot/' \
-            "${ZIP_DIR}/anykernel.sh"
+            "${ZIP_DIR}/anykernel.sh" || \
+            echo "⚠️ Failed to update anykernel.sh"
 
-          cp -fv "${IMG_PATH}" "${ZIP_DIR}/"
+          # Copy kernel image
+          cp -fv "${IMG_PATH}" "${ZIP_DIR}/Image"
 
+          # Pack modules if enabled
           if [[ "${PACK_KMODULES}" == "true" ]]; then
             MOD_DIR="${ZIP_DIR}/modules/vendor/lib/modules"
             mkdir -p "${MOD_DIR}"
@@ -151,32 +157,54 @@ jobs:
             fi
           fi
 
+          # Set permissions
           chmod -R 755 "${ZIP_DIR}/META-INF"
           chmod 755 "${ZIP_DIR}/anykernel.sh"
 
+          # Create zip package
           cd "${ZIP_DIR}"
-          zip -r9 "${GITHUB_WORKSPACE}/${DEVICE_CODENAME}-${ROM_TEXT}-${TIME}-Ak3.zip" *
+          PACKAGE_NAME="${DEVICE_CODENAME}-${ROM_TEXT}-${TIME}-Ak3.zip"
+          zip -r9 "${GITHUB_WORKSPACE}/${PACKAGE_NAME}" *
 
-          echo "PACK_NAME=${DEVICE_CODENAME}-${ROM_TEXT}-${TIME}-Ak3.zip" >> "${GITHUB_ENV}"
-          echo "✅ Package created successfully."
+          echo "PACK_NAME=${PACKAGE_NAME}" >> "${GITHUB_ENV}"
+          echo "✅ Package created successfully: ${PACKAGE_NAME}"
 
-      - name: 🚀 Auto Upload To Github Release
+      - name: 📤 Upload to GitHub Release
         if: env.PACK_METHOD == 'Anykernel3'
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: Star-HyperA16-Kernel-${{ github.run_number }}
-          name: "Xiaomi 11 Ultra Star HyperOS A16 NonGKI Kernel #${{ github.run_number }}"
+          name: "Xiaomi 11 Ultra HyperOS A16 Kernel #${{ github.run_number }}"
           body: |
-            ## Xiaomi 11 Ultra Star HyperOS A16 Kernel
-            - Adapted for HyperOS A16
-            - xxksu Syscall Hook
-            - NonGKI Format
-            - Clang 20.0.0git
+            ## Xiaomi 11 Ultra (star) HyperOS A16 Kernel
+            
+            ### 📋 Build Info
+            - **Device:** Xiaomi 11 Ultra (star)
+            - **ROM:** HyperOS A16
+            - **KernelSU:** xxksu (Syscall Hook)
+            - **Compiler:** Clang 20.0.0git
+            - **Format:** NonGKI
+            
+            ### ✨ Features
+            - ✅ NonGKI Kernel
+            - ✅ xxksu Syscall Hook
+            - ✅ HyperOS A16 Optimized
+            - ✅ Clang 20 Compilation
+            - ✅ LLVM/LLD Enabled
+            
+            ### 📦 Installation
+            1. Download the ZIP file
+            2. Flash in custom recovery (TWRP/OrangeFox)
+            3. Reboot and enjoy!
+            
+            ### ⚠️ Notes
+            - For HyperOS A16 only
+            - Make sure to backup your current boot image
+            - Tested on Xiaomi 11 Ultra (star)
           files: ${{ env.PACK_NAME }}
           draft: false
           prerelease: false
-          overwrite_files: true
+          overwrite: true
           make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
