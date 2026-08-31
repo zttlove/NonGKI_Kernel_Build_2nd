@@ -96,6 +96,7 @@ jobs:
 
       - name: 🔧 Get necessary tools
         uses: ./.github/workflows/build-ready1
+        git checkout -- fs/proc/task_mmu.c
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process1
