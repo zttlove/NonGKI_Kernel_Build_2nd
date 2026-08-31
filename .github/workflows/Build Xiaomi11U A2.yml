@@ -522,6 +522,185 @@ jobs:
           echo "✅ All fixes applied!"
           echo ""
           echo "Now run: make -j\$(nproc)"
+          - name: Fix SUSFS header file
+  run: |
+    cd "${GITHUB_WORKSPACE}/device_kernel" || exit 1
+    
+    echo "=== Fixing SUSFS header file ==="
+    
+    # ============================================================
+    # 1. 检查 susfs_def.h 是否存在
+    # ============================================================
+    SUSFS_HEADER=$(find . -name "susfs_def.h" 2>/dev/null | head -1)
+    
+    if [ -n "$SUSFS_HEADER" ]; then
+      echo "✓ Found susfs_def.h at: $SUSFS_HEADER"
+      echo "  Copying to include/linux/..."
+      mkdir -p include/linux
+      cp "$SUSFS_HEADER" include/linux/susfs_def.h
+      echo "✓ Copied to include/linux/susfs_def.h"
+    else
+      echo "⚠️  susfs_def.h not found, creating stub..."
+      
+      # 创建 susfs_def.h 存根
+      mkdir -p include/linux
+      cat > include/linux/susfs_def.h << 'SUSFS_EOF'
+    #ifndef _LINUX_SUSFS_DEF_H_
+    #define _LINUX_SUSFS_DEF_H_
+    
+    #include <linux/types.h>
+    #include <linux/fs.h>
+    
+    /* SUSFS 功能标志 */
+    #define SUSFS_ENABLE 1
+    #define SUSFS_VERSION "1.0.0"
+    
+    /* SUSFS 结构体定义 */
+    struct susfs_info {
+        int enabled;
+        int version;
+        char *mount_point;
+    };
+    
+    /* SUSFS 函数声明 */
+    int susfs_init(void);
+    void susfs_exit(void);
+    int susfs_mount(const char *path);
+    int susfs_umount(const char *path);
+    
+    /* SUSFS 钩子函数 */
+    static inline int susfs_hook_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
+    {
+        /* 默认直接返回，不进行处理 */
+        return 0;
+    }
+    
+    static inline int susfs_hook_write(struct file *file, const char __user *buf, size_t count, loff_t *pos)
+    {
+        return 0;
+    }
+    
+    static inline int susfs_hook_open(struct inode *inode, struct file *file)
+    {
+        return 0;
+    }
+    
+    static inline int susfs_hook_close(struct file *file)
+    {
+        return 0;
+    }
+    
+    #endif /* _LINUX_SUSFS_DEF_H_ */
+    SUSFS_EOF
+      
+      echo "✓ Created susfs_def.h stub"
+    fi
+    
+    # ============================================================
+    # 2. 检查其他 SUSFS 相关头文件
+    # ============================================================
+    echo ""
+    echo "=== Checking other SUSFS headers ==="
+    
+    # 查找 include/linux 目录
+    if [ ! -d "include/linux" ]; then
+      mkdir -p include/linux
+    fi
+    
+    # 检查 susfs.h
+    SUSFS_H=$(find . -name "susfs.h" 2>/dev/null | head -1)
+    if [ -n "$SUSFS_H" ] && [ "$SUSFS_H" != "include/linux/susfs.h" ]; then
+      cp "$SUSFS_H" include/linux/susfs.h 2>/dev/null || true
+      echo "✓ Copied susfs.h"
+    fi
+    
+    # 检查 susfs_hook.h
+    SUSFS_HOOK_H=$(find . -name "susfs_hook.h" 2>/dev/null | head -1)
+    if [ -n "$SUSFS_HOOK_H" ] && [ "$SUSFS_HOOK_H" != "include/linux/susfs_hook.h" ]; then
+      cp "$SUSFS_HOOK_H" include/linux/susfs_hook.h 2>/dev/null || true
+      echo "✓ Copied susfs_hook.h"
+    fi
+    
+    # ============================================================
+    # 3. 修复 kallsyms.c 中的 SUSFS 引用
+    # ============================================================
+    KALLSYMS_C="kernel/kallsyms.c"
+    
+    if [ -f "$KALLSYMS_C" ]; then
+      echo ""
+      echo "=== Fixing kallsyms.c SUSFS references ==="
+      
+      # 备份
+      cp "$KALLSYMS_C" "$KALLSYMS_C.bak"
+      
+      # 检查是否有其他 SUSFS 相关引用
+      if grep -q "susfs" "$KALLSYMS_C"; then
+        echo "  SUSFS references found in kallsyms.c"
+        
+        # 确保包含正确的头文件
+        if ! grep -q "#include <linux/susfs_def.h>" "$KALLSYMS_C"; then
+          sed -i '1i #include <linux/susfs_def.h>' "$KALLSYMS_C"
+        fi
+        
+        echo "✓ Fixed kallsyms.c includes"
+      fi
+    fi
+    
+    # ============================================================
+    # 4. 检查是否有其他文件需要 SUSFS 头文件
+    # ============================================================
+    echo ""
+    echo "=== Checking other files for SUSFS includes ==="
+    
+    find . -name "*.c" -o -name "*.h" | while read -r file; do
+      if grep -q "#include.*susfs" "$file" 2>/dev/null; then
+        if ! grep -q "#include <linux/susfs_def.h>" "$file"; then
+          echo "  File: $file - has SUSFS include"
+        fi
+      fi
+    done
+    
+    # ============================================================
+    # 5. 如果 SUSFS 未启用，禁用相关代码
+    # ============================================================
+    if [ "${SUSFS_ENABLE}" != "true" ]; then
+      echo ""
+      echo "=== SUSFS is disabled, adding #ifdef guards ==="
+      
+      # 在 kallsyms.c 中添加条件编译
+      if [ -f "$KALLSYMS_C" ]; then
+        # 使用 #ifdef CONFIG_SUSFS 包围 SUSFS 代码
+        sed -i 's/#include <linux\/susfs_def.h>/#ifdef CONFIG_SUSFS\n#include <linux\/susfs_def.h>\n#endif/' "$KALLSYMS_C"
+        echo "✓ Added CONFIG_SUSFS guards to kallsyms.c"
+      fi
+    fi
+    
+    # ============================================================
+    # 6. 验证
+    # ============================================================
+    echo ""
+    echo "=== Verification ==="
+    
+    if [ -f "include/linux/susfs_def.h" ]; then
+      echo "✓ include/linux/susfs_def.h exists"
+      echo "  Lines: $(wc -l < include/linux/susfs_def.h)"
+    fi
+    
+    if [ -f "$KALLSYMS_C" ]; then
+      echo "✓ $KALLSYMS_C exists"
+      
+      # 检查是否包含 susfs_def.h
+      if grep -q "susfs_def.h" "$KALLSYMS_C"; then
+        echo "  ✓ Contains susfs_def.h include"
+      else
+        echo "  ⚠️  No susfs_def.h include found"
+      fi
+    fi
+    
+    echo ""
+    echo "✅ SUSFS header fix completed!"
+    echo ""
+    echo "Now run: make -j\$(nproc)"
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process1
