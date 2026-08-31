@@ -102,6 +102,9 @@ jobs:
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/device_kernel"
           git checkout -- fs/proc/task_mmu.c
+          git checkout -- kernel/kallsyms.c
+          git checkout -- fs/exec.c
+        
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process1
