@@ -23,7 +23,7 @@ env:
   # 添加缺失的变量
   PACK_METHOD: "Anykernel3"
   PACK_KMODULES: "false"
-  ROM_TEXT: "HyperA16"
+  ROM_TEXT: "HyperA17"
 
 jobs:
   build:
@@ -314,16 +314,16 @@ jobs:
         if: env.PACK_METHOD == 'Anykernel3'
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: Star-HyperA16-Kernel-${{ github.run_number }}
-          name: Xiaomi 11 Ultra Star HyperOS A16 NonGKI Kernel #构建号#${{ github.run_number }}
+          tag_name: Star-HyperA17-Kernel-${{ github.run_number }}
+          name: Xiaomi 11 Ultra Star HyperOS A17 NonGKI Kernel #构建号#${{ github.run_number }}
           body: |
-            ## Xiaomi 11 Ultra Star HyperOS A16 内核刷机包
-            - 适配 HyperOS A16 全版本
+            ## Xiaomi 11 Ultra Star HyperOS A17 内核刷机包
+            - 适配 HyperOS A17 全版本
             - SukiSU ResukiSU Root 完整适配
             - SUSFS 隐藏文件系统免补丁
             - NonGKI 通用免解boot补丁
             - Osm0sis Anykernel3 官方卡刷格式
-            - Clang 20 最新编译
+            - Clang 18 最新编译
           files: ${{ env.PACK_NAME }}
           draft: false
           prerelease: false
