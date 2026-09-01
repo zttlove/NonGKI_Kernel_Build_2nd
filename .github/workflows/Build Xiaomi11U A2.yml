@@ -10,7 +10,7 @@ env:
   DEVICE_CODENAME: "star"
   KERNEL_ARCH: "arm64"
   CUSTOM_CMDS: "CLANG_TRIPLE=aarch64-linux-gnu-"
-  EXTRA_CMDS: "LD=ld.lld LLVM=1 LLVM_IAS=1 modules Image"
+  EXTRA_CMDS: "LD=ld.lld LLVM=1 LLVM_IAS=1"
 
   KERNEL_SOURCE: "https://github.com/zttlove/android_kernel_xiaomi_sm8350_miyume.git"
   KERNEL_BRANCH: "main"
@@ -46,7 +46,7 @@ env:
 
   PYTHON_VERSION: "3"
   PACK_METHOD: "Anykernel3"
-  PACK_KMODULES: "false"
+  PACK_KMODULES: "true"
   KERNELSU_METHOD: "shell"
   KERNELSU_SUS_PATCH: "true"
 
