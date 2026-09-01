@@ -42,7 +42,7 @@ env:
   BOOT_SOURCE: ""
   NEED_DTBO: false
   NEED_SAFE_DTBO: false
-  ROM_TEXT: "hyperos_a16"
+  ROM_TEXT: "hyperos_a17"
 
   PYTHON_VERSION: "3"
   PACK_METHOD: "Anykernel3"
