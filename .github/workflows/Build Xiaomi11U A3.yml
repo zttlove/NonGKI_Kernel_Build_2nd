@@ -46,10 +46,8 @@ jobs:
       - name: Apply ReSukiSU 5.4 Patches
         working-directory: kernel
         run: |
-          # 复制补丁文件到当前目录
-          cp ../Patches/Patch/susfs_patch_to_5.4.patch .
-          
-          # 按顺序应用补丁（-p1 忽略路径第一级）
+          # 从工作区根目录复制补丁
+          cp "${{ github.workspace }}/Patches/Patch/susfs_patch_to_5.4.patch" .
           patch -p1 < susfs_patch_to_5.4.patch
 
       - name: Enable ReSukiSU in defconfig
