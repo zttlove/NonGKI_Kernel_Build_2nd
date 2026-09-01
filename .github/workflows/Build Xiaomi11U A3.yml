@@ -67,7 +67,7 @@ jobs:
           else
             echo "⚠️ ReSukiSU appears incomplete, re-cloning..."
             rm -rf KernelSU
-            git clone --depth=1 https://github.com/zttlove/ReSukiSU.git KernelSU
+            git clone --depth=1 https://github.com/ReSukiSU/ReSukiSU.git KernelSU
           fi
           
           echo "✅ ReSukiSU submodule fixed"
