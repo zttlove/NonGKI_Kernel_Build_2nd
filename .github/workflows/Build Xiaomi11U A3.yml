@@ -1,4 +1,5 @@
 name: Build Kernel (5.4) with AnyKernel3 (O=out)
+name: Build Kernel (5.4) with AnyKernel3 (O=out)
 
 on:
   push:
@@ -12,7 +13,8 @@ env:
   DEVICE_NAME: "xiaomi_11U"
   DEVICE_CODENAME: "star"
   KERNEL_ARCH: "arm64"
-  KERNEL_REPO: "https://github.com/zttlove/android_kernel_xiaomi_sm8350_miyume.git"
+  # 只保留 owner/repo 格式
+  KERNEL_REPO: "zttlove/android_kernel_xiaomi_sm8350_miyume"
   KERNEL_BRANCH: "main"
   
   CLANG_SOURCE: "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-18.04.tar.xz"
@@ -26,10 +28,12 @@ jobs:
       - name: Checkout Kernel Source
         uses: actions/checkout@v4
         with:
-          repository: ${{ env.KERNEL_REPO }}
+          repository: ${{ env.KERNEL_REPO }}  # 现在是 owner/repo 格式
           ref: ${{ env.KERNEL_BRANCH }}
           path: kernel
           submodules: true
+
+      # ... 其余步骤保持不变 ...
 
       - name: Install Dependencies
         run: |
