@@ -43,11 +43,17 @@ jobs:
         run: |
           curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s main
 
-      - name: Apply ReSukiSU 5.4 Patch
-        working-directory: kernel
+      - name: Apply SUSFS patch
+        if: env.SUSFS_ENABLE == 'true'
         run: |
-          curl -O "https://raw.githubusercontent.com/zttlove/NonGKI_Kernel_Build_2nd/main/Patches/Patch/susfs_patch_to_5.4.patch"
-          patch -p1 < susfs_patch_to_5.4.patch
+          cd ${GITHUB_WORKSPACE}/device_kernel
+          if [ -f "kernel/susfs_patch_to_5.4.patch" ]; then
+          echo "📌 Applying SUSFS patch..."
+          cd kernel
+          patch -p1 < susfs_patch_to_5.4.patch || echo "⚠️ Patch may already be applied"
+          else
+          echo "⚠️ SUSFS patch not found"
+          fi
 
       - name: Enable ReSukiSU in defconfig
         working-directory: kernel
