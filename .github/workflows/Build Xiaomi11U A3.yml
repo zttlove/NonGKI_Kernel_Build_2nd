@@ -12,16 +12,9 @@ env:
   DEVICE_NAME: "xiaomi_11U"
   DEVICE_CODENAME: "star"
   KERNEL_ARCH: "arm64"
-  # 以下变量可保留，但在脚本中我们直接导出 LLVM 等，不再依赖这些变量
-  CUSTOM_CMDS: "CLANG_TRIPLE=aarch64-linux-gnu-"
-  EXTRA_CMDS: "LD=ld.lld LLVM=1 LLVM_IAS=1"
-
   KERNEL_REPO: "zttlove/android_kernel_xiaomi_sm8350_miyume"
-  KERNEL_BRANCH: "main"                     # 如果是 5.4 分支，改为 "5.4"
-
+  KERNEL_BRANCH: "main"                         # 如需 5.4 分支，改为 "5.4"
   CLANG_SOURCE: "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-18.04.tar.xz"
-  GCC_GNU: false
-  # GCC 相关源保留但不会被下载（因为 GCC_GNU=false）
   DEFCONFIG_NAME: "star_defconfig"
 
 jobs:
@@ -39,7 +32,8 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y bc bison flex libelf-dev libssl-dev \
-            make python3 device-tree-compiler git curl xz-utils
+            make python3 device-tree-compiler git curl xz-utils \
+            libtinfo5
 
       - name: Download Clang
         run: |
@@ -47,9 +41,6 @@ jobs:
           mkdir -p clang
           tar -xf clang.tar.xz -C clang --strip-components=1
           echo "$(pwd)/clang/bin" >> $GITHUB_PATH
-
-      # 可选的 GCC 下载步骤被跳过（因为 GCC_GNU=false）
-      # 若需要备用 GCC，可取消注释并调整条件
 
       - name: Build Kernel
         working-directory: kernel
