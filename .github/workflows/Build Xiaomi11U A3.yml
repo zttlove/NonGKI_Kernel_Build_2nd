@@ -1,4 +1,4 @@
-name: Build Kernel (5.4)
+name: Build Kernel (5.4) with AnyKernel3 (O=out)
 
 on:
   push:
@@ -13,29 +13,34 @@ env:
   DEVICE_CODENAME: "star"
   KERNEL_ARCH: "arm64"
   KERNEL_REPO: "zttlove/android_kernel_xiaomi_sm8350_miyume"
-  KERNEL_BRANCH: "main"                         # 若需 5.4 分支，改为 "5.4"
+  KERNEL_BRANCH: "main"                         # 若需要 5.4 分支，请改为 "5.4"
   CLANG_SOURCE: "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-18.04.tar.xz"
   DEFCONFIG_NAME: "star_defconfig"
+  OUTPUT_DIR: "out"                             # 输出目录名称
 
 jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
+      # ---------- 1. 检出内核源码（包含子模块） ----------
       - name: Checkout Kernel Source
         uses: actions/checkout@v4
         with:
           repository: ${{ env.KERNEL_REPO }}
           ref: ${{ env.KERNEL_BRANCH }}
           path: kernel
-          submodules: true                       # 启用子模块克隆
+          submodules: true
 
+      # ---------- 2. 安装编译依赖 ----------
       - name: Install Dependencies
         run: |
           sudo apt update
-          sudo apt install -y bc bison flex libelf-dev libssl-dev \
+          sudo apt install -y \
+            bc bison flex libelf-dev libssl-dev \
             make python3 device-tree-compiler git curl xz-utils \
             libtinfo5
 
+      # ---------- 3. 下载并配置 Clang ----------
       - name: Download Clang
         run: |
           curl -L -o clang.tar.xz "${{ env.CLANG_SOURCE }}"
@@ -43,14 +48,7 @@ jobs:
           tar -xf clang.tar.xz -C clang --strip-components=1
           echo "$(pwd)/clang/bin" >> $GITHUB_PATH
 
-      # （可选）如果子模块仍缺失，可使用以下补救措施（注释掉以优先尝试子模块）
-      # - name: Fix missing kernelsu Kconfig (fallback)
-      #   working-directory: kernel
-      #   run: |
-      #     if ! [ -f drivers/kernelsu/Kconfig ]; then
-      #       sed -i '/source "drivers\/kernelsu\/Kconfig"/d' drivers/Kconfig
-      #     fi
-
+      # ---------- 4. 编译内核（使用 O=out） ----------
       - name: Build Kernel
         working-directory: kernel
         run: |
@@ -59,15 +57,50 @@ jobs:
           export LLVM_IAS=1
           export LD=ld.lld
           export CLANG_TRIPLE=aarch64-linux-gnu-
-          make ${{ env.DEFCONFIG_NAME }}
-          make -j$(nproc)
+          # 第一步：生成 defconfig（使用 O=out）
+          make -j$(nproc --all) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
+          # 第二步：编译内核镜像和模块（如有）
+          make -j$(nproc --all) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} modules Image
 
-      - name: Upload Kernel Image
+      # ---------- 5. 准备 AnyKernel3 ----------
+      - name: Prepare AnyKernel3
+        run: git clone https://github.com/osm0sis/AnyKernel3.git anykernel3
+
+      - name: Setup AnyKernel3
+        working-directory: anykernel3
+        run: |
+          sed -i 's/kernel.string=.*/kernel.string=MyKernel for Xiaomi 11 Ultra (star)/' anykernel.sh
+          sed -i 's/do.devicecheck=.*/do.devicecheck=1/' anykernel.sh
+          sed -i 's/device.name1=.*/device.name1=star/' anykernel.sh
+          sed -i 's/device.name2=.*/device.name2=/' anykernel.sh
+          sed -i 's/device.name3=.*/device.name3=/' anykernel.sh
+          sed -i 's/device.name4=.*/device.name4=/' anykernel.sh
+          sed -i 's/do.modules=.*/do.modules=0/' anykernel.sh          # 暂不处理模块
+          sed -i 's/do.systemless=.*/do.systemless=1/' anykernel.sh
+          sed -i 's/do.cleanup=.*/do.cleanup=1/' anykernel.sh
+          sed -i 's/^BLOCK=.*/BLOCK=\/dev\/block\/by-name\/boot;/' anykernel.sh
+          sed -i 's/^IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=1;/' anykernel.sh
+          sed -i 's/^RAMDISK_COMPRESSION=.*/RAMDISK_COMPRESSION=auto;/' anykernel.sh
+          sed -i 's/^PATCH_VBMETA_FLAG=.*/PATCH_VBMETA_FLAG=auto;/' anykernel.sh
+
+      # ---------- 6. 从 out 目录复制内核镜像到 AnyKernel3 ----------
+      - name: Copy Kernel Image
+        run: cp kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image.gz-dtb anykernel3/Image
+
+      # ---------- 7. 打包 AnyKernel3 ZIP ----------
+      - name: Create AnyKernel3 Zip
+        working-directory: anykernel3
+        run: |
+          zip -r9 ../AnyKernel3-star-$(date +%Y%m%d-%H%M%S).zip * -x .git README.md *placeholder
+
+      # ---------- 8. 上传所有产物 ----------
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: kernel-image
+          name: kernel-output
           path: |
-            kernel/arch/arm64/boot/Image
-            kernel/arch/arm64/boot/Image.gz
-            kernel/arch/arm64/boot/Image.gz-dtb
-            kernel/arch/arm64/boot/dts/**/*.dtb
+            kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image
+            kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image.gz
+            kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image.gz-dtb
+            kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/dts/**/*.dtb
+            AnyKernel3-star-*.zip
