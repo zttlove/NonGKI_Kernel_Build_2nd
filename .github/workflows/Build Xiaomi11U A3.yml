@@ -42,34 +42,30 @@ jobs:
             make python3 device-tree-compiler git curl xz-utils \
             libtinfo5 ccache
 
-      - name: Fix KernelSU Submodule (Use ReSukiSU)
+      - name: Fix KernelSU Submodule (Use Official ReSukiSU)
         working-directory: kernel
         run: |
           echo "========================================="
           echo "🔧 Fixing KernelSU submodule"
           echo "========================================="
-          
-          # 检查 submodule 状态
-          git submodule status || true
-          
-          # 如果 KernelSU 目录不存在或为空，手动克隆 ReSukiSU
-          if [ ! -d "KernelSU" ] || [ -z "$(ls -A KernelSU 2>/dev/null)" ]; then
-            echo "📥 KernelSU directory missing or empty, cloning ReSukiSU..."
-            rm -rf KernelSU
-            git clone --depth=1 https://github.com/ReSukiSU/ReSukiSU.git KernelSU
-          else
-            echo "✅ KernelSU directory exists"
-          fi
-          
-          # 验证 ReSukiSU
+    
+          # 直接删除旧目录，保证全新拉取
+          rm -rf KernelSU
+    
+          # 从官方仓库克隆最新代码
+          echo "📥 Cloning Official ReSukiSU (latest)..."
+          git clone --depth=1 https://github.com/ReSukiSU/ReSukiSU.git KernelSU
+    
+          # 验证并显示版本信息（用于确认更新成功）
           if [ -f "KernelSU/kernel/Makefile" ]; then
-            echo "✅ ReSukiSU verified"
+          echo "✅ ReSukiSU cloned successfully"
+          echo "📋 Version info:"
+          grep -E "VERSION_CODE|VERSION_NAME" KernelSU/kernel/Makefile || true
           else
-            echo "⚠️ ReSukiSU appears incomplete, re-cloning..."
-            rm -rf KernelSU
-            git clone --depth=1 https://github.com/ReSukiSU/ReSukiSU.git KernelSU
+          echo "❌ Failed to clone ReSukiSU"
+          exit 1
           fi
-          
+    
           echo "✅ ReSukiSU submodule fixed"
 
       - name: Integrate ReSukiSU
