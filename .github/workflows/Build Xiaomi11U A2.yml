@@ -48,12 +48,12 @@ env:
   PACK_METHOD: "Anykernel3"
   PACK_KMODULES: "false"
   KERNELSU_METHOD: "shell"
-  KERNELSU_SUS_PATCH: "true"
+  KERNELSU_SUS_PATCH: "false"
 
   PATCHES_SOURCE: "JackA1ltman/NonGKI_Kernel_Patches"
   PATCHES_BRANCH: "mi_kernel"
-  SUSFS_FOLDER_FIXED: "mi11_evox_a16"
-  SUSFS_PATCH_FIXED: "susfs_fixed"
+  SUSFS_FOLDER_FIXED: ""
+  SUSFS_PATCH_FIXED: ""
 
   REKERNEL_ENABLE: "false"
   HOOK_METHOD: "syscall"
