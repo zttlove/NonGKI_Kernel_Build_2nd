@@ -14,9 +14,18 @@ env:
   KERNEL_ARCH: "arm64"
   KERNEL_REPO: "zttlove/android_kernel_xiaomi_sm8350_miyume"
   KERNEL_BRANCH: "main"
+  
+  # Clang配置
   CLANG_SOURCE: "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-18.04.tar.xz"
+  
+  # Kernel配置
   DEFCONFIG_NAME: "star_defconfig"
   OUTPUT_DIR: "out"
+  
+  # 功能开关
+  SUSFS_ENABLE: "false"  # 改为 "true" 启用SUSFS
+  KERNELSU_AUTO_GET: "true"
+  KERNELSU_AUTO_FORK: "xxksu"
 
 jobs:
   build:
@@ -36,100 +45,161 @@ jobs:
           sudo apt install -y \
             bc bison flex libelf-dev libssl-dev \
             make python3 device-tree-compiler git curl xz-utils \
-            libtinfo5
+            libtinfo5 ccache
 
       - name: Integrate ReSukiSU
         working-directory: kernel
         run: |
+          echo "🔧 Integrating ReSukiSU..."
           curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s main
+          
+          # 验证集成
+          if grep -q "CONFIG_KSU" arch/arm64/configs/${{ env.DEFCONFIG_NAME }}; then
+            echo "✅ ReSukiSU integrated successfully"
+          else
+            echo "⚠️ ReSukiSU integration may need manual config"
+          fi
 
       - name: Apply SUSFS patch
         if: env.SUSFS_ENABLE == 'true'
-        run: |
-          cd ${GITHUB_WORKSPACE}/device_kernel
-          if [ -f "kernel/susfs_patch_to_5.4.patch" ]; then
-          echo "📌 Applying SUSFS patch..."
-          cd kernel
-          patch -p1 < susfs_patch_to_5.4.patch || echo "⚠️ Patch may already be applied"
-          else
-          echo "⚠️ SUSFS patch not found"
-          fi
-
-      - name: Enable ReSukiSU in defconfig
         working-directory: kernel
         run: |
+          echo "📌 Applying SUSFS patch..."
+          
+          # 检查补丁文件是否存在
+          if [ -f "kernel/susfs_patch_to_5.4.patch" ]; then
+            cd kernel
+            patch -p1 < susfs_patch_to_5.4.patch || echo "⚠️ Patch may already be applied"
+            echo "✅ SUSFS patch applied"
+          elif [ -f "susfs_patch_to_5.4.patch" ]; then
+            patch -p1 < susfs_patch_to_5.4.patch || echo "⚠️ Patch may already be applied"
+            echo "✅ SUSFS patch applied"
+          else
+            echo "⚠️ SUSFS patch not found, skipping..."
+          fi
+
+      - name: Enable KernelSU in defconfig
+        working-directory: kernel
+        run: |
+          echo "🔧 Enabling KernelSU in defconfig..."
+          
+          # 备份原始defconfig
+          cp arch/arm64/configs/${{ env.DEFCONFIG_NAME }} arch/arm64/configs/${{ env.DEFCONFIG_NAME }}.bak
+          
+          # 添加KernelSU配置
           echo "CONFIG_KSU=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
           echo "CONFIG_KSU_MANUAL_HOOK=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
+          echo "CONFIG_KSU_DEBUG=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
           echo "CONFIG_KPROBES=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
+          echo "CONFIG_HAVE_KPROBES=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
+          echo "CONFIG_KPROBE_EVENTS=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
+          
+          # 如果启用SUSFS，添加相关配置
+          if [ "${{ env.SUSFS_ENABLE }}" == "true" ]; then
+            echo "CONFIG_SUSFS=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
+            echo "CONFIG_SUSFS_ENABLE=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
+          fi
+          
+          echo "✅ Defconfig updated"
 
       - name: Download Clang
         run: |
-          curl -L -o clang.tar.xz "${{ env.CLANG_SOURCE }}"
+          echo "📥 Downloading Clang from: ${{ env.CLANG_SOURCE }}"
+          
+          # 下载Clang
+          curl -L --retry 3 --retry-delay 5 -o clang.tar.xz "${{ env.CLANG_SOURCE }}"
+          
+          # 验证下载
+          if [ ! -s clang.tar.xz ]; then
+            echo "❌ Failed to download Clang or file is empty"
+            exit 1
+          fi
+          
+          # 解压
           mkdir -p clang
           tar -xf clang.tar.xz -C clang --strip-components=1
+          
+          # 验证Clang
+          if [ ! -f "clang/bin/clang" ]; then
+            echo "❌ Clang binary not found!"
+            exit 1
+          fi
+          
+          # 显示版本
+          clang/bin/clang --version
+          echo "✅ Clang setup completed"
+          
+          # 添加到PATH
           echo "$(pwd)/clang/bin" >> $GITHUB_PATH
+
+      - name: Setup CCache
+        run: |
+          mkdir -p ~/.ccache
+          echo "CCACHE_DIR=~/.ccache" >> $GITHUB_ENV
+          echo "CCACHE_COMPILERCHECK=content" >> $GITHUB_ENV
+          echo "CCACHE_SLOPPINESS=time_macros,include_file_mtime,file_stat_matches" >> $GITHUB_ENV
+          ccache -M 2G
 
       - name: Build Kernel
         working-directory: kernel
         run: |
           set -e
+          echo "🚀 Starting kernel build..."
+          
           export ARCH=${{ env.KERNEL_ARCH }}
           export LLVM=1
           export LLVM_IAS=1
           export LD=ld.lld
           export CLANG_TRIPLE=aarch64-linux-gnu-
+          export CC=clang
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          
+          # 显示编译器信息
+          which clang
+          clang --version
+          
+          # 配置
+          echo "📝 Configuring kernel..."
           make -j$(nproc --all) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
-          make -j$(nproc --all) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} modules Image
+          
+          # 构建
+          echo "🔨 Building kernel..."
+          make -j$(nproc --all) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} 
+          
+          # 验证构建产物
+          if [ -f "${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image" ]; then
+            echo "✅ Kernel built successfully!"
+          else
+            echo "❌ Kernel build failed - Image not found"
+            exit 1
+          fi
 
       - name: List boot directory
-        run: ls -la kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/
+        run: |
+          echo "📂 Kernel build output:"
+          ls -la kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/ || echo "No boot directory found"
+          
+          # 检查dtb
+          if [ -d "kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/dts" ]; then
+            echo "📂 DTB files:"
+            find kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/dts -name "*.dtb" -type f | head -5
+          fi
 
       - name: Prepare AnyKernel3
-        run: git clone https://github.com/osm0sis/AnyKernel3.git anykernel3
+        run: |
+          echo "📦 Setting up AnyKernel3..."
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel3
 
       - name: Setup AnyKernel3
         working-directory: anykernel3
         run: |
-          sed -i 's/kernel.string=.*/kernel.string=MyKernel for Xiaomi 11 Ultra (star)/' anykernel.sh
+          # 备份原始anykernel.sh
+          cp anykernel.sh anykernel.sh.bak
+          
+          # 修改配置
+          sed -i 's/kernel.string=.*/kernel.string=Xiaomi 11 Ultra (star) HyperOS A16 Kernel/' anykernel.sh
           sed -i 's/do.devicecheck=.*/do.devicecheck=1/' anykernel.sh
           sed -i 's/device.name1=.*/device.name1=star/' anykernel.sh
-          sed -i 's/device.name2=.*/device.name2=/' anykernel.sh
-          sed -i 's/device.name3=.*/device.name3=/' anykernel.sh
-          sed -i 's/device.name4=.*/device.name4=/' anykernel.sh
-          sed -i 's/do.modules=.*/do.modules=0/' anykernel.sh
-          sed -i 's/do.systemless=.*/do.systemless=1/' anykernel.sh
-          sed -i 's/do.cleanup=.*/do.cleanup=1/' anykernel.sh
-          sed -i 's/^BLOCK=.*/BLOCK=\/dev\/block\/by-name\/boot;/' anykernel.sh
-          sed -i 's/^IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=1;/' anykernel.sh
-          sed -i 's/^RAMDISK_COMPRESSION=.*/RAMDISK_COMPRESSION=auto;/' anykernel.sh
-          sed -i 's/^PATCH_VBMETA_FLAG=.*/PATCH_VBMETA_FLAG=auto;/' anykernel.sh
-
-      - name: Copy Kernel Image
-        run: |
-          set -e
-          cd kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/
-          if [ -f Image.gz-dtb ]; then
-            cp Image.gz-dtb ../../../../../anykernel3/Image
-          elif [ -f Image.gz ]; then
-            cp Image.gz ../../../../../anykernel3/Image
-          elif [ -f Image ]; then
-            cp Image ../../../../../anykernel3/Image
-          else
-            echo "No kernel image found!" && exit 1
-          fi
-
-      - name: Create AnyKernel3 Zip
-        working-directory: anykernel3
-        run: |
-          zip -r9 ../AnyKernel3-star-$(date +%Y%m%d-%H%M%S).zip * -x .git README.md *placeholder
-
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: kernel-output
-          path: |
-            kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image
-            kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image.gz
-            kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image.gz-dtb
-            kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/dts/**/*.dtb
-            AnyKernel3-star-*.zip
+          sed -i 's/device.name2=.*/device.name2=xiaomi11ultra/' anykernel.sh
+          sed -i 's/device.name3=.*/device.name
