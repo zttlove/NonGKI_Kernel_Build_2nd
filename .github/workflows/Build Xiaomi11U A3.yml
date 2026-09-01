@@ -12,17 +12,12 @@ env:
   DEVICE_NAME: "xiaomi_11U"
   DEVICE_CODENAME: "star"
   KERNEL_ARCH: "arm64"
-  KERNEL_REPO: "zttlove/android_kernel_xiaomi_sm8350_miyume"
+  KERNEL_REPO: "zttlove/android_kernel_xiaomi_sm8350"
   KERNEL_BRANCH: "main"
   
-  # Clang配置
   CLANG_SOURCE: "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-18.04.tar.xz"
-  
-  # Kernel配置
   DEFCONFIG_NAME: "star_defconfig"
   OUTPUT_DIR: "out"
-  
-  
 
 jobs:
   build:
@@ -43,44 +38,100 @@ jobs:
             bc bison flex libelf-dev libssl-dev \
             make python3 device-tree-compiler git curl xz-utils \
             libtinfo5 ccache
-      - name: Fix submodule url override
-        run: |
-          git config submodule.KernelSU.url https://github.com/zttlove/ReSukiSU
-          git submodule sync
-          git submodule update --init --recursive
 
-      
+      - name: Fix KernelSU Submodule (Use ReSukiSU)
+        working-directory: kernel
+        run: |
+          echo "========================================="
+          echo "🔧 Fixing KernelSU submodule"
+          echo "========================================="
           
+          # 检查 submodule 状态
+          git submodule status || true
           
+          # 如果 KernelSU 目录不存在或为空，手动克隆 ReSukiSU
+          if [ ! -d "KernelSU" ] || [ -z "$(ls -A KernelSU 2>/dev/null)" ]; then
+            echo "📥 KernelSU directory missing or empty, cloning ReSukiSU..."
+            rm -rf KernelSU
+            git clone --depth=1 https://github.com/zttlove/ReSukiSU.git KernelSU
+          else
+            echo "✅ KernelSU directory exists"
+          fi
+          
+          # 验证 ReSukiSU
+          if [ -f "KernelSU/kernel/Makefile" ]; then
+            echo "✅ ReSukiSU verified"
+          else
+            echo "⚠️ ReSukiSU appears incomplete, re-cloning..."
+            rm -rf KernelSU
+            git clone --depth=1 https://github.com/zttlove/ReSukiSU.git KernelSU
+          fi
+          
+          echo "✅ ReSukiSU submodule fixed"
+
+      - name: Integrate ReSukiSU
+        working-directory: kernel
+        run: |
+          set -e
+          echo "========================================="
+          echo "🔧 Integrating ReSukiSU"
+          echo "========================================="
+          
+          # 下载并运行 ReSukiSU setup
+          echo "📥 Downloading ReSukiSU setup script..."
+          curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" -o /tmp/setup.sh
+          chmod +x /tmp/setup.sh
+          
+          echo "🚀 Running ReSukiSU integration..."
+          bash /tmp/setup.sh main
+          
+          rm -f /tmp/setup.sh
+          
+          echo "========================================="
+          echo "✅ ReSukiSU integration completed!"
+          echo "========================================="
+
+      - name: Enable KernelSU in defconfig
+        working-directory: kernel
+        run: |
+          echo "🔧 Enabling KernelSU in defconfig..."
+          
+          cp arch/arm64/configs/${{ env.DEFCONFIG_NAME }} arch/arm64/configs/${{ env.DEFCONFIG_NAME }}.bak
+          
+          echo "CONFIG_KSU=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
+          echo "CONFIG_KSU_MANUAL_HOOK=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
+          echo "CONFIG_KSU_DEBUG=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
+          echo "CONFIG_KPROBES=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
+          echo "CONFIG_HAVE_KPROBES=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
+          echo "CONFIG_KPROBE_EVENTS=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
+          
+          echo "✅ Defconfig updated"
+
       - name: Download Clang
         run: |
-          echo "📥 Downloading Clang from: ${{ env.CLANG_SOURCE }}"
-          
+          echo "📥 Downloading Clang..."
           curl -L --retry 3 --retry-delay 5 -o clang.tar.xz "${{ env.CLANG_SOURCE }}"
           
           if [ ! -s clang.tar.xz ]; then
-            echo "❌ Failed to download Clang or file is empty"
+            echo "❌ Failed to download Clang"
             exit 1
           fi
           
           mkdir -p clang
           tar -xf clang.tar.xz -C clang --strip-components=1
+          
           if [ ! -f "clang/bin/clang" ]; then
             echo "❌ Clang binary not found!"
             exit 1
           fi
           
           clang/bin/clang --version
-          echo "✅ Clang setup completed"
-          
           echo "$(pwd)/clang/bin" >> $GITHUB_PATH
 
       - name: Setup CCache
         run: |
           mkdir -p ~/.ccache
           echo "CCACHE_DIR=~/.ccache" >> $GITHUB_ENV
-          echo "CCACHE_COMPILERCHECK=content" >> $GITHUB_ENV
-          echo "CCACHE_SLOPPINESS=time_macros,include_file_mtime,file_stat_matches" >> $GITHUB_ENV
           ccache -M 2G
 
       - name: Build Kernel
@@ -98,9 +149,6 @@ jobs:
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           
-          which clang
-          clang --version
-          
           echo "📝 Configuring kernel..."
           make -j$(nproc --all) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
           
@@ -110,95 +158,60 @@ jobs:
           if [ -f "${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image" ]; then
             echo "✅ Kernel built successfully!"
           else
-            echo "❌ Kernel build failed - Image not found"
+            echo "❌ Kernel build failed"
             exit 1
           fi
 
       - name: List boot directory
-        run: |
-          echo "📂 Kernel build output:"
-          ls -la kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/ || echo "No boot directory found"
-          
-          if [ -d "kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/dts" ]; then
-            echo "📂 DTB files:"
-            find kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/dts -name "*.dtb" -type f | head -5
-          fi
+        run: ls -la kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/
 
       - name: Prepare AnyKernel3
-        run: |
-          echo "📦 Setting up AnyKernel3..."
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel3
+        run: git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel3
 
       - name: Setup AnyKernel3
         working-directory: anykernel3
         run: |
           cp anykernel.sh anykernel.sh.bak
-          
-          sed -i 's/kernel.string=.*/kernel.string=Xiaomi 11 Ultra (star) HyperOS A16 Kernel/' anykernel.sh
+          sed -i 's/kernel.string=.*/kernel.string=Xiaomi 11 Ultra (star) Kernel/' anykernel.sh
           sed -i 's/do.devicecheck=.*/do.devicecheck=1/' anykernel.sh
           sed -i 's/device.name1=.*/device.name1=star/' anykernel.sh
           sed -i 's/device.name2=.*/device.name2=xiaomi11ultra/' anykernel.sh
-          sed -i 's/device.name3=.*/device.name3=/' anykernel.sh
-          sed -i 's/device.name4=.*/device.name4=/' anykernel.sh
           sed -i 's/do.modules=.*/do.modules=0/' anykernel.sh
           sed -i 's/do.systemless=.*/do.systemless=1/' anykernel.sh
           sed -i 's/do.cleanup=.*/do.cleanup=1/' anykernel.sh
           sed -i 's/^BLOCK=.*/BLOCK=\/dev\/block\/by-name\/boot;/' anykernel.sh
           sed -i 's/^IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=1;/' anykernel.sh
-          sed -i 's/^RAMDISK_COMPRESSION=.*/RAMDISK_COMPRESSION=auto;/' anykernel.sh
-          sed -i 's/^PATCH_VBMETA_FLAG=.*/PATCH_VBMETA_FLAG=auto;/' anykernel.sh
-          
-          echo "✅ AnyKernel3 configured"
 
       - name: Copy Kernel Image
         run: |
-          set -e
-          echo "📋 Copying kernel image to AnyKernel3..."
-          
           cd kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/
-          
           if [ -f Image.gz-dtb ]; then
-            echo "📦 Using Image.gz-dtb"
             cp Image.gz-dtb ../../../../../anykernel3/Image
           elif [ -f Image.gz ]; then
-            echo "📦 Using Image.gz"
             cp Image.gz ../../../../../anykernel3/Image
           elif [ -f Image ]; then
-            echo "📦 Using Image"
             cp Image ../../../../../anykernel3/Image
           else
             echo "❌ No kernel image found!"
-            ls -la .
             exit 1
           fi
-          
-          echo "✅ Kernel image copied successfully"
 
       - name: Create AnyKernel3 Zip
         working-directory: anykernel3
         run: |
-          echo "📦 Creating flashable ZIP..."
-          
           TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-          ZIP_NAME="AnyKernel3-star-${{ env.DEVICE_CODENAME }}-$TIMESTAMP.zip"
-          
+          ZIP_NAME="AnyKernel3-star-$TIMESTAMP.zip"
           zip -r9 "../$ZIP_NAME" * -x .git README.md *placeholder anykernel.sh.bak
-          
-          echo "✅ ZIP created: $ZIP_NAME"
           echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: kernel-build-${{ github.sha }}
+          name: kernel-build
           retention-days: 7
           path: |
             kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image
-            kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image.gz
-            kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image.gz-dtb
-            kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/dts/**/*.dtb
             ${{ env.ZIP_NAME }}
-            kernel/${{ env.OUTPUT_DIR }}/.config
 
       - name: Create GitHub Release
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
@@ -206,26 +219,9 @@ jobs:
         with:
           tag_name: "v${{ github.run_number }}"
           name: "Xiaomi 11 Ultra Kernel v${{ github.run_number }}"
-          body: |
-            ## Xiaomi 11 Ultra (star) Kernel Build
-            
-            ### 📋 Build Information
-            - **Device:** Xiaomi 11 Ultra (star)
-            - **Kernel Version:** 5.4
-            - **Compiler:** Clang 18.1.8
-            - **KernelSU:** ReSukiSU Integrated
-            - **SUSFS:** ${{ env.SUSFS_ENABLE == 'true' && '✅ Enabled' || '❌ Disabled' }}
-            
-            ### 📦 Download
-            Flash the ZIP file in recovery (TWRP/OrangeFox).
-            
-            ### ⚠️ Notes
-            - For HyperOS A16
-            - Backup current boot image first
           files: ${{ env.ZIP_NAME }}
           draft: false
           prerelease: false
           overwrite: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        
