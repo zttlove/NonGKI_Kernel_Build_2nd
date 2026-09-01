@@ -46,7 +46,7 @@ env:
 
   PYTHON_VERSION: "3"
   PACK_METHOD: "Anykernel3"
-  PACK_KMODULES: "true"
+  PACK_KMODULES: "false"
   KERNELSU_METHOD: "shell"
   KERNELSU_SUS_PATCH: "true"
 
@@ -71,10 +71,10 @@ env:
   GENERATE_CHIP: "qcom"
 
   BUILD_DEBUGGER: "false"
-  SKIP_PATCH: "false"
+  SKIP_PATCH: "true"
 
   BUILD_OTHER_CONFIG: "false"
-  MERGE_CONFIG_FILES: "vendor/venus_QGKI.config,vendor/xiaomi_QGKI.config"
+  MERGE_CONFIG_FILES: ""
 
   FREE_MORE_SPACE: "false"
 
