@@ -37,6 +37,10 @@ jobs:
             bc bison flex libelf-dev libssl-dev \
             make python3 device-tree-compiler git curl xz-utils \
             libtinfo5
+            
+      - name: Integrate ReSukiSU   # ← 新增
+        run: |
+          curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s main
 
       - name: Download Clang
         run: |
