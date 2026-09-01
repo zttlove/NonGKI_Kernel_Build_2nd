@@ -12,23 +12,17 @@ env:
   DEVICE_NAME: "xiaomi_11U"
   DEVICE_CODENAME: "star"
   KERNEL_ARCH: "arm64"
+  # 以下变量可保留，但在脚本中我们直接导出 LLVM 等，不再依赖这些变量
   CUSTOM_CMDS: "CLANG_TRIPLE=aarch64-linux-gnu-"
   EXTRA_CMDS: "LD=ld.lld LLVM=1 LLVM_IAS=1"
 
-  # 源仓库信息（注意：checkout 使用 owner/repo 格式）
   KERNEL_REPO: "zttlove/android_kernel_xiaomi_sm8350_miyume"
-  KERNEL_BRANCH: "main"                         # 若需 5.4 分支，请改为 "5.4"
+  KERNEL_BRANCH: "main"                     # 如果是 5.4 分支，改为 "5.4"
 
   CLANG_SOURCE: "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-18.04.tar.xz"
-
   GCC_GNU: false
-  GCC_64_SOURCE: "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9.git"
-  GCC_64_BRANCH: "android12L-release"
-  GCC_32_SOURCE: "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9.git"
-  GCC_32_BRANCH: "android12L-release"
-
+  # GCC 相关源保留但不会被下载（因为 GCC_GNU=false）
   DEFCONFIG_NAME: "star_defconfig"
-  DEFCONFIG_FROM_BOOT: false
 
 jobs:
   build:
@@ -54,15 +48,19 @@ jobs:
           tar -xf clang.tar.xz -C clang --strip-components=1
           echo "$(pwd)/clang/bin" >> $GITHUB_PATH
 
-      # 由于 GCC_GNU 为 false，此处跳过 GCC 下载；若需保留，可取消注释相应步骤
+      # 可选的 GCC 下载步骤被跳过（因为 GCC_GNU=false）
+      # 若需要备用 GCC，可取消注释并调整条件
 
       - name: Build Kernel
         working-directory: kernel
         run: |
           export ARCH=${{ env.KERNEL_ARCH }}
-          export CROSS_COMPILE=aarch64-linux-gnu-
+          export LLVM=1
+          export LLVM_IAS=1
+          export LD=ld.lld
+          export CLANG_TRIPLE=aarch64-linux-gnu-
           make ${{ env.DEFCONFIG_NAME }}
-          make -j$(nproc) ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }}
+          make -j$(nproc)
 
       - name: Upload Kernel Image
         uses: actions/upload-artifact@v4
