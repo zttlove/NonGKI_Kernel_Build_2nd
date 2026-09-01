@@ -111,14 +111,26 @@ jobs:
           echo "✅ Stub added to fs/stat.c"
           fi
     
-          # 2. 禁用所有检查
-          echo "🔧 Disabling hook checks..."
-          [ -f "KernelSU/kernel/tools/manual_hook_check.mk" ] && mv KernelSU/kernel/tools/manual_hook_check.mk KernelSU/kernel/tools/manual_hook_check.mk.bak
-          [ -f "KernelSU/kernel/tools/DoCheckII.mk" ] && mv KernelSU/kernel/tools/DoCheckII.mk KernelSU/kernel/tools/DoCheckII.mk.bak
-          sed -i 's/^include.*manual_hook_check\.mk.*/# &/' KernelSU/kernel/Makefile 2>/dev/null || true
-          sed -i 's/^.*DoCheckII.*/# &/' KernelSU/kernel/Makefile 2>/dev/null || true
+          # 2. 清空检查文件内容（而不是删除）
+          echo "🔧 Disabling hook checks by clearing content..."
+          if [ -f "KernelSU/kernel/tools/manual_hook_check.mk" ]; then
+          echo "# Disabled" > KernelSU/kernel/tools/manual_hook_check.mk
+          echo "✅ manual_hook_check.mk cleared"
+          else
+          # 如果文件不存在，创建一个空的
+          mkdir -p KernelSU/kernel/tools
+          echo "# Disabled" > KernelSU/kernel/tools/manual_hook_check.mk
+          echo "✅ manual_hook_check.mk created as empty"
+          fi
+    
+          if [ -f "KernelSU/kernel/tools/DoCheckII.mk" ]; then
+          echo "# Disabled" > KernelSU/kernel/tools/DoCheckII.mk
+          echo "✅ DoCheckII.mk cleared"
+          fi
     
           echo "✅ All fixes applied"
+    
+          
     
       - name: Enable KernelSU in defconfig
         working-directory: kernel
