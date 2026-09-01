@@ -13,7 +13,7 @@ env:
   DEVICE_CODENAME: "star"
   KERNEL_ARCH: "arm64"
   KERNEL_REPO: "zttlove/android_kernel_xiaomi_sm8350_miyume"
-  KERNEL_BRANCH: "main"                         # 如需 5.4 分支，改为 "5.4"
+  KERNEL_BRANCH: "main"                         # 若需 5.4 分支，改为 "5.4"
   CLANG_SOURCE: "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-18.04.tar.xz"
   DEFCONFIG_NAME: "star_defconfig"
 
@@ -27,6 +27,7 @@ jobs:
           repository: ${{ env.KERNEL_REPO }}
           ref: ${{ env.KERNEL_BRANCH }}
           path: kernel
+          submodules: true                       # 启用子模块克隆
 
       - name: Install Dependencies
         run: |
@@ -41,6 +42,14 @@ jobs:
           mkdir -p clang
           tar -xf clang.tar.xz -C clang --strip-components=1
           echo "$(pwd)/clang/bin" >> $GITHUB_PATH
+
+      # （可选）如果子模块仍缺失，可使用以下补救措施（注释掉以优先尝试子模块）
+      # - name: Fix missing kernelsu Kconfig (fallback)
+      #   working-directory: kernel
+      #   run: |
+      #     if ! [ -f drivers/kernelsu/Kconfig ]; then
+      #       sed -i '/source "drivers\/kernelsu\/Kconfig"/d' drivers/Kconfig
+      #     fi
 
       - name: Build Kernel
         working-directory: kernel
