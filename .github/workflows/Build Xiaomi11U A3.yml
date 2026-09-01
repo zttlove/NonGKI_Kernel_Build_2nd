@@ -1,1 +1,84 @@
+name: Build Kernel (5.4)
 
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  TZ: Asia/Shanghai
+  DEVICE_NAME: "xiaomi_11U"
+  DEVICE_CODENAME: "star"
+  KERNEL_ARCH: "arm64"
+  CUSTOM_CMDS: "CLANG_TRIPLE=aarch64-linux-gnu-"
+  EXTRA_CMDS: "LD=ld.lld LLVM=1 LLVM_IAS=1"
+
+  KERNEL_SOURCE: "https://github.com/zttlove/android_kernel_xiaomi_sm8350_miyume.git"
+  KERNEL_BRANCH: "main"                         # 如需 5.4 分支，请改为 "5.4" 或对应分支名
+
+  CLANG_SOURCE: "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-18.04.tar.xz"
+  CLANG_BRANCH: ""                              # 预编译包无需分支
+
+  GCC_GNU: false                                # 不使用独立 GCC
+  GCC_64_SOURCE: "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9.git"
+  GCC_64_BRANCH: "android12L-release"
+  GCC_32_SOURCE: "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9.git"
+  GCC_32_BRANCH: "android12L-release"
+
+  DEFCONFIG_SOURCE: ""                           # 留空则使用内核源码自带的 defconfig
+  DEFCONFIG_NAME: "star_defconfig"
+  DEFCONFIG_ORIGIN_IMAGE: ""                    # 若从 boot.img 提取 defconfig 可填写
+  DEFCONFIG_FROM_BOOT: false
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.KERNEL_SOURCE }}
+          ref: ${{ env.KERNEL_BRANCH }}
+          path: kernel
+
+      - name: Install Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y bc bison flex libelf-dev libssl-dev \
+            make python3 device-tree-compiler git curl xz-utils
+
+      - name: Download Clang
+        run: |
+          curl -L -o clang.tar.xz "${{ env.CLANG_SOURCE }}"
+          mkdir -p clang
+          tar -xf clang.tar.xz -C clang --strip-components=1
+          echo "$(pwd)/clang/bin" >> $GITHUB_PATH
+
+      # 由于 GCC_GNU 为 false，以下步骤可以跳过下载 GCC，只使用 Clang
+      # 若您需要 GCC 作为备用（例如某些头文件），可取消注释：
+      # - name: Download GCC 64-bit
+      #   run: git clone --depth=1 -b ${{ env.GCC_64_BRANCH }} ${{ env.GCC_64_SOURCE }} gcc64
+      # - name: Download GCC 32-bit
+      #   run: git clone --depth=1 -b ${{ env.GCC_32_BRANCH }} ${{ env.GCC_32_SOURCE }} gcc32
+
+      - name: Build Kernel
+        working-directory: kernel
+        run: |
+          # 设置架构和交叉编译前缀
+          export ARCH=${{ env.KERNEL_ARCH }}
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          # 使用 Clang 编译（EXTRA_CMDS 已包含 LD=ld.lld LLVM=1 LLVM_IAS=1）
+          make ${{ env.DEFCONFIG_NAME }}
+          make -j$(nproc) ${{ env.CUSTOM_CMDS }} ${{ env.EXTRA_CMDS }}
+
+      - name: Upload Kernel Image
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-image
+          path: |
+            kernel/arch/arm64/boot/Image
+            kernel/arch/arm64/boot/Image.gz
+            kernel/arch/arm64/boot/Image.gz-dtb
+            kernel/arch/arm64/boot/dts/**/*.dtb
