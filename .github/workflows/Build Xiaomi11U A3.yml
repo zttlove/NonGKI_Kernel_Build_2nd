@@ -23,7 +23,7 @@ env:
   OUTPUT_DIR: "out"
   
   # 功能开关
-  SUSFS_ENABLE: "false"  # 改为 "true" 启用SUSFS
+  SUSFS_ENABLE: "true"  # 改为 "true" 启用SUSFS
   KERNELSU_AUTO_GET: "true"
   KERNELSU_AUTO_FORK: "xxksu"
 
