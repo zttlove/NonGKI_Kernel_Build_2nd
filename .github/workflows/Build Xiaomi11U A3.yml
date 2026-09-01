@@ -22,10 +22,7 @@ env:
   DEFCONFIG_NAME: "star_defconfig"
   OUTPUT_DIR: "out"
   
-  # 功能开关
-  SUSFS_ENABLE: "false"
-  KERNELSU_AUTO_GET: "true"
-  KERNELSU_AUTO_FORK: "xxksu"
+  
 
 jobs:
   build:
@@ -47,123 +44,9 @@ jobs:
             make python3 device-tree-compiler git curl xz-utils \
             libtinfo5 ccache
 
-      - name: Integrate ReSukiSU
-        working-directory: kernel
-        run: |
-          set -e
-          echo "========================================="
-          echo "🔧 Integrating ReSukiSU"
-          echo "========================================="
+      
           
-          # 清理旧集成
-          if [ -d "KernelSU" ]; then
-            echo "🧹 Removing existing KernelSU..."
-            rm -rf KernelSU
-          fi
           
-          # 下载并运行 ReSukiSU setup
-          echo "📥 Downloading ReSukiSU setup script..."
-          curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" -o /tmp/setup.sh
-          chmod +x /tmp/setup.sh
-          
-          echo "🚀 Running ReSukiSU integration..."
-          bash /tmp/setup.sh main
-          
-          # 检查关键 hook
-          echo "🔍 Verifying hooks..."
-          MISSING_HOOKS=""
-          
-          if ! grep -r "ksu_handle_stat" fs/ --include="*.c" --include="*.h" 2>/dev/null | grep -q "ksu_handle_stat"; then
-            MISSING_HOOKS="${MISSING_HOOKS} ksu_handle_stat"
-          fi
-          
-          if ! grep -r "ksu_handle_newfstat_ret" fs/ --include="*.c" --include="*.h" 2>/dev/null | grep -q "ksu_handle_newfstat_ret"; then
-            MISSING_HOOKS="${MISSING_HOOKS} ksu_handle_newfstat_ret"
-          fi
-          
-          if ! grep -r "ksu_handle_execve" fs/ --include="*.c" --include="*.h" 2>/dev/null | grep -q "ksu_handle_execve"; then
-            MISSING_HOOKS="${MISSING_HOOKS} ksu_handle_execve"
-          fi
-          
-          if [ -z "$MISSING_HOOKS" ]; then
-            echo "✅ All hooks found!"
-          else
-            echo "⚠️ Missing hooks:$MISSING_HOOKS"
-            echo "📌 Applying KernelSU official patches for 5.4..."
-            
-            # 下载 KernelSU 官方 5.4 补丁
-            curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/patches/5.4/0001-kernel-module-hook.patch" -o /tmp/ksu_hook1.patch
-            curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/patches/5.4/0002-fs-stat-hook.patch" -o /tmp/ksu_hook2.patch
-            curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/patches/5.4/0003-fs-execve-hook.patch" -o /tmp/ksu_hook3.patch 2>/dev/null || true
-            
-            # 应用补丁
-            patch -p1 < /tmp/ksu_hook1.patch 2>/dev/null || echo "⚠️ Patch 1 skipped"
-            patch -p1 < /tmp/ksu_hook2.patch 2>/dev/null || echo "⚠️ Patch 2 skipped"
-            patch -p1 < /tmp/ksu_hook3.patch 2>/dev/null || echo "⚠️ Patch 3 skipped"
-            
-            # 再次验证
-            echo "🔍 Re-verifying hooks..."
-            HOOKS_FOUND=""
-            if grep -r "ksu_handle_newfstat_ret" fs/ --include="*.c" --include="*.h" 2>/dev/null | grep -q "ksu_handle_newfstat_ret"; then
-              HOOKS_FOUND="${HOOKS_FOUND} ksu_handle_newfstat_ret"
-            fi
-            
-            if [ -n "$HOOKS_FOUND" ]; then
-              echo "✅ Found hooks:$HOOKS_FOUND"
-            else
-              echo "❌ Still missing hooks, disabling KernelSU hook check..."
-              if [ -f "KernelSU/kernel/tools/manual_hook_check.mk" ]; then
-                mv KernelSU/kernel/tools/manual_hook_check.mk KernelSU/kernel/tools/manual_hook_check.mk.bak
-                echo "✅ Hook check disabled"
-              fi
-            fi
-          fi
-          
-          # 清理
-          rm -f /tmp/setup.sh /tmp/ksu_hook*.patch
-          
-          echo "========================================="
-          echo "✅ ReSukiSU integration completed!"
-          echo "========================================="
-
-      - name: Apply SUSFS patch
-        if: env.SUSFS_ENABLE == 'true'
-        working-directory: kernel
-        run: |
-          echo "📌 Applying SUSFS patch..."
-          
-          if [ -f "kernel/susfs_patch_to_5.4.patch" ]; then
-            cd kernel
-            patch -p1 < susfs_patch_to_5.4.patch || echo "⚠️ Patch may already be applied"
-            echo "✅ SUSFS patch applied"
-          elif [ -f "susfs_patch_to_5.4.patch" ]; then
-            patch -p1 < susfs_patch_to_5.4.patch || echo "⚠️ Patch may already be applied"
-            echo "✅ SUSFS patch applied"
-          else
-            echo "⚠️ SUSFS patch not found, skipping..."
-          fi
-
-      - name: Enable KernelSU in defconfig
-        working-directory: kernel
-        run: |
-          echo "🔧 Enabling KernelSU in defconfig..."
-          
-          cp arch/arm64/configs/${{ env.DEFCONFIG_NAME }} arch/arm64/configs/${{ env.DEFCONFIG_NAME }}.bak
-          
-          echo "CONFIG_KSU=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_KSU_MANUAL_HOOK=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_KSU_DEBUG=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_KPROBES=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_HAVE_KPROBES=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_KPROBE_EVENTS=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
-          
-          if [ "${{ env.SUSFS_ENABLE }}" == "true" ]; then
-            echo "CONFIG_SUSFS=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
-            echo "CONFIG_SUSFS_ENABLE=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
-          fi
-          
-          echo "✅ Defconfig updated"
-
       - name: Download Clang
         run: |
           echo "📥 Downloading Clang from: ${{ env.CLANG_SOURCE }}"
