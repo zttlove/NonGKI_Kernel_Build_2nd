@@ -1,4 +1,4 @@
-name: Build Kernel (5.4) with AnyKernel3 (O=out)
+name: Build Kernel (5.4)
 
 on:
   push:
