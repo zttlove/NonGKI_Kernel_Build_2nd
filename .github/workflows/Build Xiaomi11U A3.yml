@@ -51,8 +51,7 @@ jobs:
         working-directory: kernel
         run: |
           echo "🔧 Integrating ReSukiSU..."
-          curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s main
-          
+          curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s auto
           # 验证集成
           if grep -q "CONFIG_KSU" arch/arm64/configs/${{ env.DEFCONFIG_NAME }}; then
             echo "✅ ReSukiSU integrated successfully"
