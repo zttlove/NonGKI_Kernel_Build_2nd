@@ -43,11 +43,10 @@ jobs:
         run: |
           curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s main
 
-      - name: Apply ReSukiSU 5.4 Patches
+      - name: Apply ReSukiSU 5.4 Patch
         working-directory: kernel
         run: |
-          # 从工作区根目录复制补丁
-          cp "${{ github.workspace }}/Patches/Patch/susfs_patch_to_5.4.patch" .
+          curl -O "https://raw.githubusercontent.com/zttlove/NonGKI_Kernel_Build_2nd/main/Patches/Patch/susfs_patch_to_5.4.patch"
           patch -p1 < susfs_patch_to_5.4.patch
 
       - name: Enable ReSukiSU in defconfig
