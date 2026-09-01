@@ -56,7 +56,7 @@ jobs:
           if [ ! -d "KernelSU" ] || [ -z "$(ls -A KernelSU 2>/dev/null)" ]; then
             echo "📥 KernelSU directory missing or empty, cloning ReSukiSU..."
             rm -rf KernelSU
-            git clone --depth=1 https://github.com/zttlove/ReSukiSU.git KernelSU
+            git clone --depth=1 https://github.com/ReSukiSU/ReSukiSU.git KernelSU
           else
             echo "✅ KernelSU directory exists"
           fi
