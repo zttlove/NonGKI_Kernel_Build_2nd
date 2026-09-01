@@ -97,18 +97,18 @@ jobs:
           echo "🔧 Fixing ReSukiSU hooks"
           echo "========================================="
     
-          # 1. 添加缺失的 hook stub
-          echo "📌 Adding ksu_handle_newfstat_ret stub..."
-          if ! grep -q "ksu_handle_newfstat_ret" fs/stat.c 2>/dev/null; then
-          cat >> fs/stat.c << 'EOF'
-        
-          #ifdef CONFIG_KSU
-          void ksu_handle_newfstat_ret(int pid, int ret) {
-          // Stub for ReSukiSU
-          }
-          #endif
-          EOF
-          echo "✅ Stub added to fs/stat.c"
+          # 1. 移除之前添加的 stub（如果存在）
+          echo "📌 Removing manual stub from fs/stat.c..."
+          if [ -f "fs/stat.c" ]; then
+          # 使用 sed 删除添加的 stub 部分
+          sed -i '/^#ifdef CONFIG_KSU$/,/^#endif$/d' fs/stat.c
+          # 或者恢复备份
+          if [ -f "fs/stat.c.bak" ]; then
+          mv fs/stat.c.bak fs/stat.c
+          echo "✅ Restored fs/stat.c from backup"
+          else
+          echo "⚠️ No backup found, manual cleanup may be needed"
+          fi
           fi
     
           # 2. 清空检查文件内容（而不是删除）
