@@ -32,7 +32,7 @@ env:
   KERNELSU_SOURCE: ""
   KERNELSU_BRANCH: ""
   KERNELSU_AUTO_GET: "true"
-  KERNELSU_AUTO_FORK: "xxksu"
+  KERNELSU_AUTO_FORK: "resukisu"
 
   SUSFS_ENABLE: false
   SUSFS_FIXED: false
@@ -50,8 +50,8 @@ env:
   KERNELSU_METHOD: "shell"
   KERNELSU_SUS_PATCH: "false"
 
-  PATCHES_SOURCE: "JackA1ltman/NonGKI_Kernel_Patches"
-  PATCHES_BRANCH: "mi_kernel"
+  PATCHES_SOURCE: ""
+  PATCHES_BRANCH: ""
   SUSFS_FOLDER_FIXED: ""
   SUSFS_PATCH_FIXED: ""
 
