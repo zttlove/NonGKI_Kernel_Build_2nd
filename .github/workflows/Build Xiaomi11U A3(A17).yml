@@ -98,7 +98,7 @@ jobs:
           done
           echo "✅ All hook checks disabled"
 
-      # -------- 集成 SUSFS 2.1（自动适配分支/标签） --------
+      # -------- 集成 SUSFS 2.1（精确匹配标签 + 增强 fallback） --------
       - name: Integrate SUSFS 2.1
         working-directory: kernel
         run: |
@@ -110,8 +110,8 @@ jobs:
           git clone https://gitlab.com/simonpunk/susfs4ksu.git
           cd susfs4ksu
           
-          # 查找 2.1 相关标签（优先），否则使用 master
-          TAG=$(git tag -l | grep -E '2\.1' | sort -V | tail -n1)
+          # 精确匹配以 2.1 或 v2.1 开头的标签（避免匹配到 1.2.1 等）
+          TAG=$(git tag -l | grep -E '^v?2\.1' | sort -V | tail -n1)
           if [ -n "$TAG" ]; then
             echo "✅ Found tag: $TAG"
             git checkout $TAG
@@ -122,49 +122,67 @@ jobs:
           cd ..
           
           # 1) 尝试应用内核补丁（5.4 专用）
-          echo "📌 Applying kernel patch (50_add_susfs_in_kernel-5.4.patch)..."
-          if patch -p1 --fuzz=3 --ignore-whitespace < susfs4ksu/kernel_patches/50_add_susfs_in_kernel-5.4.patch; then
-            echo "✅ Kernel patch applied successfully"
+          KERNEL_PATCH="susfs4ksu/kernel_patches/50_add_susfs_in_kernel-5.4.patch"
+          if [ -f "$KERNEL_PATCH" ]; then
+            echo "📌 Applying kernel patch ($KERNEL_PATCH)..."
+            if patch -p1 --fuzz=3 --ignore-whitespace < "$KERNEL_PATCH"; then
+              echo "✅ Kernel patch applied successfully"
+            else
+              echo "⚠️ Kernel patch failed, using manual fallback..."
+              # fallback 见下
+            fi
           else
-            echo "⚠️ Kernel patch failed, using manual fallback..."
-            # Fallback: 手动复制源码并修改 Kconfig/Makefile
-            # 动态查找 susfs 目录和头文件
-            SUSFS_DIR=$(find susfs4ksu -type d -name "susfs" | head -1)
-            if [ -n "$SUSFS_DIR" ]; then
-              cp -r "$SUSFS_DIR" fs/
-              echo "✅ Copied susfs from $SUSFS_DIR"
-            else
-              echo "❌ Could not find susfs directory in susfs4ksu"
-              exit 1
-            fi
-            SUSFS_H=$(find susfs4ksu -name "susfs.h" | head -1)
-            if [ -n "$SUSFS_H" ]; then
-              cp "$SUSFS_H" include/linux/
-              echo "✅ Copied susfs.h"
-            else
-              echo "❌ Could not find susfs.h"
-              exit 1
-            fi
-            # 修改 fs/Kconfig 和 fs/Makefile
-            grep -q "source \"fs/susfs/Kconfig\"" fs/Kconfig || sed -i '/^menu "File systems"/a source "fs/susfs/Kconfig"' fs/Kconfig
-            grep -q "obj-y += susfs/" fs/Makefile || echo "obj-y += susfs/" >> fs/Makefile
-            echo "✅ Manual fallback completed"
+            echo "⚠️ Kernel patch file not found, using manual fallback..."
           fi
           
-          # 2) 应用 KernelSU 补丁（使 ReSukiSU 支持 SUSFS）
-          echo "📌 Applying KernelSU patch (10_enable_susfs_for_ksu.patch)..."
-          cd KernelSU
-          if patch -p1 --fuzz=3 --ignore-whitespace < ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch; then
-            echo "✅ KernelSU patch applied successfully"
+          # 手动 fallback（无论补丁是否失败，都确保源码被复制）
+          # 查找 susfs 源码目录（可能位于 fs/susfs 或 kernel_patches/fs/susfs）
+          SUSFS_DIR=$(find susfs4ksu -type d -name "susfs" | head -1)
+          if [ -n "$SUSFS_DIR" ]; then
+            # 如果 fs/susfs 目录已存在，则覆盖
+            rm -rf fs/susfs
+            cp -r "$SUSFS_DIR" fs/
+            echo "✅ Copied susfs from $SUSFS_DIR"
           else
-            echo "⚠️ KernelSU patch failed, trying manual workaround..."
-            # 手动在 KernelSU/kernel/Makefile 中添加 susfs 相关编译选项
-            # 通常补丁会修改 Makefile 和添加源文件引用，但这里我们简单处理：
-            # 确保 KernelSU 的 Kconfig 包含 CONFIG_KSU_SUSFS 选项
-            grep -q "config KSU_SUSFS" KernelSU/kernel/Kconfig || echo -e "\nconfig KSU_SUSFS\n\tbool \"SUSFS support\"\n\tdefault y" >> KernelSU/kernel/Kconfig
-            echo "✅ Manual workaround applied (Kconfig modified)"
+            echo "❌ Could not find susfs directory in susfs4ksu"
+            exit 1
           fi
-          cd ..
+          
+          SUSFS_H=$(find susfs4ksu -name "susfs.h" | head -1)
+          if [ -n "$SUSFS_H" ]; then
+            cp "$SUSFS_H" include/linux/
+            echo "✅ Copied susfs.h"
+          else
+            echo "❌ Could not find susfs.h"
+            exit 1
+          fi
+          
+          # 修改 fs/Kconfig 和 fs/Makefile（如果尚未添加）
+          grep -q "source \"fs/susfs/Kconfig\"" fs/Kconfig || sed -i '/^menu "File systems"/a source "fs/susfs/Kconfig"' fs/Kconfig
+          grep -q "obj-y += susfs/" fs/Makefile || echo "obj-y += susfs/" >> fs/Makefile
+          echo "✅ Manual fallback completed"
+          
+          # 2) 应用 KernelSU 补丁（使 ReSukiSU 支持 SUSFS）
+          KSU_PATCH="susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
+          if [ -f "$KSU_PATCH" ]; then
+            echo "📌 Applying KernelSU patch ($KSU_PATCH)..."
+            cd KernelSU
+            if patch -p1 --fuzz=3 --ignore-whitespace < ../"$KSU_PATCH"; then
+              echo "✅ KernelSU patch applied successfully"
+            else
+              echo "⚠️ KernelSU patch failed, applying manual workaround..."
+              # 手动添加 CONFIG_KSU_SUSFS 到 Kconfig
+              grep -q "config KSU_SUSFS" kernel/Kconfig || echo -e "\nconfig KSU_SUSFS\n\tbool \"SUSFS support\"\n\tdefault y" >> kernel/Kconfig
+              echo "✅ Manual workaround applied (Kconfig modified)"
+            fi
+            cd ..
+          else
+            echo "⚠️ KernelSU patch not found, applying manual workaround..."
+            cd KernelSU
+            grep -q "config KSU_SUSFS" kernel/Kconfig || echo -e "\nconfig KSU_SUSFS\n\tbool \"SUSFS support\"\n\tdefault y" >> kernel/Kconfig
+            cd ..
+            echo "✅ Manual workaround applied"
+          fi
           
           # 清理临时仓库
           rm -rf susfs4ksu
