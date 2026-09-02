@@ -98,7 +98,7 @@ jobs:
           done
           echo "✅ All hook checks disabled"
 
-      # -------- 新增：集成 SUSFS 2.1 --------
+      # -------- 集成 SUSFS 2.1（自动寻找标签） --------
       - name: Integrate SUSFS 2.1
         working-directory: kernel
         run: |
@@ -106,8 +106,20 @@ jobs:
           echo "🔧 Integrating SUSFS 2.1"
           echo "========================================="
           
-          # 克隆 SUSFS 源码
-          git clone --depth=1 -b v2.1.0 https://gitlab.com/simonpunk/susfs4ksu.git
+          # 克隆 SUSFS 仓库（不带分支，获取全部标签）
+          git clone https://gitlab.com/simonpunk/susfs4ksu.git
+          cd susfs4ksu
+          
+          # 查找 v2.1 开头的标签，按版本排序取最新
+          TAG=$(git tag -l | grep -E '^v2\.1' | sort -V | tail -n1)
+          if [ -n "$TAG" ]; then
+            echo "✅ Found tag: $TAG"
+            git checkout $TAG
+          else
+            echo "⚠️ No v2.1 tag found, using main branch"
+            git checkout main || git checkout master
+          fi
+          cd ..
           
           # 1) 应用内核补丁（5.4 专用）
           echo "📌 Applying kernel patch (50_add_susfs_in_kernel-5.4.patch)..."
