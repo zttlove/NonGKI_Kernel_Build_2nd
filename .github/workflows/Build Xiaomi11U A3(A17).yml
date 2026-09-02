@@ -1,4 +1,4 @@
-name: Build Kernel (A17)
+name: Build Kernel (A17) - Stable (No SUSFS)
 
 on:
   push:
@@ -98,47 +98,23 @@ jobs:
           done
           echo "✅ All hook checks disabled"
 
-      # -------- 🔥 强制启用 SUSFS 编译 (修复链接错误) --------
-      - name: Force enable SUSFS compilation
+      # -------- 启用 KernelSU（不含 SUSFS） --------
+      - name: Enable KernelSU in defconfig
         working-directory: kernel
         run: |
-          echo "========================================="
-          echo "🔧 Force enabling SUSFS compilation"
-          echo "========================================="
+          echo "🔧 Enabling KernelSU (without SUSFS)..."
+          cp arch/arm64/configs/${{ env.DEFCONFIG_NAME }} arch/arm64/configs/${{ env.DEFCONFIG_NAME }}.bak
           
-          # 1. 检查 susfs.c 是否存在
-          if [ -f "fs/susfs.c" ]; then
-            echo "✅ fs/susfs.c exists"
-          else
-            echo "❌ fs/susfs.c NOT FOUND!"
-            exit 1
-          fi
+          # 基础 KernelSU 配置（无 SUSFS）
+          echo "CONFIG_KSU=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
+          echo "CONFIG_KSU_MANUAL_HOOK=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
+          echo "CONFIG_KSU_DEBUG=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
+          echo "CONFIG_KPROBES=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
+          echo "CONFIG_HAVE_KPROBES=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
+          echo "CONFIG_KPROBE_EVENTS=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
           
-          # 2. 强制修改 fs/Makefile，确保 susfs.o 被编译
-          if grep -q "susfs.o" fs/Makefile; then
-            echo "📝 Found susfs entry in fs/Makefile, forcing to obj-y..."
-            sed -i 's/obj-\$(CONFIG_KSU_SUSFS) += susfs.o/obj-y += susfs.o/g' fs/Makefile
-            sed -i 's/obj-\$(CONFIG_SUSFS) += susfs.o/obj-y += susfs.o/g' fs/Makefile
-            sed -i 's/obj-m += susfs.o/obj-y += susfs.o/g' fs/Makefile
-          else
-            echo "📝 No susfs entry found, adding to fs/Makefile..."
-            echo "obj-y += susfs.o" >> fs/Makefile
-          fi
-          
-          # 3. 验证修改
-          echo "📋 Current fs/Makefile susfs line(s):"
-          grep -n "susfs" fs/Makefile || echo "⚠️  No susfs line found!"
-          
-          # 4. 检查头文件
-          if [ -f "include/linux/susfs.h" ]; then
-            echo "✅ include/linux/susfs.h exists"
-          else
-            echo "⚠️  include/linux/susfs.h NOT FOUND (may cause issues)"
-          fi
-          
-          echo "========================================="
-          echo "✅ SUSFS force-enabled successfully!"
-          echo "========================================="
+          # 注意：不添加任何 CONFIG_KSU_SUSFS_* 配置
+          echo "✅ Defconfig updated (SUSFS disabled)"
 
       # -------- 编译环境 --------
       - name: Download Clang
@@ -182,21 +158,6 @@ jobs:
           echo "📝 Configuring kernel..."
           make -j$(nproc --all) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
           
-          # 🔥 额外修复：确保 CONFIG_KSU_SUSFS 在 .config 中生效
-          echo "🔧 Ensuring CONFIG_KSU_SUSFS is enabled..."
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU_SUSFS
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU_SUSFS_SUS_PATH
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU_SUSFS_SUS_MOUNT
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU_SUSFS_SUS_KSTAT
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU_SUSFS_SPOOF_UNAME
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU_SUSFS_ENABLE_LOG
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU_SUSFS_OPEN_REDIRECT
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU_SUSFS_SUS_MAP
-          make ARCH=arm64 LLVM=1 O=${{ env.OUTPUT_DIR }} olddefconfig
-          
-                   
           echo "🔨 Building kernel..."
           make -j$(nproc --all) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }}
           
@@ -298,11 +259,11 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: Star-HyperA17-Kernel-${{ github.run_number }}
-          name: Xiaomi 11 Ultra Star HyperOS A17 NonGKI Kernel
+          name: Xiaomi 11 Ultra Star HyperOS A17 NonGKI Kernel (Stable)
           body: |
-            ## Xiaomi 11 Ultra Star HyperOS A17 内核刷机包
+            ## Xiaomi 11 Ultra Star HyperOS A17 内核刷机包（稳定版）
             - 适配 HyperOS A17 全版本
-            - SukiSU (ReSukiSU) + SUSFS 2.1 完整集成
+            - SukiSU (ReSukiSU) Root 完整适配（不含 SUSFS）
             - NonGKI 通用免解boot补丁
             - Osm0sis Anykernel3 官方卡刷格式
             - Clang 18 最新编译
