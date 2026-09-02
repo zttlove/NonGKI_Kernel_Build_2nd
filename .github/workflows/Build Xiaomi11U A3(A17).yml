@@ -98,7 +98,7 @@ jobs:
           done
           echo "✅ All hook checks disabled"
 
-      # -------- 集成 SUSFS 2.1（使用 find 搜索所有可能位置） --------
+      # -------- 集成 SUSFS 2.1（使用 --create-dirs 强制创建新文件） --------
       - name: Integrate SUSFS 2.1
         working-directory: kernel
         run: |
@@ -106,42 +106,59 @@ jobs:
           echo "🔧 Integrating SUSFS 2.1"
           echo "========================================="
           
-          # 克隆仓库（完整克隆以获取所有子目录）
-          git clone https://gitlab.com/simonpunk/susfs4ksu.git
+          # 克隆仓库（master 分支即可，无需标签）
+          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git
           
-          # 1) 查找 susfs 目录（可能在 kernel_patches/5.4/fs/susfs 等）
-          SUSFS_DIR=$(find susfs4ksu -type d -name "susfs" | head -1)
-          if [ -n "$SUSFS_DIR" ]; then
-            mkdir -p fs
-            cp -r "$SUSFS_DIR" fs/
-            echo "✅ Copied fs/susfs from $SUSFS_DIR"
+          # 1) 应用内核补丁（5.4 专用），强制创建目录
+          KERNEL_PATCH="susfs4ksu/kernel_patches/50_add_susfs_in_kernel-5.4.patch"
+          if [ -f "$KERNEL_PATCH" ]; then
+            echo "📌 Applying kernel patch with --create-dirs..."
+            patch -p1 --fuzz=3 --ignore-whitespace --force --create-dirs < "$KERNEL_PATCH" || {
+              echo "⚠️ Patch had errors, but --create-dirs may have created new files."
+            }
           else
-            echo "❌ Could not find any 'susfs' directory in susfs4ksu"
+            echo "❌ Kernel patch not found!"
             exit 1
           fi
           
-          # 2) 查找 susfs.h
-          SUSFS_H=$(find susfs4ksu -name "susfs.h" | head -1)
-          if [ -n "$SUSFS_H" ]; then
-            mkdir -p include/linux
-            cp "$SUSFS_H" include/linux/
-            echo "✅ Copied susfs.h from $SUSFS_H"
-          else
-            echo "❌ Could not find susfs.h"
+          # 2) 检查 fs/susfs 是否已创建
+          if [ ! -d "fs/susfs" ]; then
+            echo "❌ fs/susfs still not created after patch! Exiting."
             exit 1
           fi
+          echo "✅ fs/susfs created successfully"
           
-          # 3) 修改 fs/Kconfig 和 fs/Makefile
+          # 3) 检查 include/linux/susfs.h 是否已创建
+          if [ ! -f "include/linux/susfs.h" ]; then
+            echo "❌ include/linux/susfs.h not found! Exiting."
+            exit 1
+          fi
+          echo "✅ include/linux/susfs.h created successfully"
+          
+          # 4) 修改 fs/Kconfig 和 fs/Makefile（补丁可能已修改，但确保万无一失）
           grep -q "source \"fs/susfs/Kconfig\"" fs/Kconfig || sed -i '/^menu "File systems"/a source "fs/susfs/Kconfig"' fs/Kconfig
           grep -q "obj-y += susfs/" fs/Makefile || echo "obj-y += susfs/" >> fs/Makefile
           echo "✅ fs/Kconfig and fs/Makefile updated"
           
-          # 4) 确保 KernelSU 的 Kconfig 包含 CONFIG_KSU_SUSFS
+          # 5) 应用 KernelSU 补丁（同样使用 --create-dirs）
+          KSU_PATCH="susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
+          if [ -f "$KSU_PATCH" ]; then
+            echo "📌 Applying KernelSU patch with --create-dirs..."
+            cd KernelSU
+            patch -p1 --fuzz=3 --ignore-whitespace --force --create-dirs < ../"$KSU_PATCH" || {
+              echo "⚠️ KernelSU patch had errors, but continuing..."
+            }
+            cd ..
+          else
+            echo "⚠️ KernelSU patch not found, skipping."
+          fi
+          
+          # 6) 确保 KernelSU 的 Kconfig 包含 CONFIG_KSU_SUSFS
           cd KernelSU
           grep -q "config KSU_SUSFS" kernel/Kconfig || echo -e "\nconfig KSU_SUSFS\n\tbool \"SUSFS support\"\n\tdefault y" >> kernel/Kconfig
           cd ..
           
-          # 5) 清理
+          # 清理临时仓库
           rm -rf susfs4ksu
           
           echo "========================================="
