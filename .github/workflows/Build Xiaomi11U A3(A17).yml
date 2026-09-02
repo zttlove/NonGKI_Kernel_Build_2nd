@@ -98,7 +98,7 @@ jobs:
           done
           echo "✅ All hook checks disabled"
 
-      # -------- 集成 SUSFS 2.1（使用 find 搜索所有位置） --------
+      # -------- 集成 SUSFS 2.1（使用 find 搜索所有可能位置） --------
       - name: Integrate SUSFS 2.1
         working-directory: kernel
         run: |
