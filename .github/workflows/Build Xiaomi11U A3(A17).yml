@@ -1,4 +1,4 @@
-name: Build Kernel (A17) - Stable (No SUSFS)
+name: Build Kernel (A17) - Stable with Hooks
 
 on:
   push:
@@ -73,7 +73,6 @@ jobs:
           chmod +x /tmp/setup.sh
           echo "🚀 Running ReSukiSU integration..."
           bash /tmp/setup.sh main
-          # 验证集成
           if grep -q "KernelSU/kernel" KernelSU/kernel/Makefile 2>/dev/null; then
             echo "✅ Integration seems successful (Makefile modified)"
           else
@@ -98,14 +97,13 @@ jobs:
           done
           echo "✅ All hook checks disabled"
 
-      # -------- 启用 KernelSU（不含 SUSFS） --------
+      # -------- 启用 KernelSU（含 Hook 机制） --------
       - name: Enable KernelSU in defconfig
         working-directory: kernel
         run: |
-          echo "🔧 Enabling KernelSU (without SUSFS)..."
+          echo "🔧 Enabling KernelSU (with kprobes hook)..."
           cp arch/arm64/configs/${{ env.DEFCONFIG_NAME }} arch/arm64/configs/${{ env.DEFCONFIG_NAME }}.bak
           
-          # 基础 KernelSU 配置（无 SUSFS）
           echo "CONFIG_KSU=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
           echo "CONFIG_KSU_MANUAL_HOOK=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
           echo "CONFIG_KSU_DEBUG=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
@@ -113,8 +111,13 @@ jobs:
           echo "CONFIG_HAVE_KPROBES=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
           echo "CONFIG_KPROBE_EVENTS=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
           
-          # 注意：不添加任何 CONFIG_KSU_SUSFS_* 配置
-          echo "✅ Defconfig updated (SUSFS disabled)"
+          # 关键：启用 kprobes hook
+          echo "CONFIG_KSU_KPROBES_HOOK=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
+          
+          # 如果不稳定，可换用 CONFIG_KSU_HOOK_POINT（需取消下面注释，并注释掉上面那行）
+          # echo "CONFIG_KSU_HOOK_POINT=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
+          
+          echo "✅ Defconfig updated with hook support"
 
       # -------- 编译环境 --------
       - name: Download Clang
@@ -259,11 +262,12 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: Star-HyperA17-Kernel-${{ github.run_number }}
-          name: Xiaomi 11 Ultra Star HyperOS A17 NonGKI Kernel (Stable)
+          name: Xiaomi 11 Ultra Star HyperOS A17 NonGKI Kernel (Hooks Enabled)
           body: |
-            ## Xiaomi 11 Ultra Star HyperOS A17 内核刷机包（稳定版）
+            ## Xiaomi 11 Ultra Star HyperOS A17 内核刷机包（Hook 修复版）
             - 适配 HyperOS A17 全版本
-            - SukiSU (ReSukiSU) Root 完整适配（不含 SUSFS）
+            - SukiSU (ReSukiSU) Root + kprobes Hook 完整支持
+            - 模块现在应该可以正常工作
             - NonGKI 通用免解boot补丁
             - Osm0sis Anykernel3 官方卡刷格式
             - Clang 18 最新编译
