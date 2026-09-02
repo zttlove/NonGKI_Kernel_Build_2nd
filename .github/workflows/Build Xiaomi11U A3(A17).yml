@@ -98,7 +98,7 @@ jobs:
           done
           echo "✅ All hook checks disabled"
 
-      # -------- 集成 SUSFS 2.1（从最新标签复制源码，而非依赖补丁） --------
+      # -------- 集成 SUSFS 2.1（直接从 kernel_patches 复制源码） --------
       - name: Integrate SUSFS 2.1
         working-directory: kernel
         run: |
@@ -106,58 +106,48 @@ jobs:
           echo "🔧 Integrating SUSFS 2.1"
           echo "========================================="
           
-          # 克隆完整仓库（获取所有标签）
-          git clone https://gitlab.com/simonpunk/susfs4ksu.git
-          cd susfs4ksu
+          # 克隆仓库（master 分支）
+          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git
           
-          # 优先查找 v2.1 标签，若无则使用最新的版本标签
-          TAG=$(git tag -l | grep -E '^v?2\.1' | sort -V | tail -n1)
-          if [ -z "$TAG" ]; then
-            echo "⚠️ No 2.1 tag found, using latest version tag..."
-            TAG=$(git tag -l | grep -E '^v?[0-9]+\.[0-9]+' | sort -V | tail -n1)
-          fi
-          echo "✅ Using tag: $TAG"
-          git checkout $TAG
-          cd ..
-          
-          # 从该标签复制 susfs 源码目录和头文件（如果存在）
-          if [ -d "susfs4ksu/fs/susfs" ]; then
-            rm -rf fs/susfs
+          # 1) 复制 fs/susfs 目录（优先从 kernel_patches 复制）
+          if [ -d "susfs4ksu/kernel_patches/fs/susfs" ]; then
+            mkdir -p fs
+            cp -r susfs4ksu/kernel_patches/fs/susfs fs/
+            echo "✅ Copied fs/susfs from kernel_patches"
+          elif [ -d "susfs4ksu/fs/susfs" ]; then
+            mkdir -p fs
             cp -r susfs4ksu/fs/susfs fs/
-            echo "✅ Copied fs/susfs"
+            echo "✅ Copied fs/susfs from root"
           else
-            echo "❌ fs/susfs not found in $TAG, cannot continue"
+            echo "❌ fs/susfs not found in susfs4ksu"
             exit 1
           fi
           
-          if [ -f "susfs4ksu/include/linux/susfs.h" ]; then
+          # 2) 复制头文件
+          if [ -f "susfs4ksu/kernel_patches/include/linux/susfs.h" ]; then
+            mkdir -p include/linux
+            cp susfs4ksu/kernel_patches/include/linux/susfs.h include/linux/
+            echo "✅ Copied susfs.h from kernel_patches"
+          elif [ -f "susfs4ksu/include/linux/susfs.h" ]; then
+            mkdir -p include/linux
             cp susfs4ksu/include/linux/susfs.h include/linux/
-            echo "✅ Copied susfs.h"
+            echo "✅ Copied susfs.h from root"
           else
-            echo "❌ susfs.h not found in $TAG, cannot continue"
+            echo "❌ susfs.h not found"
             exit 1
           fi
           
-          # 手动修改 fs/Kconfig 和 fs/Makefile
+          # 3) 修改 fs/Kconfig 和 fs/Makefile
           grep -q "source \"fs/susfs/Kconfig\"" fs/Kconfig || sed -i '/^menu "File systems"/a source "fs/susfs/Kconfig"' fs/Kconfig
           grep -q "obj-y += susfs/" fs/Makefile || echo "obj-y += susfs/" >> fs/Makefile
           echo "✅ fs/Kconfig and fs/Makefile updated"
           
-          # 对于 KernelSU，我们直接修改其 Kconfig 确保 CONFIG_KSU_SUSFS 存在（无论补丁是否应用）
+          # 4) 确保 KernelSU 的 Kconfig 包含 CONFIG_KSU_SUSFS
           cd KernelSU
           grep -q "config KSU_SUSFS" kernel/Kconfig || echo -e "\nconfig KSU_SUSFS\n\tbool \"SUSFS support\"\n\tdefault y" >> kernel/Kconfig
           cd ..
           
-          # 尝试应用 KernelSU 补丁（如果存在），但即使失败也不影响，因为已手动添加配置
-          KSU_PATCH="susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
-          if [ -f "$KSU_PATCH" ]; then
-            echo "📌 Attempting KernelSU patch (optional)..."
-            cd KernelSU
-            patch -p1 --fuzz=3 --ignore-whitespace --force < ../"$KSU_PATCH" || echo "ℹ️ Patch failed, but manual Kconfig change is already applied."
-            cd ..
-          fi
-          
-          # 清理临时仓库
+          # 5) 清理
           rm -rf susfs4ksu
           
           echo "========================================="
