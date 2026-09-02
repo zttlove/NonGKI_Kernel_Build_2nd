@@ -41,7 +41,7 @@ jobs:
             make python3 device-tree-compiler git curl xz-utils \
             libtinfo5 ccache
 
-      # -------- KernelSU (使用 backslashxx/KernelSU main 分支) --------
+            # -------- KernelSU (使用 backslashxx/KernelSU main 分支) --------
       - name: Clone backslashxx/KernelSU
         working-directory: kernel
         run: |
@@ -72,7 +72,7 @@ jobs:
           done
           echo "✅ All hook checks disabled"
 
-      # -------- 启用 KernelSU + kprobes Hook (不含 SUSFS) --------
+          # -------- 启用 KernelSU + kprobes Hook (不含 SUSFS) --------
       - name: Enable KernelSU and kprobes in defconfig
         working-directory: kernel
         run: |
@@ -94,7 +94,7 @@ jobs:
           
           echo "✅ Defconfig updated (SUSFS disabled)"
 
-      # -------- 编译环境 --------
+          # -------- 编译环境 --------
       - name: Download Clang
         run: |
           echo "📥 Downloading Clang..."
@@ -179,11 +179,10 @@ jobs:
             echo "❌ No kernel image found!"
             exit 1
           fi
-
       - name: 📦 Package Anykernel3 Flash Zip
         if: env.PACK_METHOD == 'Anykernel3'
-       shell: bash
-       run: |
+        shell: bash
+        run: |
           set -euo pipefail
           echo "============================================="
           echo "📦 开始打包 Star Hyper A17 内核卡刷包"
