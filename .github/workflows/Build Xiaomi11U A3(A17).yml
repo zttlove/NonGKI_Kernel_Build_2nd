@@ -102,12 +102,7 @@ jobs:
           
           echo "✅ Defconfig updated (SUSFS disabled)"
 
-          # -------- 编译环境 --------
-          # 查找符号定义在哪个文件
-          grep -rn "ksu_handle_devpts" kernel/ksu/
-
-          # 查看编译生成的中间目标文件是否包含该符号
-          nm vmlinux.o | grep ksu_handle_devpts
+          
 
       - name: Download Clang
         run: |
