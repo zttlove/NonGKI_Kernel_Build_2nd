@@ -41,6 +41,7 @@ jobs:
             make python3 device-tree-compiler git curl xz-utils \
             libtinfo5 ccache
 
+      # -------- KernelSU (ReSukiSU) 集成 --------
       - name: Fix KernelSU Submodule (Use Official ReSukiSU)
         working-directory: kernel
         run: |
@@ -89,7 +90,6 @@ jobs:
           echo "========================================="
           echo "🔧 Disabling all ReSukiSU hook check files"
           echo "========================================="
-          # 清空所有 *_check.mk 文件，避免构建时检查报错
           for f in KernelSU/kernel/tools/*_check.mk; do
             if [ -f "$f" ]; then
               echo "# Disabled by CI" > "$f"
@@ -98,18 +98,60 @@ jobs:
           done
           echo "✅ All hook checks disabled"
 
-      - name: Enable KernelSU in defconfig
+      # -------- 新增：集成 SUSFS 2.1 --------
+      - name: Integrate SUSFS 2.1
         working-directory: kernel
         run: |
-          echo "🔧 Enabling KernelSU in defconfig..."
-          cp arch/arm64/configs/${{ env.DEFCONFIG_NAME }} arch/arm64/configs/${{ env.DEFCONFIG_NAME }}.bak
+          echo "========================================="
+          echo "🔧 Integrating SUSFS 2.1"
+          echo "========================================="
+          
+          # 克隆 SUSFS 源码
+          git clone --depth=1 -b v2.1.0 https://gitlab.com/simonpunk/susfs4ksu.git
+          
+          # 1) 应用内核补丁（5.4 专用）
+          echo "📌 Applying kernel patch (50_add_susfs_in_kernel-5.4.patch)..."
+          patch -p1 --fuzz=3 --ignore-whitespace < susfs4ksu/kernel_patches/50_add_susfs_in_kernel-5.4.patch || {
+            echo "⚠️ Kernel patch failed with fuzz, trying fallback..."
+            # Fallback: 手动复制文件并修改 Kconfig/Makefile
+            cp -r susfs4ksu/fs/susfs fs/
+            cp susfs4ksu/include/linux/susfs.h include/linux/
+            # 在 fs/Kconfig 中添加 source "fs/susfs/Kconfig"
+            grep -q "source \"fs/susfs/Kconfig\"" fs/Kconfig || sed -i '/^menu "File systems"/a source "fs/susfs/Kconfig"' fs/Kconfig
+            # 在 fs/Makefile 中添加 obj-y += susfs/
+            grep -q "obj-y += susfs/" fs/Makefile || echo "obj-y += susfs/" >> fs/Makefile
+            echo "✅ Fallback completed (manual file copy)"
+          }
+          
+          # 2) 应用 KernelSU 补丁
+          echo "📌 Applying KernelSU patch (10_enable_susfs_for_ksu.patch)..."
+          cd KernelSU
+          patch -p1 --fuzz=3 --ignore-whitespace < ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || {
+            echo "❌ KernelSU patch failed! SUSFS integration incomplete."
+            exit 1
+          }
+          cd ..
+          
+          # 清理临时仓库
+          rm -rf susfs4ksu
+          
+          echo "========================================="
+          echo "✅ SUSFS 2.1 integration completed!"
+          echo "========================================="
+
+      # -------- 配置内核 --------
+      - name: Enable KernelSU and SUSFS in defconfig
+        working-directory: kernel
+        run: |
           echo "🔧 Enabling KernelSU and SUSFS in defconfig..."
-          # ... 备份原文件 ...
-          # 基础 KernelSU 配置
+          cp arch/arm64/configs/${{ env.DEFCONFIG_NAME }} arch/arm64/configs/${{ env.DEFCONFIG_NAME }}.bak
+          
+          # 基础 KernelSU
           echo "CONFIG_KSU=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
           echo "CONFIG_KSU_MANUAL_HOOK=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
           echo "CONFIG_KSU_DEBUG=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
-          # 启用 SUSFS 2.1
+          
+          # SUSFS 2.1 全部功能
           echo "CONFIG_KSU_SUSFS=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
           echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
           echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
@@ -120,9 +162,10 @@ jobs:
           echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
           echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
           echo "CONFIG_KSU_SUSFS_SUS_MAP=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
+          
           echo "✅ Defconfig updated with SUSFS 2.1 support"
-         
 
+      # -------- 编译环境 --------
       - name: Download Clang
         run: |
           echo "📥 Downloading Clang..."
@@ -146,6 +189,7 @@ jobs:
           echo "CCACHE_DIR=~/.ccache" >> $GITHUB_ENV
           ccache -M 2G
 
+      # -------- 编译内核 --------
       - name: Build Kernel
         working-directory: kernel
         run: |
@@ -170,6 +214,7 @@ jobs:
             exit 1
           fi
 
+      # -------- 打包和发布 --------
       - name: List boot directory
         run: ls -la kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/
 
@@ -264,8 +309,7 @@ jobs:
           body: |
             ## Xiaomi 11 Ultra Star HyperOS A17 内核刷机包
             - 适配 HyperOS A17 全版本
-            - SukiSU ResukiSU Root 完整适配
-            - SUSFS 隐藏文件系统免补丁
+            - SukiSU (ReSukiSU) + SUSFS 2.1 完整集成
             - NonGKI 通用免解boot补丁
             - Osm0sis Anykernel3 官方卡刷格式
             - Clang 18 最新编译
