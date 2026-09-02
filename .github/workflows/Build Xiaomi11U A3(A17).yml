@@ -196,13 +196,7 @@ jobs:
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU_SUSFS_SUS_MAP
           make ARCH=arm64 LLVM=1 O=${{ env.OUTPUT_DIR }} olddefconfig
           
-          # 🔥 临时禁用 LTO 避免符号被优化 (如果还是报错可启用)
-          echo "🔧 Disabling LTO to avoid symbol optimization..."
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --disable LTO_CLANG
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --disable LTO_CLANG_THIN
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --disable THINLTO
-          make ARCH=arm64 LLVM=1 O=${{ env.OUTPUT_DIR }} olddefconfig
-          
+                   
           echo "🔨 Building kernel..."
           make -j$(nproc --all) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }}
           
