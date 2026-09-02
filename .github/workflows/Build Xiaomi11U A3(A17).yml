@@ -1,4 +1,4 @@
-name: Build Kernel (A17) - Full with SUSFS (susfs-ksud branch)
+name: Build Kernel (A17) - Stable with Kprobes Hook (No SUSFS)
 
 on:
   push:
@@ -41,29 +41,24 @@ jobs:
             make python3 device-tree-compiler git curl xz-utils \
             libtinfo5 ccache
 
-      # -------- KernelSU (ReSukiSU) 集成 - 使用 susfs-ksud 分支 --------
-      - name: Clone ReSukiSU with SUSFS (susfs-ksud)
+      # -------- KernelSU (使用 backslashxx/KernelSU main 分支) --------
+      - name: Clone backslashxx/KernelSU
         working-directory: kernel
         run: |
           echo "========================================="
-          echo "🔧 Cloning ReSukiSU (susfs-ksud branch)..."
+          echo "🔧 Cloning backslashxx/KernelSU (main)..."
           echo "========================================="
           rm -rf KernelSU
-          git clone --depth=1 -b susfs-ksud https://github.com/ReSukiSU/ReSukiSU.git KernelSU
+          git clone --depth=1 -b main https://github.com/backslashxx/KernelSU.git KernelSU
           if [ -f "KernelSU/kernel/Makefile" ]; then
-            echo "✅ ReSukiSU (susfs-ksud) cloned successfully"
+            echo "✅ backslashxx/KernelSU cloned successfully"
           else
-            echo "❌ Failed to clone susfs-ksud branch"
+            echo "❌ Failed to clone backslashxx/KernelSU"
             exit 1
           fi
-          echo "========================================="
-          echo "✅ ReSukiSU with SUSFS ready"
-          echo "========================================="
+          echo "✅ KernelSU ready"
 
-      # 注意：susfs-ksud 已预集成 SUSFS，无需运行 setup.sh
-      # 因此移除了原有的 Integrate ReSukiSU 步骤
-
-      - name: Disable ReSukiSU hook checks
+      - name: Disable hook checks
         working-directory: kernel
         run: |
           echo "========================================="
@@ -77,11 +72,11 @@ jobs:
           done
           echo "✅ All hook checks disabled"
 
-      # -------- 启用 KernelSU + kprobes Hook + SUSFS --------
-      - name: Enable KernelSU, kprobes and SUSFS in defconfig
+      # -------- 启用 KernelSU + kprobes Hook (不含 SUSFS) --------
+      - name: Enable KernelSU and kprobes in defconfig
         working-directory: kernel
         run: |
-          echo "🔧 Enabling KernelSU + kprobes + SUSFS..."
+          echo "🔧 Enabling KernelSU with kprobes hook (NO SUSFS)..."
           cp arch/arm64/configs/${{ env.DEFCONFIG_NAME }} arch/arm64/configs/${{ env.DEFCONFIG_NAME }}.bak
           
           # KernelSU 基础
@@ -95,19 +90,9 @@ jobs:
           echo "CONFIG_KPROBE_EVENTS=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
           echo "CONFIG_KSU_KPROBES_HOOK=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
           
-          # SUSFS 全部功能（与 susfs-ksud 分支配套）
-          echo "CONFIG_KSU_SUSFS=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
-          echo "CONFIG_KSU_SUSFS_SUS_MAP=y" >> arch/arm64/configs/${{ env.DEFCONFIG_NAME }}
+          # 注意：不添加任何 CONFIG_KSU_SUSFS_* 选项
           
-          echo "✅ Defconfig updated with full SUSFS support"
+          echo "✅ Defconfig updated (SUSFS disabled)"
 
       # -------- 编译环境 --------
       - name: Download Clang
@@ -197,8 +182,8 @@ jobs:
 
       - name: 📦 Package Anykernel3 Flash Zip
         if: env.PACK_METHOD == 'Anykernel3'
-        shell: bash
-        run: |
+       shell: bash
+       run: |
           set -euo pipefail
           echo "============================================="
           echo "📦 开始打包 Star Hyper A17 内核卡刷包"
@@ -251,14 +236,14 @@ jobs:
         if: env.PACK_METHOD == 'Anykernel3'
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: Star-HyperA17-Kernel-SUSFS-${{ github.run_number }}
-          name: Xiaomi 11 Ultra Star HyperOS A17 Kernel (Full SUSFS + susfs-ksud)
+          tag_name: Star-HyperA17-Kernel-${{ github.run_number }}
+          name: Xiaomi 11 Ultra Star HyperOS A17 Kernel (Kprobes Hook, No SUSFS)
           body: |
-            ## Xiaomi 11 Ultra Star HyperOS A17 内核刷机包（完整版，含 SUSFS）
+            ## Xiaomi 11 Ultra Star HyperOS A17 内核刷机包（稳定版）
             - 适配 HyperOS A17 全版本
-            - ReSukiSU (susfs-ksud 分支) + kprobes Hook
-            - SUSFS 2.1 完整集成（隐藏/绕过）
-            - Zygisk 模块正常工作
+            - backslashxx/KernelSU + kprobes Hook
+            - 确保 Zygisk 模块正常工作
+            - 不含 SUSFS，启动稳定
             - 非 GKI 通用，Anykernel3 卡刷格式
             - Clang 18 最新编译
           files: ${{ env.PACK_NAME }}
