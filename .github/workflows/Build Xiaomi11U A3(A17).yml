@@ -255,36 +255,67 @@ jobs:
           echo "============================================="
           echo "📦 开始打包 Star Hyper A17 内核卡刷包"
           echo "============================================="
-          
-          cd anykernel3
-          
-          # 获取版本信息
-          KERNEL_VERSION=$(cd ../kernel && git rev-parse --short HEAD)
-          BUILD_DATE=$(date +%Y%m%d)
-          ZIP_NAME="Star-HyperA17-Kernel-${BUILD_DATE}-${KERNEL_VERSION}.zip"
-          
-          echo "📝 Kernel version: ${KERNEL_VERSION}"
-          echo "📝 Build date: ${BUILD_DATE}"
-          echo "📝 Zip name: ${ZIP_NAME}"
-          
-          # 更新 anykernel.sh 中的版本信息
-          sed -i "s/kernel.string=.*/kernel.string=Xiaomi 11 Ultra (star) Kernel - HyperA17 ${BUILD_DATE}/" anykernel.sh
-          
-          # 打包
-          zip -r9 "../${ZIP_NAME}" . -x "*/.git*" "*.zip" "*.tar.gz" "*.md" "tools/dtb*" "tools/mkbootimg*"
-          
-          echo "============================================="
-          echo "✅ 打包完成: ${ZIP_NAME}"
-          echo "============================================="
-          ls -lh "../${ZIP_NAME}"
+          TIME=$(TZ=Asia/Shanghai date +"%Y-%m-%d")
+          KERNEL_DIR="${GITHUB_WORKSPACE}/kernel"
+          TMP_DIR="${KERNEL_DIR}/tmp"
+          IMG_PATH="${KERNEL_DIR}/${OUTPUT_DIR}/arch/arm64/boot/Image"
+          cd "${KERNEL_DIR}"
+          if [[ ! -f "${IMG_PATH}" ]]; then
+            echo "::error::❌ 编译失败，未找到 ${OUTPUT_DIR}/arch/arm64/boot/Image 内核文件"
+            exit 1
+          fi
+          IMG_SIZE=$(du -h "${IMG_PATH}" | awk '{print $1}')
+          echo "✅ 检测到内核镜像 Image | 大小: ${IMG_SIZE}"
+          rm -rf "${TMP_DIR}"
+          mkdir -p "${TMP_DIR}"
+          AK3_DIR="${GITHUB_WORKSPACE}/anykernel3"
+          if [[ -d "${AK3_DIR}" ]]; then
+            cp -rp "${AK3_DIR}"/* "${TMP_DIR}/"
+            echo "✅ AnyKernel3 文件已复制"
+          else
+            echo "::error::❌ AnyKernel3 目录不存在"
+            exit 1
+          fi
+          cp -v "${IMG_PATH}" "${TMP_DIR}/Image"
+          if [[ "${{ env.PACK_KMODULES }}" == "true" ]]; then
+            MOD_DIR="${TMP_DIR}/modules/vendor/lib/modules"
+            mkdir -p "${MOD_DIR}"
+            find "${KERNEL_DIR}" -name "*.ko" -type f -print0 | xargs -0 -r cp -t "${MOD_DIR}/" 2>/dev/null || true
+            module_count=$(find "${MOD_DIR}" -name "*.ko" | wc -l)
+            echo "📦 打包内核模块: ${module_count} 个"
+            if [[ ${module_count} -eq 0 ]]; then
+              rm -rf "${TMP_DIR}/modules"
+              echo "ℹ️ 未找到模块文件，移除 modules 目录"
+            fi
+          else
+            echo "ℹ️ 已关闭模块打包，跳过 ko 文件"
+          fi
+          cd "${TMP_DIR}"
+          7za a -tzip -mx9 -mmt=on package.zip ./* >/dev/null
+          cd "${GITHUB_WORKSPACE}"
+          FINAL_ZIP="${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-${TIME}-Ak3.zip"
+          cp -fp "${TMP_DIR}/package.zip" "${FINAL_ZIP}"
+          echo "PACK_NAME=${FINAL_ZIP}" >> "${GITHUB_ENV}"
+          echo "✅ 刷机包打包完成: ${FINAL_ZIP}"
+          rm -rf "${TMP_DIR}"
 
-      - name: Upload Kernel Zip
-        uses: actions/upload-artifact@v4
+      - name: 🚀 Auto Upload To Github Release
+        if: env.PACK_METHOD == 'Anykernel3'
+        uses: softprops/action-gh-release@v3
         with:
-          name: Star-HyperA17-Kernel
-          path: |
-            *.zip
-            kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image
-            kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image.gz
-            kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image.gz-dtb
-            if-no-files-found: ignore
+          tag_name: Star-HyperA17-Kernel-${{ github.run_number }}
+          name: Xiaomi 11 Ultra Star HyperOS A17 NonGKI Kernel
+          body: |
+            ## Xiaomi 11 Ultra Star HyperOS A17 内核刷机包
+            - 适配 HyperOS A17 全版本
+            - SukiSU (ReSukiSU) + SUSFS 2.1 完整集成
+            - NonGKI 通用免解boot补丁
+            - Osm0sis Anykernel3 官方卡刷格式
+            - Clang 18 最新编译
+          files: ${{ env.PACK_NAME }}
+          draft: false
+          prerelease: false
+          overwrite: true
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
