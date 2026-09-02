@@ -57,7 +57,15 @@ jobs:
             exit 1
           fi
           echo "✅ KernelSU ready"
-
+          
+      - name: Patch out devpts hook
+        working-directory: kernel
+        run: |
+         echo "🔧 Patching out ksu_handle_devpts..."
+         # 在 KernelSU 源码中注释掉 devpts 相关调用
+         find KernelSU -name "*.c" -o -name "*.h" | xargs sed -i 's/ksu_handle_devpts/\/\/ ksu_handle_devpts/g'
+         echo "✅ devpts hook disabled"
+    
       - name: Disable hook checks
         working-directory: kernel
         run: |
