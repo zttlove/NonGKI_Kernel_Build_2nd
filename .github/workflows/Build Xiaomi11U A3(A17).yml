@@ -152,18 +152,25 @@ jobs:
       - name: Build Kernel
         working-directory: kernel
         run: |
-          set -e
-          echo "Starting kernel build..."
-          export ARCH=${{ env.KERNEL_ARCH }}
-          export LLVM=1
-          export LLVM_IAS=1
-          export LD=ld.lld
-          export CLANG_TRIPLE=aarch64-linux-gnu-
-          export CC=clang
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
-          
-          make mrproper
+         set -e
+         echo "Starting kernel build..."
+         export ARCH=${{ env.KERNEL_ARCH }}
+         export LLVM=1
+         export LLVM_IAS=1
+         export LD=ld.lld
+         export CLANG_TRIPLE=aarch64-linux-gnu-
+         export CC=clang
+         export CROSS_COMPILE=aarch64-linux-gnu-
+         export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+    
+         # 不要 mrproper，直接配置
+         make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
+    
+         # 额外确认 Kprobe 配置
+         grep -E "CONFIG_(KPROBES|KSU|KPROBE_EVENTS)" ${{ env.OUTPUT_DIR }}/.config || true
+    
+         # 编译
+         make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }}
           
           # 配置
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
