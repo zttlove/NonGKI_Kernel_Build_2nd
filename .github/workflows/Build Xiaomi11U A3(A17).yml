@@ -46,7 +46,7 @@ jobs:
         working-directory: kernel
         run: |
           echo "========================================="
-          echo "🔧 Cloning backslashxx/KernelSU (main)..."
+          echo "🔧 Cloning backslashxx/KernelSU (master)..."
           echo "========================================="
           rm -rf KernelSU
           git clone --depth=1 -b master https://github.com/backslashxx/KernelSU.git KernelSU
@@ -92,21 +92,32 @@ jobs:
           DEFCONFIG_PATH="arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}"
           cp $DEFCONFIG_PATH ${DEFCONFIG_PATH}.bak
           
-          # KernelSU 基础
+          # 清理可能冲突的配置（如果之前有）
+          sed -i '/CONFIG_KSU/d' $DEFCONFIG_PATH
+          sed -i '/CONFIG_KPROBES/d' $DEFCONFIG_PATH
+          
+          # KernelSU 基础（必须）
           echo "CONFIG_KSU=y" >> $DEFCONFIG_PATH
-          echo "CONFIG_KSU_MANUAL_HOOK=y" >> $DEFCONFIG_PATH
           echo "CONFIG_KSU_DEBUG=y" >> $DEFCONFIG_PATH
           
-          # kprobes hook（用于 Zygisk 模块）
+          # 关键：启用 kprobes hook（用于 Zygisk）
           echo "CONFIG_KPROBES=y" >> $DEFCONFIG_PATH
           echo "CONFIG_HAVE_KPROBES=y" >> $DEFCONFIG_PATH
           echo "CONFIG_KPROBE_EVENTS=y" >> $DEFCONFIG_PATH
+          echo "CONFIG_KPROBE_EVENTS_ON_NOTRACE=y" >> $DEFCONFIG_PATH
           echo "CONFIG_KSU_KPROBES_HOOK=y" >> $DEFCONFIG_PATH
+          echo "CONFIG_KSU_WITH_KPROBES=y" >> $DEFCONFIG_PATH  # 如果存在
           
-          # 可选：如果存在 CONFIG_KSU_DEVPTR_HOOK，显式关闭（确保无遗漏）
+          # 禁用 devpts（避免冲突）
           echo "# CONFIG_KSU_DEVPTR_HOOK is not set" >> $DEFCONFIG_PATH
+          echo "# CONFIG_KSU_SUSFS is not set" >> $DEFCONFIG_PATH
           
-          echo "✅ Defconfig updated (SUSFS disabled)"
+          # 额外：确保内核调试支持（Zygisk Next 需要）
+          echo "CONFIG_HAVE_KPROBES_ON_FTRACE=y" >> $DEFCONFIG_PATH
+          echo "CONFIG_KPROBES_CALLBACK_EVENT=y" >> $DEFCONFIG_PATH
+          echo "CONFIG_ARCH_HAS_KPROBES=y" >> $DEFCONFIG_PATH
+          
+          echo "✅ Defconfig updated with full kprobes support"
 
       - name: Download Clang
         run: |
