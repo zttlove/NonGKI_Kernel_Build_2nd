@@ -82,16 +82,15 @@ jobs:
           echo "CCACHE_DIR=~/.ccache" >> $GITHUB_ENV
           ccache -M 4G
 
-      # ---------- KernelSU 克隆与集成 ----------
       - name: Clone KernelSU
         working-directory: kernel
         run: |
-          echo "Cloning backslashxx/KernelSU (master)..."
+          echo "Cloning KernelSU-Next (legacy)..."
           rm -rf KernelSU
-          git clone --depth=1 -b master https://github.com/backslashxx/KernelSU.git KernelSU
+          git clone --depth=1 -b legacy https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU
           if [ ! -f "KernelSU/kernel/Makefile" ]; then
-            echo "ERROR: KernelSU kernel directory not found"
-            exit 1
+          echo "ERROR: KernelSU kernel directory not found"
+          exit 1
           fi
 
       
