@@ -1,4 +1,4 @@
-name: Build Kernel (A17) - Stable with Kprobes Hook (Fixed)
+name: Build Kernel (A17) - Stable with Kprobes Hook (Fully Fixed)
 
 on:
   push:
@@ -63,12 +63,10 @@ jobs:
         run: |
           echo "Applying KernelSU kernel patches..."
           if [ -d "KernelSU/kernel" ] && [ -f "KernelSU/kernel/Makefile" ]; then
-            # 将 KernelSU 的内核补丁目录复制到内核源码树
             if [ -d "KernelSU/kernel/patches" ]; then
               cp -r KernelSU/kernel/patches kernel/patches 2>/dev/null || true
               echo "Copied KernelSU patches"
             fi
-            # 复制 KernelSU 内核源码到内核树
             cp -r KernelSU/kernel/* kernel/ 2>/dev/null || true
             echo "KernelSU kernel source merged"
           else
@@ -121,7 +119,7 @@ jobs:
           echo "--- Added configs ---"
           grep -E "CONFIG_(KSU|KPROBES|MODULES|MODULE_SIG|SELINUX)=" ${DEFCONFIG_PATH} | tail -20
 
-      # ======== 清理旧 SELinux 生成文件（防止缓存导致 flask.h 未重新生成）========
+      # ======== 清理旧 SELinux 生成文件（防止缓存导致 flask.h 未重新生成） ========
       - name: Clean stale SELinux headers
         working-directory: kernel
         run: |
@@ -170,7 +168,13 @@ jobs:
           echo "Configuring kernel (generating headers including flask.h)..."
           make -j$(nproc --all) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} olddefconfig
 
-          echo "Building kernel..."
+          # 先单线程编译确保所有生成头文件（flask.h 等）就绪，再并行编译
+          # 这是解决 flask.h 竞争条件的关键步骤：-j1 严格按依赖顺序编译，
+          # 确保 genheaders 工具先被编译和运行，flask.h 等头文件全部生成完毕。
+          echo "Pre-building dependencies (single-threaded to ensure all generated headers are ready)..."
+          make -j1 ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} >/dev/null 2>&1 || true
+
+          echo "Building kernel (parallel)..."
           make -j$(nproc --all) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }}
 
           if [ -f "${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image" ]; then
@@ -271,15 +275,17 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: Star-HyperA17-Kernel-${{ github.run_number }}
-          name: Xiaomi 11 Ultra Star HyperOS A17 Kernel (Kprobes Hook, Fixed)
+          name: Xiaomi 11 Ultra Star HyperOS A17 Kernel (Kprobes Hook, Fully Fixed)
           body: |
-            ## Xiaomi 11 Ultra Star HyperOS A17 内核刷机包（修复版）
+            ## Xiaomi 11 Ultra Star HyperOS A17 内核刷机包（完全修复版）
             - 适配 HyperOS A17 全版本
             - backslashxx/KernelSU + kprobes Hook
             - 已启用内核模块加载 (CONFIG_MODULES=y)
             - 已启用模块签名 (CONFIG_MODULE_SIG=y)
             - 已启用 SELinux 安全支持 (CONFIG_SECURITY_SELINUX=y)
             - 已恢复 devpts 注入回退机制
+            - 已应用 KernelSU 内核补丁
+            - flask.h 竞争条件已修复（-j1 预构建）
             - 不含 SUSFS，启动稳定
             - 非 GKI 通用，Anykernel3 卡刷格式
             - Clang 18 最新编译
