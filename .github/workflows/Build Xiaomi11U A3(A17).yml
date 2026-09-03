@@ -151,6 +151,15 @@ jobs:
           ccache -M 2G
 
       # ======== 编译内核 ========
+      # ======== 修复 debian/canonical-certs.pem 缺失（Ubuntu/Debian 内核构建系统要求） ========
+      - name: Fix missing debian/canonical-certs.pem
+        working-directory: kernel
+        run: |
+          echo "Creating empty debian/canonical-certs.pem to fix build error..."
+          mkdir -p debian
+          touch debian/canonical-certs.pem
+          echo "debian/canonical-certs.pem created successfully"
+
       - name: Build Kernel
         working-directory: kernel
         run: |
@@ -166,6 +175,7 @@ jobs:
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
           echo "Configuring kernel (generating headers including flask.h)..."
+          # 确保 debian/canonical-certs.pem 存在（防止 certs/x509_certificate_list 构建失败）
           make -j$(nproc --all) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} olddefconfig
 
           # 先单线程编译确保所有生成头文件（flask.h 等）就绪，再并行编译
