@@ -82,19 +82,39 @@ jobs:
           echo "CCACHE_DIR=~/.ccache" >> $GITHUB_ENV
           ccache -M 4G
 
-      - name: Clone KernelSU
+      # ---------- 克隆 KernelSU-Next ----------
+      - name: Clone KernelSU-Next
         working-directory: kernel
         run: |
           echo "Cloning KernelSU-Next (legacy)..."
           rm -rf KernelSU
           git clone --depth=1 -b legacy https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU
           if [ ! -f "KernelSU/kernel/Makefile" ]; then
-          echo "ERROR: KernelSU kernel directory not found"
-          exit 1
+            echo "ERROR: KernelSU kernel directory not found"
+            exit 1
           fi
+          echo "KernelSU-Next cloned successfully."
 
-      
-      
+      # ---------- 清理残留的手动 Hook 调用 (Kprobe 模式必需) ----------
+      - name: Remove manual hook calls for Kprobe mode
+        working-directory: kernel
+        run: |
+          echo "=== Removing manual hook calls (Kprobe mode) ==="
+          
+          # 清理 fs/devpts/inode.c
+          if [ -f "fs/devpts/inode.c" ]; then
+            echo "Cleaning fs/devpts/inode.c..."
+            sed -i '/#ifdef CONFIG_KSU/,/#endif/ { /ksu_handle_devpts/d; }' fs/devpts/inode.c
+            sed -i '/extern int ksu_handle_devpts/d' fs/devpts/inode.c
+            sed -i '/ksu_handle_devpts(/d' fs/devpts/inode.c
+          fi
+          
+          # 搜索并显示其他可能的残留
+          echo "=== Searching for other ksu_handle_* calls ==="
+          grep -r "ksu_handle_" --include="*.c" --include="*.h" . 2>/dev/null || echo "No other manual hooks found."
+          
+          echo "=== Manual hooks cleanup completed ==="
+
       # ---------- 修复 defconfig ----------
       - name: Fix defconfig for Kprobes + Modules
         working-directory: kernel
@@ -137,8 +157,6 @@ jobs:
           # SELinux
           CONFIG_SECURITY_SELINUX=y
           CONFIG_SECURITY_SELINUX_BOOTPARAM=y
-          # Disable SUSFS (avoid conflict)
-          # CONFIG_KSU_SUSFS is not set
           EOF
 
           echo "Defconfig updated successfully:"
@@ -152,32 +170,32 @@ jobs:
       - name: Build Kernel
         working-directory: kernel
         run: |
-         set -e
-         echo "Starting kernel build..."
-         export ARCH=${{ env.KERNEL_ARCH }}
-         export LLVM=1
-         export LLVM_IAS=1
-         export LD=ld.lld
-         export CLANG_TRIPLE=aarch64-linux-gnu-
-         export CC=clang
-         export CROSS_COMPILE=aarch64-linux-gnu-
-         export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
-    
-         # 不要 mrproper，直接配置
-         make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
-    
-         # 额外确认 Kprobe 配置
-         grep -E "CONFIG_(KPROBES|KSU|KPROBE_EVENTS)" ${{ env.OUTPUT_DIR }}/.config || true
-    
-         # 编译
-         make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }}
+          set -e
+          echo "Starting kernel build..."
+          export ARCH=${{ env.KERNEL_ARCH }}
+          export LLVM=1
+          export LLVM_IAS=1
+          export LD=ld.lld
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          export CC=clang
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           
-          # 配置
+          # 清理旧编译产物（保留配置）
+          make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} mrproper || true
+          
+          # 配置内核
+          echo "Configuring kernel..."
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
-
-          # 编译
+          
+          # 验证 Kprobe 配置
+          echo "=== Verifying Kprobe configuration ==="
+          grep -E "CONFIG_(KPROBES|KSU|KPROBE_EVENTS)" ${{ env.OUTPUT_DIR }}/.config || true
+          
+          # 编译内核
+          echo "Compiling kernel..."
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }}
-
+          
           # 验证产物
           if [ ! -f "${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image" ]; then
             echo "ERROR: Kernel image not generated!"
@@ -192,7 +210,7 @@ jobs:
       - name: Configure AnyKernel3
         working-directory: anykernel3
         run: |
-          sed -i 's/kernel.string=.*/kernel.string=Xiaomi 11 Ultra (star) Kernel/' anykernel.sh
+       sed -i 's/kernel.string=.*/kernel.string=Xiaomi 11 Ultra (star) Kernel/' anykernel.sh
           sed -i 's/do.devicecheck=.*/do.devicecheck=0/' anykernel.sh
           sed -i 's/device.name1=.*/device.name1=star/' anykernel.sh
           sed -i 's/device.name2=.*/device.name2=xiaomi11ultra/' anykernel.sh
@@ -207,77 +225,27 @@ jobs:
           IMG_SRC="kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot"
           if [ -f "$IMG_SRC/Image.gz-dtb" ]; then
             cp "$IMG_SRC/Image.gz-dtb" anykernel3/Image
+            echo "Copied Image.gz-dtb"
           elif [ -f "$IMG_SRC/Image.gz" ]; then
             cp "$IMG_SRC/Image.gz" anykernel3/Image
+            echo "Copied Image.gz"
           elif [ -f "$IMG_SRC/Image" ]; then
             cp "$IMG_SRC/Image" anykernel3/Image
+            echo "Copied Image"
           else
             echo "No kernel image found!"
             exit 1
           fi
-          echo "Kernel image copied to AnyKernel3."
 
       - name: Package Flashable ZIP
-        if: env.PACK_METHOD == 'Anykernel3'
-        shell: bash
+        working-directory: anykernel3
         run: |
-          set -euo pipefail
-          TIME=$(TZ=Asia/Shanghai date +"%Y-%m-%d")
-          AK3_DIR="${GITHUB_WORKSPACE}/anykernel3"
-          TMP_DIR="${GITHUB_WORKSPACE}/package_temp"
-          mkdir -p "${TMP_DIR}"
+          zip -r9 "../Kernel-${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-$(date +%Y%m%d).zip" * -x "*.git*" "*.zip"
+          echo "ZIP packaged successfully."
 
-          # 复制 AnyKernel3 全部内容
-          cp -r "${AK3_DIR}"/* "${TMP_DIR}/"
-
-          # 复制 modules（如果启用）
-          if [[ "${{ env.PACK_KMODULES }}" == "true" ]]; then
-            MOD_DIR="${TMP_DIR}/modules/vendor/lib/modules"
-            mkdir -p "${MOD_DIR}"
-            find "${GITHUB_WORKSPACE}/kernel" -name "*.ko" -type f -exec cp -t "${MOD_DIR}" {} + 2>/dev/null || true
-            mod_count=$(find "${MOD_DIR}" -name "*.ko" | wc -l)
-            echo "Found ${mod_count} kernel modules."
-            if [[ ${mod_count} -eq 0 ]]; then
-              rm -rf "${TMP_DIR}/modules"
-            fi
-          else
-            echo "Module packaging disabled."
-          fi
-
-          # 打包 ZIP（排除隐藏文件和多余目录）
-          cd "${TMP_DIR}"
-          7za a -tzip -mx9 -mmt=on -xr!*.git* -xr!*__MACOSX* package.zip ./* >/dev/null
-          cd "${GITHUB_WORKSPACE}"
-          FINAL_ZIP="${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-${TIME}-Ak3.zip"
-          mv "${TMP_DIR}/package.zip" "${FINAL_ZIP}"
-          echo "PACK_NAME=${FINAL_ZIP}" >> "${GITHUB_ENV}"
-          echo "Flashable ZIP created: ${FINAL_ZIP}"
-          rm -rf "${TMP_DIR}"
-
-      # ---------- 发布到 Release ----------
-      - name: Auto Upload to GitHub Release
-        if: env.PACK_METHOD == 'Anykernel3'
-        uses: softprops/action-gh-release@v3
+      - name: Upload Kernel ZIP
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: "Star-HyperA17-Kernel-${{ github.run_number }}-${{ github.run_id }}"
-          name: "Xiaomi 11 Ultra Star HyperOS A17 Kernel (Kprobes Hook, Fixed)"
-          body: |
-            ## Xiaomi 11 Ultra Star HyperOS A17 内核刷机包（修复版）
-            - 适配 HyperOS A17 全版本
-            - backslashxx/KernelSU + kprobes Hook
-            - 已启用内核模块加载 (CONFIG_MODULES=y)
-            - 已启用模块签名 (CONFIG_MODULE_SIG=y)
-            - 已启用 SELinux 安全支持
-            - 已恢复 devpts 注入回退机制
-            - 不含 SUSFS，启动稳定
-            - 非 GKI 通用，Anykernel3 卡刷格式
-            - Clang 18 最新编译
-            - do.devicecheck=0 (避免设备检查失败)
-          files: ${{ env.PACK_NAME }}
-          draft: false
-          prerelease: false
-          overwrite: true
-          make_latest: true
-          fail_on_unmatched_files: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: Kernel-${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}
+          path: Kernel-*.zip
+          retention-days: 7
