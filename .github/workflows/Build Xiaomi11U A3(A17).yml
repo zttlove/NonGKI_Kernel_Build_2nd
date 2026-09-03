@@ -49,7 +49,7 @@ jobs:
           echo "🔧 Cloning backslashxx/KernelSU (main)..."
           echo "========================================="
           rm -rf KernelSU
-          git clone --depth=1 -b  https://github.com/backslashxx/KernelSU.git KernelSU
+          git clone --depth=1 -b master https://github.com/backslashxx/KernelSU.git KernelSU
           if [ -f "KernelSU/kernel/Makefile" ]; then
             echo "✅ KernelSU cloned successfully"
           else
