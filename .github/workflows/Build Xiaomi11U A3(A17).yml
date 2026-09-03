@@ -157,7 +157,7 @@ jobs:
 
           # SELinux
           CONFIG_SECURITY_SELINUX=y
-
+          CONFIG_SECURITY_SELINUX_BOOTPARAM=y
           # Disable SUSFS (avoid conflict)
           # CONFIG_KSU_SUSFS is not set
           EOF
