@@ -115,6 +115,61 @@ jobs:
             echo "KernelSU Makefile entry already exists."
           fi
           echo "KernelSU integration completed."
+      - name: Integrate KernelSU with Fixes
+        working-directory: kernel
+        run: |
+         set -e
+         echo "=== Integrating KernelSU ==="
+    
+         # 1. 修复 KernelSU 的构建系统
+         if [ -f "KernelSU/kernel/Makefile" ]; then
+         # 添加所有需要的 include 路径
+         cat > KernelSU/kernel/Makefile.fix << 'EOF'
+         # 原始内容保留，添加额外的 include 路径
+         ccflags-y += -I$(srctree)/security/selinux/include
+         ccflags-y += -I$(srctree)/include
+         ccflags-y += -I$(srctree)/arch/arm64/include
+         ccflags-y += -I$(srctree)/kernel/sched
+         ccflags-y += -I$(src)
+      
+         obj-y += ksu.o ksu_hook.o ap_hook.o manager.o allowlist.o selinux.o
+         obj-$(CONFIG_KSU_DEBUG) += debug.o
+         EOF
+      
+         # 备份原文件
+         cp KernelSU/kernel/Makefile KernelSU/kernel/Makefile.bak
+         # 合并配置（保留原有的 obj-y 配置）
+         grep "^obj-" KernelSU/kernel/Makefile.bak >> KernelSU/kernel/Makefile.fix
+         mv KernelSU/kernel/Makefile.fix KernelSU/kernel/Makefile
+         fi
+    
+         # 2. 在 ksu.c 中手动修复头文件
+         if [ -f "KernelSU/kernel/ksu.c" ]; then
+         # 创建软链接或直接修复
+         sed -i 's|#include "../security/selinux/include/avc_ss.h"|#include <avc_ss.h>|g' KernelSU/kernel/ksu.c
+         # 确保其他 selinux 头文件也正确
+         sed -i 's|#include "../security/selinux/include/|#include <|g' KernelSU/kernel/ksu.c
+         fi
+    
+         # 3. 创建必要的头文件链接（如果 flask.h 不存在）
+         if [ ! -f "security/selinux/include/flask.h" ]; then
+         echo "Warning: flask.h not found, attempting to generate..."
+         # 有些内核需要生成 flask.h
+         if [ -f "security/selinux/Makefile" ]; then
+         make -C security/selinux flask.h || true
+         fi
+         fi
+    
+         # 4. 添加到 Makefile 和 Kconfig
+         if ! grep -q "source \"../KernelSU/kernel/Kconfig\"" fs/Kconfig; then
+         sed -i '/^endmenu/i source "../KernelSU/kernel/Kconfig"' fs/Kconfig
+         fi
+    
+         if ! grep -q "../KernelSU/kernel/" fs/Makefile; then
+         echo 'obj-y += ../KernelSU/kernel/' >> fs/Makefile
+         fi
+    
+         echo "=== KernelSU integration completed ==="
 
       # ---------- 修复 defconfig ----------
       - name: Fix defconfig for Kprobes + Modules
