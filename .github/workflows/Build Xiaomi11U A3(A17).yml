@@ -99,17 +99,17 @@ jobs:
         run: |
           set -e
           echo "Integrating KernelSU into kernel build system..."
-          # 修改 fs/Kconfig，在 endmenu 前插入 source
-          if ! grep -q "KernelSU/kernel/Kconfig" fs/Kconfig; then
-            sed -i '/^endmenu/i source "KernelSU/kernel/Kconfig"' fs/Kconfig
+          # 修改 fs/Kconfig，在 endmenu 前插入 source（使用 ../ 回到根目录）
+          if ! grep -q "source \"../KernelSU/kernel/Kconfig\"" fs/Kconfig; then
+            sed -i '/^endmenu/i source "../KernelSU/kernel/Kconfig"' fs/Kconfig
             echo "Added KernelSU Kconfig source."
           else
             echo "KernelSU Kconfig already present."
           fi
 
-          # 修改 fs/Makefile，添加 obj-y 引用
-          if ! grep -q "KernelSU/kernel/" fs/Makefile; then
-            echo 'obj-y += KernelSU/kernel/' >> fs/Makefile
+          # 修改 fs/Makefile，添加 obj-y 引用（使用 ../ 指向根目录）
+          if ! grep -q "../KernelSU/kernel/" fs/Makefile; then
+            echo 'obj-y += ../KernelSU/kernel/' >> fs/Makefile
             echo "Added KernelSU to Makefile."
           else
             echo "KernelSU Makefile entry already exists."
