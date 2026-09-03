@@ -58,8 +58,6 @@ jobs:
           mkdir -p clang
           tar -xf clang.tar.xz -C clang --strip-components=1
           rm clang.tar.xz
-        env:
-          CLANG_VERSION: ${{ env.CLANG_VERSION }}
 
       - name: Verify Clang
         run: |
@@ -82,7 +80,7 @@ jobs:
         run: |
           mkdir -p ~/.ccache
           echo "CCACHE_DIR=~/.ccache" >> $GITHUB_ENV
-          ccache -M 4G  # 增加缓存大小
+          ccache -M 4G
 
       # ---------- KernelSU 克隆与集成 ----------
       - name: Clone KernelSU
@@ -100,20 +98,23 @@ jobs:
         working-directory: kernel
         run: |
           set -e
-          echo "Integrating KernelSU source..."
-          # 将 KernelSU 内核源码复制到 ksu 子目录（避免覆盖根目录）
-          mkdir -p ksu
-          cp -r KernelSU/kernel/* ksu/
-          # 如果需要修改内核 Makefile/Kconfig，可在此添加（示例：在 fs/Kconfig 和 fs/Makefile 中引用）
-          # 这里假设 KernelSU 的集成方式是通过独立的 ksu 目录，并后续在 defconfig 中开启 KSU
-          # 实际可能还需修改上层 Makefile，但原工作流未处理，我们保持原样，仅复制到 ksu
-          echo "KernelSU sources placed under kernel/ksu/"
-          # 保留原 KernelSU 目录以备后续使用（如补丁）
-          # 可选：应用 KernelSU 提供的补丁（若存在）
-          if [ -d "KernelSU/kernel/patches" ]; then
-            echo "Applying KernelSU patches (if any)..."
-            # 这里可执行 patch 命令，但原工作流仅复制，故暂不处理
+          echo "Integrating KernelSU into kernel build system..."
+          # 修改 fs/Kconfig，在 endmenu 前插入 source
+          if ! grep -q "KernelSU/kernel/Kconfig" fs/Kconfig; then
+            sed -i '/^endmenu/i source "KernelSU/kernel/Kconfig"' fs/Kconfig
+            echo "Added KernelSU Kconfig source."
+          else
+            echo "KernelSU Kconfig already present."
           fi
+
+          # 修改 fs/Makefile，添加 obj-y 引用
+          if ! grep -q "KernelSU/kernel/" fs/Makefile; then
+            echo 'obj-y += KernelSU/kernel/' >> fs/Makefile
+            echo "Added KernelSU to Makefile."
+          else
+            echo "KernelSU Makefile entry already exists."
+          fi
+          echo "KernelSU integration completed."
 
       # ---------- 修复 defconfig ----------
       - name: Fix defconfig for Kprobes + Modules
@@ -270,7 +271,7 @@ jobs:
         if: env.PACK_METHOD == 'Anykernel3'
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: "Star-HyperA17-Kernel-${{ github.run_number }}-$(date +%s)"
+          tag_name: "Star-HyperA17-Kernel-${{ github.run_number }}-${{ github.run_id }}"
           name: "Xiaomi 11 Ultra Star HyperOS A17 Kernel (Kprobes Hook, Fixed)"
           body: |
             ## Xiaomi 11 Ultra Star HyperOS A17 内核刷机包（修复版）
