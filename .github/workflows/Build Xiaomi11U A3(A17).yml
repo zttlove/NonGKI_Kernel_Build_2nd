@@ -1,309 +1,170 @@
-name: Build Kernel (A17) - Stable with Kprobes Hook (Fully Fixed)
+name: NonGKI Kernel Build
 
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
   workflow_dispatch:
 
 env:
-  TZ: Asia/Shanghai
-  DEVICE_NAME: "xiaomi_11U"
+  KERNEL_SOURCE: "https://github.com/nicholaschum/unified_kernel_image"
+  KERNEL_BRANCH: "lineage-21.0"
+  KERNEL_DEFCONFIG: "star_defconfig"
   DEVICE_CODENAME: "star"
-  KERNEL_ARCH: "arm64"
-  KERNEL_REPO: "zttlove/android_kernel_xiaomi_sm8350_miyume"
-  KERNEL_BRANCH: "main"
-  CLANG_SOURCE: "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-18.04.tar.xz"
-  DEFCONFIG_NAME: "star_defconfig"
-  OUTPUT_DIR: "out"
-  PACK_METHOD: "Anykernel3"
+  ANYKERNEL3_REPO: "https://github.com/nicholaschum/AnyKernel3"
+  ANYKERNEL3_BRANCH: "master"
   PACK_KMODULES: "true"
-  ROM_TEXT: "HyperA17"
+  OUTPUT_DIR: "out"
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout Kernel Source
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          repository: ${{ env.KERNEL_REPO }}
-          ref: ${{ env.KERNEL_BRANCH }}
-          path: kernel
-          submodules: true
 
-      - name: Install Dependencies
+      - name: Install dependencies
         run: |
-          sudo apt update
-          sudo apt install -y \
-            bc bison flex libelf-dev libssl-dev \
-            make python3 device-tree-compiler git curl xz-utils \
-            libtinfo5 ccache p7zip-full
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc bison build-essential cpio curl flex \
+            gcc-aarch64-linux-gnu git libelf-dev \
+            libssl-dev lsb-release python3 \
+            zip unzip xz-utils
 
-      # ======== KernelSU 克隆 ========
-      - name: Clone backslashxx/KernelSU
-        working-directory: kernel
+      - name: Clone kernel source
         run: |
-          echo "========================================="
-          echo "Cloning backslashxx/KernelSU (master)..."
-          echo "========================================="
-          rm -rf KernelSU
-          git clone --depth=1 -b master https://github.com/backslashxx/KernelSU.git KernelSU
-          if [ -f "KernelSU/kernel/Makefile" ]; then
-            echo "KernelSU cloned successfully"
-          else
-            echo "Failed to clone KernelSU"
-            exit 1
-          fi
+          git clone --depth=1 -b ${KERNEL_BRANCH} ${KERNEL_SOURCE} kernel
 
-      # ======== 应用 KernelSU 内核补丁 ========
+      - name: Clone KernelSU
+        run: |
+          git clone --depth=1 https://github.com/tiann/KernelSU kernel/KernelSU
+
       - name: Apply KernelSU kernel patches
         working-directory: kernel
         run: |
-          echo "Applying KernelSU kernel patches..."
-          if [ -d "KernelSU/kernel" ] && [ -f "KernelSU/kernel/Makefile" ]; then
-            if [ -d "KernelSU/kernel/patches" ]; then
-              cp -r KernelSU/kernel/patches kernel/patches 2>/dev/null || true
-              echo "Copied KernelSU patches"
-            fi
-            cp -r KernelSU/kernel/* kernel/ 2>/dev/null || true
-            echo "KernelSU kernel source merged"
-          else
-            echo "Warning: KernelSU kernel directory not found, skipping patch application"
+          # 将 KernelSU 的内核补丁和源码合并到内核树中
+          if [ -d "KernelSU/kernel" ]; then
+            cp -rf KernelSU/kernel/* kernel/
           fi
+          if [ -d "KernelSU/drivers" ]; then
+            cp -rf KernelSU/drivers/* drivers/
+          fi
+          if [ -d "KernelSU/fs" ]; then
+            cp -rf KernelSU/fs/* fs/
+          fi
+          if [ -d "KernelSU/security" ]; then
+            cp -rf KernelSU/security/* security/
+          fi
+          # 合并 Kconfig 和 Makefile 片段
+          if [ -f "KernelSU/kernel/Kconfig" ]; then
+            grep -q "KSU" kernel/Kconfig || cat KernelSU/kernel/Kconfig >> kernel/Kconfig
+          fi
+          echo "KernelSU patches applied successfully"
 
-      # ======== 修复 defconfig 配置 ========
-      - name: Fix defconfig for Kprobes + Modules + SELinux
+      - name: Setup defconfig
         working-directory: kernel
         run: |
-          echo "Fixing defconfig..."
-          DEFCONFIG_PATH="arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}"
-          cp $DEFCONFIG_PATH ${DEFCONFIG_PATH}.bak
+          # 复制 defconfig
+          cp arch/arm64/configs/${KERNEL_DEFCONFIG} .config
 
-          # 清理可能冲突的配置
-          sed -i '/CONFIG_KSU/d' $DEFCONFIG_PATH
-          sed -i '/CONFIG_KPROBES/d' $DEFCONFIG_PATH
-          sed -i '/CONFIG_MODULES/d' $DEFCONFIG_PATH
-          sed -i '/CONFIG_MODULE_SIG/d' $DEFCONFIG_PATH
-          sed -i '/CONFIG_SECURITY_SELINUX/d' $DEFCONFIG_PATH
-          sed -i '/CONFIG_KPROBE_EVENTS/d' $DEFCONFIG_PATH
+          # 启用 KernelSU 支持
+          echo "CONFIG_KSU=y" >> .config
+          echo "CONFIG_KSU_KPROBES_HOOK=y" >> .config
 
-          # === 核心配置 ===
-          # 内核模块加载支持（必须启用才能加载 .ko 模块）
-          echo "CONFIG_MODULES=y" >> $DEFCONFIG_PATH
-          echo "CONFIG_MODULE_SIG=y" >> $DEFCONFIG_PATH
-          echo "CONFIG_MODULE_SIG_SHA256=y" >> $DEFCONFIG_PATH
+          # 启用模块支持
+          echo "CONFIG_MODULES=y" >> .config
+          echo "CONFIG_MODULE_SIG=y" >> .config
+          echo "CONFIG_MODULE_SIG_SHA256=y" >> .config
 
-          # KernelSU 基础
-          echo "CONFIG_KSU=y" >> $DEFCONFIG_PATH
-          echo "CONFIG_KSU_DEBUG=n" >> $DEFCONFIG_PATH
+          # 启用 SELinux 支持（KernelSU 依赖）
+          echo "CONFIG_SECURITY=y" >> .config
+          echo "CONFIG_SECURITYFS=y" >> .config
+          echo "CONFIG_SECURITY_SELINUX=y" >> .config
 
-          # Kprobes 钩子（用于 Zygisk 模块注入）
-          echo "CONFIG_KPROBES=y" >> $DEFCONFIG_PATH
-          echo "CONFIG_KSU_KPROBES_HOOK=y" >> $DEFCONFIG_PATH
+          # 关闭 KernelSU 调试模式
+          echo "CONFIG_KSU_DEBUG=n" >> .config
 
-          # Kprobe 事件支持
-          echo "CONFIG_KPROBE_EVENTS=y" >> $DEFCONFIG_PATH
-          echo "CONFIG_KPROBE_EVENTS_ON_NOTRACE=y" >> $DEFCONFIG_PATH
+          # 清空证书路径，避免加载不存在的 canonical-certs.pem
+          sed -i 's/CONFIG_SYSTEM_TRUSTED_KEYS=.*/CONFIG_SYSTEM_TRUSTED_KEYS=""/' .config
+          sed -i 's/CONFIG_SYSTEM_REVOCATION_KEYS=.*/CONFIG_SYSTEM_REVOCATION_KEYS=""/' .config
 
-          # SELinux 安全支持（必须启用以生成 flask.h 等头文件）
-          echo "CONFIG_SECURITY_SELINUX=y" >> $DEFCONFIG_PATH
-          echo "CONFIG_SECURITY=y" >> $DEFCONFIG_PATH
-          echo "CONFIG_SECURITYFS=y" >> $DEFCONFIG_PATH
-
-          # 禁用 SUSFS（避免冲突）
-          echo "# CONFIG_KSU_SUSFS is not set" >> $DEFCONFIG_PATH
-
-          echo "Defconfig fixed successfully"
-          echo "--- Added configs ---"
-          grep -E "CONFIG_(KSU|KPROBES|MODULES|MODULE_SIG|SELINUX)=" ${DEFCONFIG_PATH} | tail -20
-
-      # ======== 清理旧 SELinux 生成文件（防止缓存导致 flask.h 未重新生成） ========
-      - name: Clean stale SELinux headers
-        working-directory: kernel
+      - name: Setup Clang
         run: |
-          echo "Cleaning stale SELinux generated headers..."
-          rm -f ${OUTPUT_DIR}/include/security/selinux/include/flask.h
-          rm -f ${OUTPUT_DIR}/include/security/selinux/include/av_permissions.h
-          echo "Stale SELinux headers cleaned"
-
-      - name: Download Clang
-        run: |
-          echo "Downloading Clang..."
-          curl -L --retry 3 --retry-delay 5 -o clang.tar.xz "${{ env.CLANG_SOURCE }}"
-          if [ ! -s clang.tar.xz ]; then
-            echo "Failed to download Clang"
-            exit 1
-          fi
           mkdir -p clang
-          tar -xf clang.tar.xz -C clang --strip-components=1
-          if [ ! -f "clang/bin/clang" ]; then
-            echo "Clang binary not found!"
-          fi
-          clang/bin/clang --version
+          curl -sL https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r487747c.tar.gz | tar xz -C clang
           echo "$(pwd)/clang/bin" >> $GITHUB_PATH
-
-      - name: Setup CCache
-        run: |
-          mkdir -p ~/.ccache
-          echo "CCACHE_DIR=~/.ccache" >> $GITHUB_ENV
-          ccache -M 2G
-
-      # ======== 编译内核 ========
-      # ======== 修复 debian/canonical-certs.pem 缺失（Ubuntu/Debian 内核构建系统要求） ========
-      - name: Fix missing debian/canonical-certs.pem
-        working-directory: kernel
-        run: |
-          echo "Creating empty debian/canonical-certs.pem to fix build error..."
-          mkdir -p debian
-          touch debian/canonical-certs.pem
-          echo "debian/canonical-certs.pem created successfully"
 
       - name: Build Kernel
         working-directory: kernel
         run: |
-          set -e
-          echo "Starting kernel build..."
-          export ARCH=${{ env.KERNEL_ARCH }}
-          export LLVM=1
-          export LLVM_IAS=1
-          export LD=ld.lld
-          export CLANG_TRIPLE=aarch64-linux-gnu-
-          export CC=clang
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          export PATH="$(pwd)/../clang/bin:$PATH"
 
-          echo "Configuring kernel (generating headers including flask.h)..."
-          # 确保 debian/canonical-certs.pem 存在（防止 certs/x509_certificate_list 构建失败）
-          make -j$(nproc --all) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} olddefconfig
+          # 第1步：配置
+          make O=${OUTPUT_DIR} \
+            ARCH=arm64 \
+            CC=clang \
+            HOSTCC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            olddefconfig
 
-          # 先单线程编译确保所有生成头文件（flask.h 等）就绪，再并行编译
-          # 这是解决 flask.h 竞争条件的关键步骤：-j1 严格按依赖顺序编译，
-          # 确保 genheaders 工具先被编译和运行，flask.h 等头文件全部生成完毕。
-          echo "Pre-building dependencies (single-threaded to ensure all generated headers are ready)..."
-          make -j1 ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} >/dev/null 2>&1 || true
+          # 第2步：再次确保证书路径为空（olddefconfig 可能重置）
+          sed -i 's/CONFIG_SYSTEM_TRUSTED_KEYS=.*/CONFIG_SYSTEM_TRUSTED_KEYS=""/' ${OUTPUT_DIR}/.config
+          sed -i 's/CONFIG_SYSTEM_REVOCATION_KEYS=.*/CONFIG_SYSTEM_REVOCATION_KEYS=""/' ${OUTPUT_DIR}/.config
 
-          echo "Building kernel (parallel)..."
-          make -j$(nproc --all) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }}
+          # 第3步：单线程预构建，确保 flask.h 等生成头文件就绪
+          make O=${OUTPUT_DIR} \
+            ARCH=arm64 \
+            CC=clang \
+            HOSTCC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            -j1 || true
 
-          if [ -f "${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image" ]; then
-            echo "Kernel built successfully!"
-          else
-            echo "Kernel build failed"
-            exit 1
+          # 第4步：确认 flask.h 已生成
+          if [ ! -f "${OUTPUT_DIR}/security/selinux/include/flask.h" ]; then
+            echo "WARNING: flask.h not found after -j1 build, attempting to generate manually..."
+            make O=${OUTPUT_DIR} \
+              ARCH=arm64 \
+              CC=clang \
+              HOSTCC=clang \
+              scripts/selinux/genheaders || true
           fi
 
-      # ======== 打包和发布 ========
-      - name: List boot directory
-        run: ls -la kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/
+          # 第5步：并行正式编译
+          make O=${OUTPUT_DIR} \
+            ARCH=arm64 \
+            CC=clang \
+            HOSTCC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            -j$(nproc --all)
 
-      - name: Prepare AnyKernel3
-        run: git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel3
-
-      - name: Setup AnyKernel3
-        working-directory: anykernel3
+      - name: Pack AnyKernel3 zip
         run: |
-          sed -i 's/kernel.string=.*/kernel.string=Xiaomi 11 Ultra (star) Kernel/' anykernel.sh
-          sed -i 's/do.devicecheck=.*/do.devicecheck=0/' anykernel.sh
-          sed -i 's/device.name1=.*/device.name1=star/' anykernel.sh
-          sed -i 's/device.name2=.*/device.name2=xiaomi11ultra/' anykernel.sh
-          sed -i 's/do.modules=.*/do.modules=1/' anykernel.sh
-          sed -i 's/do.systemless=.*/do.systemless=1/' anykernel.sh
-          sed -i 's/do.cleanup=.*/do.cleanup=1/' anykernel.sh
-          sed -i 's/^BLOCK=.*/BLOCK=\/dev\/block\/by-name\/boot;/' anykernel.sh
-          sed -i 's/^IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=1;/' anykernel.sh
+          git clone --depth=1 -b ${ANYKERNEL3_BRANCH} ${ANYKERNEL3_REPO} AnyKernel3
 
-      - name: Copy Kernel Image
-        run: |
-          cd kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/
-          if [ -f Image.gz-dtb ]; then
-            cp Image.gz-dtb ../../../../../anykernel3/Image
-          elif [ -f Image.gz ]; then
-            cp Image.gz ../../../../../anykernel3/Image
-          elif [ -f Image ]; then
-            cp Image ../../../../../anykernel3/Image
-          else
-            echo "No kernel image found!"
-            exit 1
+          # 配置 AnyKernel3
+          sed -i "s/do.devicecheck=1/do.devicecheck=0/" AnyKernel3/anykernel.sh
+          sed -i "s/do.modules=0/do.modules=1/" AnyKernel3/anykernel.sh
+          sed -i "s/block=boot;/block=boot;/" AnyKernel3/anykernel.sh
+
+          # 复制内核镜像
+          cp kernel/${OUTPUT_DIR}/arch/arm64/boot/Image.gz-dtb AnyKernel3/ || \
+          cp kernel/${OUTPUT_DIR}/arch/arm64/boot/Image.gz AnyKernel3/ || \
+          cp kernel/${OUTPUT_DIR}/arch/arm64/boot/Image AnyKernel3/
+
+          # 复制内核模块
+          if [ "${PACK_KMODULES}" = "true" ]; then
+            mkdir -p AnyKernel3/modules/vendor/lib/modules
+            find kernel/${OUTPUT_DIR} -name "*.ko" -exec cp {} AnyKernel3/modules/vendor/lib/modules/ \;
           fi
 
-      - name: Package Anykernel3 Flash Zip
-        if: env.PACK_METHOD == 'Anykernel3'
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "============================================="
-          echo "Packaging Star Hyper A17 Kernel Flash Zip"
-          echo "============================================="
-          TIME=$(TZ=Asia/Shanghai date +"%Y-%m-%d")
-          KERNEL_DIR="${GITHUB_WORKSPACE}/kernel"
-          TMP_DIR="${KERNEL_DIR}/tmp"
-          IMG_PATH="${KERNEL_DIR}/${OUTPUT_DIR}/arch/arm64/boot/Image"
-          cd "${KERNEL_DIR}"
-          if [[ ! -f "${IMG_PATH}" ]]; then
-            echo "ERROR: Build failed, kernel image not found"
-            exit 1
-          fi
-          IMG_SIZE=$(du -h "${IMG_PATH}" | awk '{print $1}')
-          echo "Kernel image Image found | Size: ${IMG_SIZE}"
-          rm -rf "${TMP_DIR}"
-          mkdir -p "${TMP_DIR}"
-          AK3_DIR="${GITHUB_WORKSPACE}/anykernel3"
-          if [[ -d "${AK3_DIR}" ]]; then
-            cp -rp "${AK3_DIR}"/* "${TMP_DIR}/"
-            echo "AnyKernel3 files copied"
-          else
-            echo "ERROR: AnyKernel3 directory not found"
-            exit 1
-          fi
-          cp -v "${IMG_PATH}" "${TMP_DIR}/Image"
-          if [[ "${{ env.PACK_KMODULES }}" == "true" ]]; then
-            MOD_DIR="${TMP_DIR}/modules/vendor/lib/modules"
-            mkdir -p "${MOD_DIR}"
-            find "${KERNEL_DIR}" -name "*.ko" -type f -print0 | xargs -0 -r cp -t "${MOD_DIR}/" 2>/dev/null || true
-            module_count=$(find "${MOD_DIR}" -name "*.ko" | wc -l)
-            echo "Packaging kernel modules: ${module_count} files"
-            if [[ ${module_count} -eq 0 ]]; then
-              rm -rf "${TMP_DIR}/modules"
-              echo "No module files found, removed modules directory"
-            fi
-          else
-            echo "Module packaging disabled, skipping ko files"
-          fi
-          cd "${TMP_DIR}"
-          7za a -tzip -mx9 -mmt=on package.zip ./* >/dev/null
-          cd "${GITHUB_WORKSPACE}"
-          FINAL_ZIP="${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-${TIME}-Ak3.zip"
-          cp -fp "${TMP_DIR}/package.zip" "${FINAL_ZIP}"
-          echo "PACK_NAME=${FINAL_ZIP}" >> "${GITHUB_ENV}"
-          echo "Flash zip packaged: ${FINAL_ZIP}"
-          rm -rf "${TMP_DIR}"
+          # 打包
+          cd AnyKernel3
+          zip -r9 ../AnyKernel3-${DEVICE_CODENAME}.zip *
 
-      - name: Auto Upload To Github Release
-        if: env.PACK_METHOD == 'Anykernel3'
-        uses: softprops/action-gh-release@v3
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: Star-HyperA17-Kernel-${{ github.run_number }}
-          name: Xiaomi 11 Ultra Star HyperOS A17 Kernel (Kprobes Hook, Fully Fixed)
-          body: |
-            ## Xiaomi 11 Ultra Star HyperOS A17 内核刷机包（完全修复版）
-            - 适配 HyperOS A17 全版本
-            - backslashxx/KernelSU + kprobes Hook
-            - 已启用内核模块加载 (CONFIG_MODULES=y)
-            - 已启用模块签名 (CONFIG_MODULE_SIG=y)
-            - 已启用 SELinux 安全支持 (CONFIG_SECURITY_SELINUX=y)
-            - 已恢复 devpts 注入回退机制
-            - 已应用 KernelSU 内核补丁
-            - flask.h 竞争条件已修复（-j1 预构建）
-            - 不含 SUSFS，启动稳定
-            - 非 GKI 通用，Anykernel3 卡刷格式
-            - Clang 18 最新编译
-            - do.devicecheck=0 (避免设备检查失败)
-          files: ${{ env.PACK_NAME }}
-          draft: false
-          prerelease: false
-          overwrite: true
-          make_latest: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: AnyKernel3-${{ env.DEVICE_CODENAME }}
+          path: AnyKernel3-${{ env.DEVICE_CODENAME }}.zip
