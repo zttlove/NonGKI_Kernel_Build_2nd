@@ -102,12 +102,12 @@ jobs:
           echo "=== Removing manual hook calls (Kprobe mode) ==="
           
           # 清理 fs/devpts/inode.c
-          if [ -f "fs/devpts/inode.c" ]; then
+           if [ -f "fs/devpts/inode.c" ]; then
             echo "Cleaning fs/devpts/inode.c..."
             sed -i '/#ifdef CONFIG_KSU/,/#endif/ { /ksu_handle_devpts/d; }' fs/devpts/inode.c
             sed -i '/extern int ksu_handle_devpts/d' fs/devpts/inode.c
             sed -i '/ksu_handle_devpts(/d' fs/devpts/inode.c
-          fi
+           fi
           
           # 搜索并显示其他可能的残留
           echo "=== Searching for other ksu_handle_* calls ==="
@@ -210,7 +210,7 @@ jobs:
       - name: Configure AnyKernel3
         working-directory: anykernel3
         run: |
-       sed -i 's/kernel.string=.*/kernel.string=Xiaomi 11 Ultra (star) Kernel/' anykernel.sh
+          sed -i 's/kernel.string=.*/kernel.string=Xiaomi 11 Ultra (star) Kernel/' anykernel.sh
           sed -i 's/do.devicecheck=.*/do.devicecheck=0/' anykernel.sh
           sed -i 's/device.name1=.*/device.name1=star/' anykernel.sh
           sed -i 's/device.name2=.*/device.name2=xiaomi11ultra/' anykernel.sh
