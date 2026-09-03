@@ -96,39 +96,12 @@ jobs:
           echo "KernelSU-Next cloned successfully."
 
       # ---------- 清理残留的手动 Hook 调用 (Kprobe 模式必需) ----------
-      - name: Remove manual hook calls for Kprobe mode
+      - name: Apply manual hooks
         working-directory: kernel
         run: |
-         echo "=== Removing manual hook calls (Kprobe mode) ==="
-    
-         # 1. 清理 fs/devpts/inode.c
-         if [ -f "fs/devpts/inode.c" ]; then
-         echo "Cleaning fs/devpts/inode.c..."
-         sed -i '/#ifdef CONFIG_KSU/,/#endif/ { /ksu_handle_devpts/d; }' fs/devpts/inode.c
-         sed -i '/extern int ksu_handle_devpts/d' fs/devpts/inode.c
-         sed -i '/ksu_handle_devpts(/d' fs/devpts/inode.c
-         fi
-    
-         # 2. 清理 KernelSU 源码中的 hide 功能 (Kprobe 模式不需要)
-         if [ -d "KernelSU/kernel" ]; then
-         echo "Disabling KernelSU hide features..."
-         # 直接删除 hide.c 的编译
-         if [ -f "KernelSU/kernel/Makefile" ]; then
-         sed -i '/hide\.o/d' KernelSU/kernel/Makefile
-         fi
-         # 或者在 hide.c 中注释掉所有内容
-         if [ -f "KernelSU/kernel/hide.c" ]; then
-         echo "/* Disabled for Kprobe mode */" > KernelSU/kernel/hide.c
-         fi
-         fi
-    
-         # 3. 验证没有残留
-         echo "=== Verifying no ksu_handle_* calls remain ==="
-         grep -r "ksu_handle_" --include="*.c" . 2>/dev/null || echo "All clean!"
-         grep -r "ksu_input_hook" --include="*.c" . 2>/dev/null || echo "All clean!"
-         grep -r "ksu_hide_init_thread" --include="*.c" . 2>/dev/null || echo "All clean!"
-    
-         echo "=== Manual hooks cleanup completed ==="
+          for patch in KernelSU/kernel/hooks/*.patch; do
+          patch -p1 < $patch
+          done
 
          # ---------- 修复 defconfig ----------
       - name: Fix defconfig for Kprobes + Modules
@@ -155,7 +128,7 @@ jobs:
           # KernelSU
           CONFIG_KSU=y
           CONFIG_KSU_DEBUG=n
-          CONFIG_KSU_KPROBES_HOOK=y
+          CONFIG_KSU_KPROBES_HOOK=n
 
           # Kprobes
           CONFIG_HAVE_KPROBES=y
