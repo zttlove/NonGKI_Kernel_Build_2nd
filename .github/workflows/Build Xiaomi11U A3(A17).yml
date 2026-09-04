@@ -95,13 +95,7 @@ jobs:
           fi
           echo "KernelSU-Next cloned successfully."
 
-      # ---------- 清理残留的手动 Hook 调用 (Kprobe 模式必需) ----------
-      - name: Apply manual hooks
-        working-directory: kernel
-        run: |
-          for patch in KernelSU/kernel/hooks/*.patch; do
-          patch -p1 < $patch
-          done
+     
 
          # ---------- 修复 defconfig ----------
       - name: Fix defconfig for Kprobes + Modules
@@ -128,7 +122,7 @@ jobs:
           # KernelSU
           CONFIG_KSU=y
           CONFIG_KSU_DEBUG=n
-          CONFIG_KSU_KPROBES_HOOK=n
+          CONFIG_KSU_KPROBES_HOOK=y
 
           # Kprobes
           CONFIG_HAVE_KPROBES=y
