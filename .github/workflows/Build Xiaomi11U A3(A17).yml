@@ -81,7 +81,7 @@ jobs:
           echo "CCACHE_DIR=~/.ccache" >> $GITHUB_ENV
           ccache -M 6G
 
-      # ---------- 克隆 KernelSU-Next 到内核根目录下的 KernelSU ----------
+      # ---------- 克隆 KernelSU-Next ----------
       - name: Clone KernelSU-Next
         working-directory: kernel
         run: |
@@ -94,25 +94,39 @@ jobs:
           fi
           echo "KernelSU-Next cloned successfully."
 
-      # ---------- 将 KernelSU 集成到内核构建系统（根目录 Kconfig / Makefile） ----------
+      # ---------- 动态集成 KernelSU 到内核构建系统 ----------
       - name: Integrate KernelSU into Kernel Build
         working-directory: kernel
         run: |
-          echo "Integrating KernelSU into kernel build (root level)..."
+          echo "Integrating KernelSU into kernel build (dynamic detection)..."
 
-          # 1. 在根目录 Kconfig 中添加 source（如果尚未添加）
-          if ! grep -q "source \"KernelSU/Kconfig\"" Kconfig; then
-            echo "source \"KernelSU/Kconfig\"" >> Kconfig
-            echo "Added KernelSU Kconfig source in root Kconfig."
+          # 1. 移除所有可能存在的旧 source 行（避免重复）
+          sed -i '/^source.*KernelSU/d' Kconfig
+
+          # 2. 查找 KernelSU 中的 Kconfig 文件（可能在 kernel/ 子目录）
+          KSU_KCONFIG=$(find KernelSU -name Kconfig | head -1)
+          if [ -z "$KSU_KCONFIG" ]; then
+            echo "ERROR: Cannot find Kconfig in KernelSU"
+            exit 1
           fi
+          echo "Found Kconfig at $KSU_KCONFIG"
+          echo "source \"$KSU_KCONFIG\"" >> Kconfig
+          echo "Added source for KernelSU Kconfig."
 
-          # 2. 在根目录 Makefile 中添加 obj-y += KernelSU/（如果尚未添加）
-          if ! grep -q "obj-y += KernelSU/" Makefile; then
-            echo "obj-y += KernelSU/" >> Makefile
-            echo "Added KernelSU to root Makefile."
+          # 3. 移除可能存在的旧 obj-y 行
+          sed -i '/obj-y.*KernelSU/d' Makefile
+
+          # 4. 确定包含 Makefile 的目录（通常是 kernel/）
+          KSU_MAKEDIR=$(dirname $(find KernelSU -name Makefile | head -1))
+          if [ -z "$KSU_MAKEDIR" ]; then
+            echo "ERROR: Cannot find Makefile in KernelSU"
+            exit 1
           fi
+          echo "Found Makefile directory: $KSU_MAKEDIR"
+          echo "obj-y += $KSU_MAKEDIR/" >> Makefile
+          echo "Added KernelSU to root Makefile."
 
-          # 3. 清理可能残留的 drivers/Makefile 中的错误条目（防止之前的错误配置干扰）
+          # 5. 清理 drivers/Makefile 中可能残留的错误条目（防止干扰）
           if grep -q "obj-\$(CONFIG_KSU) += kernelsu/" drivers/Makefile; then
             sed -i '/obj-\$(CONFIG_KSU) += kernelsu\//d' drivers/Makefile
             echo "Removed stale KernelSU entry from drivers/Makefile."
