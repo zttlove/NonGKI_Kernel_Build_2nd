@@ -90,14 +90,14 @@ jobs:
           git clone --depth=1 -b legacy https://github.com/KernelSU-Next/KernelSU-Next.git drivers/kernelsu
           echo "Listing cloned directory tree (first 3 levels):"
           find drivers/kernelsu -maxdepth 3 -type f | head -20
-          # 检查是否存在 Makefile 或源文件，以判断克隆是否成功
+          # 检查是否有任何 Makefile 或源文件
           if [ ! -f "drivers/kernelsu/kernel/Makefile" ] && [ ! -f "drivers/kernelsu/Makefile" ]; then
             echo "ERROR: No Makefile found in KernelSU clone"
             exit 1
           fi
           echo "KernelSU-Next cloned successfully."
 
-      # ---------- 动态确定源目录并生成 Makefile 规则 ----------
+      # ---------- 设置 KernelSU 构建文件（包括占位 Makefile） ----------
       - name: Setup KernelSU build files
         working-directory: kernel
         run: |
@@ -114,6 +114,28 @@ jobs:
             exit 1
           fi
           echo "KSU_SRC_DIR=$KSU_SRC_DIR" >> $GITHUB_ENV
+
+          # ========== 关键：确保 drivers/kernelsu/Makefile 存在 ==========
+          # 即使我们直接列出所有对象，构建系统仍需子目录 Makefile
+          if [ ! -f "drivers/kernelsu/Makefile" ]; then
+            echo "Creating placeholder drivers/kernelsu/Makefile..."
+            cat > drivers/kernelsu/Makefile << 'EOF'
+            # KernelSU placeholder Makefile
+            # Actual object files are added directly in drivers/Makefile
+            # This file exists to satisfy Kbuild's directory traversal.
+            EOF
+          fi
+
+          # 确保 drivers/kernelsu/Kconfig 存在（如果源目录有 Kconfig，则保留，否则创建空的）
+          if [ ! -f "drivers/kernelsu/Kconfig" ]; then
+            if [ -f "$KSU_SRC_DIR/Kconfig" ]; then
+              cp "$KSU_SRC_DIR/Kconfig" drivers/kernelsu/Kconfig
+              echo "Copied Kconfig from $KSU_SRC_DIR to drivers/kernelsu/Kconfig"
+            else
+              echo "Creating empty drivers/kernelsu/Kconfig"
+              touch drivers/kernelsu/Kconfig
+            fi
+          fi
 
           # 清理 drivers/Makefile 中旧的 KernelSU 条目
           sed -i '/^# KernelSU/,/^# End KernelSU/d' drivers/Makefile
@@ -134,11 +156,9 @@ jobs:
           echo "" >> drivers/Makefile
           echo "# End KernelSU" >> drivers/Makefile
 
-          # 添加 Kconfig 引用（如果存在）
+          # 添加 Kconfig 引用到 drivers/Kconfig（如果未添加）
           sed -i '/^source.*kernelsu/d' drivers/Kconfig 2>/dev/null || true
-          if [ -f "$KSU_SRC_DIR/Kconfig" ]; then
-            echo "source \"$KSU_SRC_DIR/Kconfig\"" >> drivers/Kconfig
-          elif [ -f "drivers/kernelsu/Kconfig" ]; then
+          if [ -f "drivers/kernelsu/Kconfig" ]; then
             echo "source \"drivers/kernelsu/Kconfig\"" >> drivers/Kconfig
           fi
 
