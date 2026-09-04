@@ -89,50 +89,62 @@ jobs:
           rm -rf KernelSU
           git clone --depth=1 -b legacy https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU
           if [ ! -f "KernelSU/kernel/Makefile" ]; then
-            echo "ERROR: KernelSU kernel directory not found"
+            echo "ERROR: KernelSU kernel Makefile not found"
             exit 1
           fi
           echo "KernelSU-Next cloned successfully."
 
-      # ---------- 动态集成 KernelSU 到内核构建系统 ----------
+      # ---------- 集成 KernelSU（更彻底） ----------
       - name: Integrate KernelSU into Kernel Build
         working-directory: kernel
         run: |
-          echo "Integrating KernelSU into kernel build (dynamic detection)..."
-
-          # 1. 移除所有可能存在的旧 source 行（避免重复）
+          echo "Integrating KernelSU into kernel build..."
+          # 1. 清除所有可能冲突的旧条目
           sed -i '/^source.*KernelSU/d' Kconfig
+          sed -i '/obj-.*KernelSU/d' Makefile
+          sed -i '/obj-y.*KernelSU/d' Makefile
 
-          # 2. 查找 KernelSU 中的 Kconfig 文件（可能在 kernel/ 子目录）
-          KSU_KCONFIG=$(find KernelSU -name Kconfig | head -1)
-          if [ -z "$KSU_KCONFIG" ]; then
-            echo "ERROR: Cannot find Kconfig in KernelSU"
+          # 2. 添加 Kconfig source（指向正确的路径）
+          #  legacy 分支的 Kconfig 在 KernelSU/kernel/Kconfig
+          KSU_KCONFIG="KernelSU/kernel/Kconfig"
+          if [ ! -f "$KSU_KCONFIG" ]; then
+            echo "ERROR: Kconfig not found at $KSU_KCONFIG"
             exit 1
           fi
-          echo "Found Kconfig at $KSU_KCONFIG"
           echo "source \"$KSU_KCONFIG\"" >> Kconfig
           echo "Added source for KernelSU Kconfig."
 
-          # 3. 移除可能存在的旧 obj-y 行
-          sed -i '/obj-y.*KernelSU/d' Makefile
-
-          # 4. 确定包含 Makefile 的目录（通常是 kernel/）
-          KSU_MAKEDIR=$(dirname $(find KernelSU -name Makefile | head -1))
-          if [ -z "$KSU_MAKEDIR" ]; then
-            echo "ERROR: Cannot find Makefile in KernelSU"
+          # 3. 添加 Makefile 引用（使用 obj-y 包含整个目录）
+          #   Legacy 分支的 Makefile 在 KernelSU/kernel/Makefile
+          KSU_MAKEDIR="KernelSU/kernel"
+          if [ ! -f "$KSU_MAKEDIR/Makefile" ]; then
+            echo "ERROR: Makefile not found in $KSU_MAKEDIR"
             exit 1
           fi
-          echo "Found Makefile directory: $KSU_MAKEDIR"
-          echo "obj-y += $KSU_MAKEDIR/" >> Makefile
-          echo "Added KernelSU to root Makefile."
+          # 使用条件编译，确保仅当 CONFIG_KSU=y 时编译
+          echo "obj-\$(CONFIG_KSU) += $KSU_MAKEDIR/" >> Makefile
+          echo "Added KernelSU directory to Makefile."
 
-          # 5. 清理 drivers/Makefile 中可能残留的错误条目（防止干扰）
-          if grep -q "obj-\$(CONFIG_KSU) += kernelsu/" drivers/Makefile; then
+          # 4. 清理 drivers/Makefile 中可能残留的错误条目
+          if grep -q "obj-\$(CONFIG_KSU) += kernelsu/" drivers/Makefile 2>/dev/null; then
             sed -i '/obj-\$(CONFIG_KSU) += kernelsu\//d' drivers/Makefile
             echo "Removed stale KernelSU entry from drivers/Makefile."
           fi
 
           echo "KernelSU integration complete."
+
+      # ---------- 诊断：列出 KernelSU 目录结构 ----------
+      - name: Debug KernelSU structure
+        working-directory: kernel
+        run: |
+          echo "=== KernelSU directory tree ==="
+          find KernelSU -type f -name "*.c" -o -name "*.h" -o -name "Makefile" -o -name "Kconfig" | sort
+          echo "=== Content of KernelSU/kernel/Makefile ==="
+          cat KernelSU/kernel/Makefile || echo "Makefile not found"
+          echo "=== Checking root Kconfig for source ==="
+          grep "source.*KernelSU" Kconfig || echo "No source line found"
+          echo "=== Checking root Makefile for obj ==="
+          grep "obj.*KernelSU" Makefile || echo "No obj line found"
 
       # ---------- 修复 defconfig ----------
       - name: Fix defconfig for Kprobes + Modules
