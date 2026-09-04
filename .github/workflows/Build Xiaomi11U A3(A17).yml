@@ -81,32 +81,43 @@ jobs:
           echo "CCACHE_DIR=~/.ccache" >> $GITHUB_ENV
           ccache -M 6G
 
-      # ---------- 克隆 KernelSU-Next 到 drivers/kernelsu ----------
+      # ---------- 克隆 KernelSU-Next 到内核根目录下的 KernelSU ----------
       - name: Clone KernelSU-Next
         working-directory: kernel
         run: |
-          echo "Cloning KernelSU-Next (legacy) into drivers/kernelsu..."
-          rm -rf drivers/kernelsu
-          git clone --depth=1 -b legacy https://github.com/KernelSU-Next/KernelSU-Next.git drivers/kernelsu
-          if [ ! -f "drivers/kernelsu/kernel/Makefile" ]; then
+          echo "Cloning KernelSU-Next (legacy) into kernel/KernelSU..."
+          rm -rf KernelSU
+          git clone --depth=1 -b legacy https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU
+          if [ ! -f "KernelSU/kernel/Makefile" ]; then
             echo "ERROR: KernelSU kernel directory not found"
             exit 1
           fi
           echo "KernelSU-Next cloned successfully."
 
-      # ---------- 将 KernelSU 集成到内核构建系统 ----------
+      # ---------- 将 KernelSU 集成到内核构建系统（根目录 Kconfig / Makefile） ----------
       - name: Integrate KernelSU into Kernel Build
         working-directory: kernel
         run: |
-          echo "Integrating KernelSU into kernel build..."
-          if ! grep -q "source \"drivers/kernelsu/Kconfig\"" drivers/Kconfig; then
-            echo "source \"drivers/kernelsu/Kconfig\"" >> drivers/Kconfig
-            echo "Added KernelSU Kconfig source in drivers/Kconfig."
+          echo "Integrating KernelSU into kernel build (root level)..."
+
+          # 1. 在根目录 Kconfig 中添加 source（如果尚未添加）
+          if ! grep -q "source \"KernelSU/Kconfig\"" Kconfig; then
+            echo "source \"KernelSU/Kconfig\"" >> Kconfig
+            echo "Added KernelSU Kconfig source in root Kconfig."
           fi
-          if ! grep -q "obj-\$(CONFIG_KSU) += kernelsu/" drivers/Makefile; then
-            echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
-            echo "Added KernelSU to drivers/Makefile."
+
+          # 2. 在根目录 Makefile 中添加 obj-y += KernelSU/（如果尚未添加）
+          if ! grep -q "obj-y += KernelSU/" Makefile; then
+            echo "obj-y += KernelSU/" >> Makefile
+            echo "Added KernelSU to root Makefile."
           fi
+
+          # 3. 清理可能残留的 drivers/Makefile 中的错误条目（防止之前的错误配置干扰）
+          if grep -q "obj-\$(CONFIG_KSU) += kernelsu/" drivers/Makefile; then
+            sed -i '/obj-\$(CONFIG_KSU) += kernelsu\//d' drivers/Makefile
+            echo "Removed stale KernelSU entry from drivers/Makefile."
+          fi
+
           echo "KernelSU integration complete."
 
       # ---------- 修复 defconfig ----------
@@ -202,9 +213,7 @@ jobs:
           mkdir -p "$MODULE_DIR"
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} \
             INSTALL_MOD_PATH="$MODULE_DIR" modules_install
-          # 创建 AnyKernel3 模块目录
           mkdir -p ../anykernel3/modules/system/lib/modules
-          # 复制所有 .ko 文件，保留子目录结构（如 extra/、kernel/ 等）
           find "$MODULE_DIR" -name "*.ko" -exec cp --parents {} ../anykernel3/modules/system/lib/modules/ \;
           echo "Modules collected."
 
