@@ -138,10 +138,11 @@ jobs:
           # 清理 drivers/Makefile 中旧的 KernelSU 条目
           sed -i '/^# KernelSU/,/^# End KernelSU/d' drivers/Makefile
 
-          # 添加包含路径（关键：添加源码根目录和 include 子目录）
+          # 添加包含路径：添加源码根目录、include 子目录、selinux 内部头文件路径
           echo "# KernelSU" >> drivers/Makefile
           echo "ccflags-y += -I\$(srctree)/$KSU_SRC_DIR" >> drivers/Makefile
           echo "ccflags-y += -I\$(srctree)/$KSU_SRC_DIR/include" >> drivers/Makefile
+          echo "ccflags-y += -I\$(srctree)/security/selinux/include" >> drivers/Makefile
 
           # 生成 obj-y 列表：收集该目录下所有 .c 文件（包括子目录）
           echo -n "obj-y += " >> drivers/Makefile
