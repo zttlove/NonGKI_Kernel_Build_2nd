@@ -42,13 +42,13 @@ jobs:
             make python3 device-tree-compiler git curl xz-utils \
             libtinfo5 ccache p7zip-full
 
-      # ---------- 缓存 Clang ----------
+      # ---------- Clang 缓存 ----------
       - name: Cache Clang
         id: cache-clang
         uses: actions/cache@v4
         with:
           path: clang
-          key: clang-${{ env.CLANG_VERSION }}
+          key: clang-${{ env.CLANG_VERSION }}-x86_64
 
       - name: Download Clang
         if: steps.cache-clang.outputs.cache-hit != 'true'
@@ -67,20 +67,21 @@ jobs:
           fi
           clang/bin/clang --version
 
-      # ---------- 缓存 CCache ----------
+      # ---------- CCache 缓存 ----------
       - name: Cache CCache
         uses: actions/cache@v4
         with:
           path: ~/.ccache
-          key: ccache-${{ runner.os }}-${{ github.sha }}
+          key: ccache-${{ runner.os }}-${{ env.KERNEL_BRANCH }}-${{ env.DEFCONFIG_NAME }}
           restore-keys: |
+            ccache-${{ runner.os }}-${{ env.KERNEL_BRANCH }}-
             ccache-${{ runner.os }}-
 
       - name: Setup CCache
         run: |
           mkdir -p ~/.ccache
           echo "CCACHE_DIR=~/.ccache" >> $GITHUB_ENV
-          ccache -M 4G
+          ccache -M 6G
 
       # ---------- 克隆 KernelSU-Next ----------
       - name: Clone KernelSU-Next
@@ -95,9 +96,25 @@ jobs:
           fi
           echo "KernelSU-Next cloned successfully."
 
-     
+      # ---------- 将 KernelSU 集成到内核构建系统 ----------
+      - name: Integrate KernelSU into Kernel Build
+        working-directory: kernel
+        run: |
+          echo "Integrating KernelSU into kernel build..."
+          # 添加 Kconfig 引用（如果尚未添加）
+          if ! grep -q "source \"KernelSU/Kconfig\"" Kconfig; then
+            echo "source \"KernelSU/Kconfig\"" >> Kconfig
+            echo "Added KernelSU Kconfig source."
+          fi
+          # 添加 Makefile 引用（如果尚未添加）
+          if ! grep -q "obj-y += KernelSU/" Makefile; then
+            echo "obj-y += KernelSU/" >> Makefile
+            echo "Added KernelSU to Makefile."
+          fi
+          # 可选：确保 KernelSU 的 Kconfig 中定义了 CONFIG_KSU，不过我们已经强制在 defconfig 中设置
+          echo "KernelSU integration complete."
 
-         # ---------- 修复 defconfig ----------
+      # ---------- 修复 defconfig ----------
       - name: Fix defconfig for Kprobes + Modules
         working-directory: kernel
         run: |
@@ -109,40 +126,36 @@ jobs:
           fi
           cp $DEFCONFIG_PATH ${DEFCONFIG_PATH}.bak
 
-          # 移除可能冲突的旧配置
-          sed -i '/CONFIG_KSU/d' $DEFCONFIG_PATH
-          sed -i '/CONFIG_KPROBES/d' $DEFCONFIG_PATH
-          sed -i '/CONFIG_MODULES/d' $DEFCONFIG_PATH
-          sed -i '/CONFIG_MODULE_SIG/d' $DEFCONFIG_PATH
-          sed -i '/CONFIG_SECURITY_SELINUX/d' $DEFCONFIG_PATH
-          sed -i '/CONFIG_KPROBE_EVENTS/d' $DEFCONFIG_PATH
+          sed -i '/^CONFIG_KSU/d' $DEFCONFIG_PATH
+          sed -i '/^CONFIG_KPROBES/d' $DEFCONFIG_PATH
+          sed -i '/^CONFIG_MODULES/d' $DEFCONFIG_PATH
+          sed -i '/^CONFIG_MODULE_SIG/d' $DEFCONFIG_PATH
+          sed -i '/^CONFIG_SECURITY_SELINUX/d' $DEFCONFIG_PATH
+          sed -i '/^CONFIG_KPROBE_EVENTS/d' $DEFCONFIG_PATH
 
-          # 追加必需配置
-          cat >> $DEFCONFIG_PATH << EOF
+          cat >> $DEFCONFIG_PATH << 'EOF'
           # KernelSU
           CONFIG_KSU=y
           CONFIG_KSU_DEBUG=n
           CONFIG_KSU_KPROBES_HOOK=y
-
           # Kprobes
           CONFIG_HAVE_KPROBES=y
           CONFIG_KPROBES=y
           CONFIG_KPROBE_EVENTS=y
           CONFIG_KPROBE_EVENTS_ON_NOTRACE=y
-
           # Modules
           CONFIG_MODULES=y
           CONFIG_MODULE_SIG=y
           CONFIG_MODULE_SIG_SHA256=y
           CONFIG_MODULE_SIG_FORCE=n
-
           # SELinux
           CONFIG_SECURITY_SELINUX=y
           CONFIG_SECURITY_SELINUX_BOOTPARAM=y
+          # 增加栈帧警告阈值（消除 ld.lld 警告）
+          CONFIG_FRAME_WARN=4096
           EOF
-
-          echo "Defconfig updated successfully:"
-          grep -E "CONFIG_(KSU|KPROBES|MODULES|MODULE_SIG|SELINUX)=" $DEFCONFIG_PATH
+          echo "Defconfig updated successfully."
+          grep -E "CONFIG_(KSU|KPROBES|MODULES|SELINUX|FRAME_WARN)=" $DEFCONFIG_PATH || true
 
       # ---------- 设置 PATH ----------
       - name: Set PATH for Clang
@@ -162,31 +175,41 @@ jobs:
           export CC=clang
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
-          
-          # 清理旧编译产物（保留配置）
+
+          mkdir -p ${{ env.OUTPUT_DIR }}
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} mrproper || true
-          
-          # 配置内核
+
           echo "Configuring kernel..."
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
-          
-          # 验证 Kprobe 配置
+
           echo "=== Verifying Kprobe configuration ==="
           grep -E "CONFIG_(KPROBES|KSU|KPROBE_EVENTS)" ${{ env.OUTPUT_DIR }}/.config || true
-          
-          # 编译内核
+
           echo "Compiling kernel..."
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }}
-          
-          # 验证产物
+
           if [ ! -f "${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image" ]; then
             echo "ERROR: Kernel image not generated!"
             exit 1
           fi
           echo "Kernel build succeeded."
 
-      # ---------- 打包 AnyKernel3 ----------
-      - name: Prepare AnyKernel3
+      # ---------- 收集内核模块 ----------
+      - name: Collect Kernel Modules
+        if: env.PACK_KMODULES == 'true'
+        working-directory: kernel
+        run: |
+          echo "Collecting kernel modules from ${{ env.OUTPUT_DIR }}..."
+          MODULE_DIR="${{ env.OUTPUT_DIR }}/modules_tmp"
+          mkdir -p "$MODULE_DIR"
+          make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} \
+            INSTALL_MOD_PATH="$MODULE_DIR" modules_install
+          mkdir -p ../anykernel3/modules/system/lib/modules
+          find "$MODULE_DIR" -name "*.ko" -exec cp --parents {} ../anykernel3/modules/system/lib/modules/ \;
+          echo "Modules collected."
+
+      # ---------- 准备 AnyKernel3 ----------
+      - name: Clone AnyKernel3
         run: git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel3
 
       - name: Configure AnyKernel3
@@ -196,7 +219,11 @@ jobs:
           sed -i 's/do.devicecheck=.*/do.devicecheck=0/' anykernel.sh
           sed -i 's/device.name1=.*/device.name1=star/' anykernel.sh
           sed -i 's/device.name2=.*/device.name2=xiaomi11ultra/' anykernel.sh
-          sed -i 's/do.modules=.*/do.modules=1/' anykernel.sh
+          if [ "${{ env.PACK_KMODULES }}" == "true" ]; then
+            sed -i 's/do.modules=.*/do.modules=1/' anykernel.sh
+          else
+            sed -i 's/do.modules=.*/do.modules=0/' anykernel.sh
+          fi
           sed -i 's/do.systemless=.*/do.systemless=1/' anykernel.sh
           sed -i 's/do.cleanup=.*/do.cleanup=1/' anykernel.sh
           sed -i 's/^BLOCK=.*/BLOCK=\/dev\/block\/by-name\/boot;/' anykernel.sh
@@ -207,13 +234,10 @@ jobs:
           IMG_SRC="kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot"
           if [ -f "$IMG_SRC/Image.gz-dtb" ]; then
             cp "$IMG_SRC/Image.gz-dtb" anykernel3/Image
-            echo "Copied Image.gz-dtb"
           elif [ -f "$IMG_SRC/Image.gz" ]; then
             cp "$IMG_SRC/Image.gz" anykernel3/Image
-            echo "Copied Image.gz"
           elif [ -f "$IMG_SRC/Image" ]; then
             cp "$IMG_SRC/Image" anykernel3/Image
-            echo "Copied Image"
           else
             echo "No kernel image found!"
             exit 1
@@ -222,7 +246,7 @@ jobs:
       - name: Package Flashable ZIP
         working-directory: anykernel3
         run: |
-          zip -r9 "../Kernel-${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-$(date +%Y%m%d).zip" * -x "*.git*" "*.zip"
+          zip -r9 "../Kernel-${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-$(date +%Y%m%d-%H%M).zip" * -x "*.git*" "*.zip"
           echo "ZIP packaged successfully."
 
       - name: Upload Kernel ZIP
