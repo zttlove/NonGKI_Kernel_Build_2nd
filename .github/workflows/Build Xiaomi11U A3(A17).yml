@@ -180,9 +180,13 @@ jobs:
     
       - name: Generate SELinux flask.h
         run: |
+          # 切换到内核源码根目录，改成你实际内核文件夹路径
+          cd $GITHUB_WORKSPACE/kernel
+          ls -la security/selinux/
           cd security/selinux/include
           chmod +x genheaders.sh
           ./genheaders.sh
+
 
       - name: Fix defconfig for Kprobes + Modules
         working-directory: kernel
