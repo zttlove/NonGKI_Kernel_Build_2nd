@@ -81,7 +81,7 @@ jobs:
           echo "CCACHE_DIR=~/.ccache" >> $GITHUB_ENV
           ccache -M 6G
 
-      - name: Clone KernelSU-Next (ReSukiSU)
+      - name: Clone ReSukiSU
         working-directory: kernel
         run: |
           echo "Cloning ReSukiSU (dev) into drivers/kernelsu..."
@@ -93,7 +93,7 @@ jobs:
             echo "ERROR: No Makefile found in KernelSU clone"
             exit 1
           fi
-          echo "KernelSU cloned successfully."
+          echo "ReSukiSU cloned successfully."
 
       - name: Setup KernelSU build files
         working-directory: kernel
@@ -134,10 +134,20 @@ jobs:
             fi
           fi
 
-          # 清除旧条目
+          # ========== 关键修复：为 security/selinux/Makefile 添加包含路径 ==========
+          if [ -f "security/selinux/Makefile" ]; then
+            if ! grep -q "ccflags-y += -I\$(srctree)/security/selinux/include" security/selinux/Makefile; then
+              echo "ccflags-y += -I\$(srctree)/security/selinux/include" >> security/selinux/Makefile
+              echo "Added include path to security/selinux/Makefile"
+            fi
+          else
+            echo "Warning: security/selinux/Makefile not found"
+          fi
+
+          # 清理 drivers/Makefile 中旧的 KernelSU 条目
           sed -i '/^# KernelSU/,/^# End KernelSU/d' drivers/Makefile
 
-          # 添加包含路径（包含所有可能需要的 SELinux 目录）
+          # 添加包含路径
           echo "# KernelSU" >> drivers/Makefile
           echo "ccflags-y += -I\$(srctree)/$KSU_SRC_DIR" >> drivers/Makefile
           echo "ccflags-y += -I\$(srctree)/$KSU_SRC_DIR/include" >> drivers/Makefile
@@ -145,16 +155,6 @@ jobs:
           echo "ccflags-y += -I\$(srctree)/security/selinux" >> drivers/Makefile
           echo "ccflags-y += -I\$(srctree)/security/selinux/include" >> drivers/Makefile
           echo "ccflags-y += -I\$(srctree)/security/selinux/ss" >> drivers/Makefile
-
-          # 动态查找 flask.h 并添加其目录
-          FLASK_PATH=$(find security -name "flask.h" 2>/dev/null | head -1)
-          if [ -n "$FLASK_PATH" ]; then
-            FLASK_DIR=$(dirname "$FLASK_PATH")
-            echo "ccflags-y += -I\$(srctree)/$FLASK_DIR" >> drivers/Makefile
-            echo "Found flask.h in $FLASK_DIR, added to include path."
-          else
-            echo "Warning: flask.h not found, assuming standard location."
-          fi
 
           # 生成 obj-y 列表
           echo -n "obj-y += " >> drivers/Makefile
@@ -245,18 +245,9 @@ jobs:
           grep -A 5 "KernelSU" drivers/Makefile || true
 
           echo "Compiling kernel..."
-          # 全局 KCFLAGS 包含所有可能的路径（并动态查找 flask.h）
-          FLASK_DIR=$(find security -name "flask.h" 2>/dev/null | head -1 | xargs dirname 2>/dev/null || echo "")
-          KCFLAGS_BASE="-DCONFIG_KSU=1 -DCONFIG_KSU_USE_KPROBES=1 -Wno-align-mismatch -Wno-unused-function -Wno-array-parameter -Wno-void-pointer-to-int-cast -Wno-sometimes-uninitialized -Wno-compare-distinct-pointer-types -Wno-pointer-to-int-cast -Wno-uninitialized"
-          KCFLAGS_INC="-I$(pwd)/security -I$(pwd)/security/selinux -I$(pwd)/security/selinux/include -I$(pwd)/security/selinux/ss"
-          if [ -n "$FLASK_DIR" ]; then
-            KCFLAGS_INC="$KCFLAGS_INC -I$(pwd)/$FLASK_DIR"
-          fi
-          KCFLAGS="$KCFLAGS_INC $KCFLAGS_BASE"
-          echo "Using KCFLAGS: $KCFLAGS"
-
+          # 全局 KCFLAGS（额外保险）
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} \
-            KCFLAGS="$KCFLAGS"
+            KCFLAGS="-DCONFIG_KSU=1 -DCONFIG_KSU_USE_KPROBES=1 -Wno-align-mismatch -Wno-unused-function -Wno-array-parameter -Wno-void-pointer-to-int-cast -Wno-sometimes-uninitialized -Wno-compare-distinct-pointer-types -Wno-pointer-to-int-cast -Wno-uninitialized"
 
           if [ ! -f "${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image" ]; then
             echo "ERROR: Kernel image not generated!"
