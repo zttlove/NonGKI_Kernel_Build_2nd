@@ -42,7 +42,6 @@ jobs:
             make python3 device-tree-compiler git curl xz-utils \
             libtinfo5 ccache p7zip-full
 
-      # ---------- Clang 缓存 ----------
       - name: Cache Clang
         id: cache-clang
         uses: actions/cache@v4
@@ -67,7 +66,6 @@ jobs:
           fi
           clang/bin/clang --version
 
-      # ---------- CCache 缓存 ----------
       - name: Cache CCache
         uses: actions/cache@v4
         with:
@@ -83,14 +81,14 @@ jobs:
           echo "CCACHE_DIR=~/.ccache" >> $GITHUB_ENV
           ccache -M 6G
 
-      # ---------- 克隆 KernelSU-Next ----------
+      # ---------- 克隆 KernelSU-Next 到 drivers/kernelsu ----------
       - name: Clone KernelSU-Next
         working-directory: kernel
         run: |
-          echo "Cloning KernelSU-Next (legacy)..."
-          rm -rf KernelSU
-          git clone --depth=1 -b legacy https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU
-          if [ ! -f "KernelSU/kernel/Makefile" ]; then
+          echo "Cloning KernelSU-Next (legacy) into drivers/kernelsu..."
+          rm -rf drivers/kernelsu
+          git clone --depth=1 -b legacy https://github.com/KernelSU-Next/KernelSU-Next.git drivers/kernelsu
+          if [ ! -f "drivers/kernelsu/kernel/Makefile" ]; then
             echo "ERROR: KernelSU kernel directory not found"
             exit 1
           fi
@@ -101,17 +99,16 @@ jobs:
         working-directory: kernel
         run: |
           echo "Integrating KernelSU into kernel build..."
-          # 添加 Kconfig 引用（如果尚未添加）
-          if ! grep -q "source \"KernelSU/Kconfig\"" Kconfig; then
-            echo "source \"KernelSU/Kconfig\"" >> Kconfig
-            echo "Added KernelSU Kconfig source."
+          # 在 drivers/Kconfig 中添加 source（如果尚未添加）
+          if ! grep -q "source \"drivers/kernelsu/Kconfig\"" drivers/Kconfig; then
+            echo "source \"drivers/kernelsu/Kconfig\"" >> drivers/Kconfig
+            echo "Added KernelSU Kconfig source in drivers/Kconfig."
           fi
-          # 添加 Makefile 引用（如果尚未添加）
-          if ! grep -q "obj-y += KernelSU/" Makefile; then
-            echo "obj-y += KernelSU/" >> Makefile
-            echo "Added KernelSU to Makefile."
+          # 在 drivers/Makefile 中添加 obj-$(CONFIG_KSU) += kernelsu/
+          if ! grep -q "obj-\$(CONFIG_KSU) += kernelsu/" drivers/Makefile; then
+            echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
+            echo "Added KernelSU to drivers/Makefile."
           fi
-          # 可选：确保 KernelSU 的 Kconfig 中定义了 CONFIG_KSU，不过我们已经强制在 defconfig 中设置
           echo "KernelSU integration complete."
 
       # ---------- 修复 defconfig ----------
@@ -157,11 +154,9 @@ jobs:
           echo "Defconfig updated successfully."
           grep -E "CONFIG_(KSU|KPROBES|MODULES|SELINUX|FRAME_WARN)=" $DEFCONFIG_PATH || true
 
-      # ---------- 设置 PATH ----------
       - name: Set PATH for Clang
         run: echo "$(pwd)/clang/bin" >> $GITHUB_PATH
 
-      # ---------- 编译内核 ----------
       - name: Build Kernel
         working-directory: kernel
         run: |
@@ -194,7 +189,6 @@ jobs:
           fi
           echo "Kernel build succeeded."
 
-      # ---------- 收集内核模块 ----------
       - name: Collect Kernel Modules
         if: env.PACK_KMODULES == 'true'
         working-directory: kernel
@@ -208,7 +202,6 @@ jobs:
           find "$MODULE_DIR" -name "*.ko" -exec cp --parents {} ../anykernel3/modules/system/lib/modules/ \;
           echo "Modules collected."
 
-      # ---------- 准备 AnyKernel3 ----------
       - name: Clone AnyKernel3
         run: git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel3
 
