@@ -84,7 +84,7 @@ jobs:
       - name: Clone KernelSU-Next
         working-directory: kernel
         run: |
-          echo "Cloning KernelSU-Next (legacy) into drivers/kernelsu..."
+          echo "Cloning KernelSU-Next (dev) into drivers/kernelsu..."
           rm -rf drivers/kernelsu
           git clone --depth=1 -b dev https://github.com/zttlove/ReSukiSU.git drivers/kernelsu
           echo "Listing cloned directory tree (first 3 levels):"
@@ -138,19 +138,20 @@ jobs:
           # 清理 drivers/Makefile 中旧的 KernelSU 条目
           sed -i '/^# KernelSU/,/^# End KernelSU/d' drivers/Makefile
 
-          # 添加包含路径：添加源码根目录、include 子目录、selinux 内部头文件路径
+          # 添加包含路径
           echo "# KernelSU" >> drivers/Makefile
           echo "ccflags-y += -I\$(srctree)/$KSU_SRC_DIR" >> drivers/Makefile
           echo "ccflags-y += -I\$(srctree)/$KSU_SRC_DIR/include" >> drivers/Makefile
+          # SELinux 头文件路径（多种可能）
+          echo "ccflags-y += -I\$(srctree)/security/selinux" >> drivers/Makefile
           echo "ccflags-y += -I\$(srctree)/security/selinux/include" >> drivers/Makefile
+          echo "ccflags-y += -I\$(srctree)/security/selinux/ss" >> drivers/Makefile
 
-          # 生成 obj-y 列表：收集该目录下所有 .c 文件（包括子目录）
+          # 生成 obj-y 列表
           echo -n "obj-y += " >> drivers/Makefile
           pushd $KSU_SRC_DIR > /dev/null
-          # 获取所有 .c 文件，输出相对路径（相对于 drivers/ 目录）
           find . -name "*.c" -printf "%P\n" | while read -r cfile; do
             obj="${cfile%.c}.o"
-            # 使用 KSU_REL_PATH 作为前缀（不带 drivers/）
             echo -n "$KSU_REL_PATH/$obj " >> ../../Makefile
           done
           popd > /dev/null
@@ -183,6 +184,7 @@ jobs:
           sed -i '/^CONFIG_MODULE_SIG/d' $DEFCONFIG_PATH
           sed -i '/^CONFIG_SECURITY_SELINUX/d' $DEFCONFIG_PATH
           sed -i '/^CONFIG_KPROBE_EVENTS/d' $DEFCONFIG_PATH
+          # 完整的 defconfig 追加（已修正截断）
           cat >> $DEFCONFIG_PATH << 'EOF'
           # KernelSU
           CONFIG_KSU=y
@@ -236,8 +238,9 @@ jobs:
           grep -A 5 "KernelSU" drivers/Makefile || true
 
           echo "Compiling kernel..."
+          # 全局 KCFLAGS 包含所有必要的头文件路径
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} \
-            KCFLAGS="-DCONFIG_KSU=1 -DCONFIG_KSU_USE_KPROBES=1 -Wno-align-mismatch -Wno-unused-function -Wno-array-parameter -Wno-void-pointer-to-int-cast -Wno-sometimes-uninitialized -Wno-compare-distinct-pointer-types -Wno-pointer-to-int-cast -Wno-uninitialized"
+            KCFLAGS="-I$(pwd)/security/selinux -I$(pwd)/security/selinux/include -I$(pwd)/security/selinux/ss -DCONFIG_KSU=1 -DCONFIG_KSU_USE_KPROBES=1 -Wno-align-mismatch -Wno-unused-function -Wno-array-parameter -Wno-void-pointer-to-int-cast -Wno-sometimes-uninitialized -Wno-compare-distinct-pointer-types -Wno-pointer-to-int-cast -Wno-uninitialized"
 
           if [ ! -f "${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image" ]; then
             echo "ERROR: Kernel image not generated!"
