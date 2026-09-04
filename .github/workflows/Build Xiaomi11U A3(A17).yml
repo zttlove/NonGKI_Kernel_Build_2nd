@@ -81,7 +81,6 @@ jobs:
           echo "CCACHE_DIR=~/.ccache" >> $GITHUB_ENV
           ccache -M 6G
 
-      # ---------- 克隆 KernelSU-Next 到 drivers/kernelsu ----------
       - name: Clone KernelSU-Next
         working-directory: kernel
         run: |
@@ -94,52 +93,44 @@ jobs:
           fi
           echo "KernelSU-Next cloned successfully."
 
-      # ---------- 直接追加源文件到 drivers/Makefile （修正版） ----------
-      - name: Add KernelSU source files to drivers Makefile
+      - name: Setup KernelSU build files
         working-directory: kernel
         run: |
-          echo "Adding KernelSU source files directly to drivers/Makefile..."
+          echo "Setting up KernelSU build files..."
 
-          # 确保 drivers/Makefile 存在
-          if [ ! -f "drivers/Makefile" ]; then
-            echo "ERROR: drivers/Makefile not found!"
-            exit 1
-          fi
+          # 1. 重写 drivers/kernelsu/kernel/Makefile，强制内建所有 .c 文件（包括子目录）
+          cat > drivers/kernelsu/kernel/Makefile << 'EOF'
+          # KernelSU built-in objects (recursive)
+          obj-y += $(patsubst %.c,%.o,$(wildcard *.c))
+          # Include subdirectories (e.g., kprobe)
+          obj-y += $(wildcard */)
+          EOF
 
-          # 清除可能存在的旧条目（以标记行删除）
+          # 2. 创建 drivers/kernelsu/Makefile，指向 kernel 子目录
+          cat > drivers/kernelsu/Makefile << 'EOF'
+          # Include kernel subdirectory
+          obj-y += kernel/
+          EOF
+
+          # 3. 清理 drivers/Makefile 中旧的 KernelSU 条目
           sed -i '/^# KernelSU/,/^# End KernelSU/d' drivers/Makefile
-          sed -i '/^source.*kernelsu/d' drivers/Kconfig 2>/dev/null || true
 
-          # 添加 Kconfig source（如果存在）
+          # 4. 在 drivers/Makefile 中添加 obj-y += kernelsu/
+          echo "# KernelSU" >> drivers/Makefile
+          echo "obj-y += kernelsu/" >> drivers/Makefile
+          echo "# End KernelSU" >> drivers/Makefile
+
+          # 5. 添加 Kconfig source（如果存在）
           if [ -f "drivers/kernelsu/Kconfig" ]; then
+            sed -i '/^source.*kernelsu/d' drivers/Kconfig 2>/dev/null || true
             echo "source \"drivers/kernelsu/Kconfig\"" >> drivers/Kconfig
           elif [ -f "drivers/kernelsu/kernel/Kconfig" ]; then
+            sed -i '/^source.*kernelsu/d' drivers/Kconfig 2>/dev/null || true
             echo "source \"drivers/kernelsu/kernel/Kconfig\"" >> drivers/Kconfig
           fi
 
-          # 添加包含路径
-          echo "# KernelSU include path" >> drivers/Makefile
-          echo "ccflags-y += -I\$(srctree)/drivers/kernelsu/kernel/include" >> drivers/Makefile
-          echo "" >> drivers/Makefile
+          echo "KernelSU build files setup complete."
 
-          # 使用 pushd/popd 安全切换目录并收集源文件
-          echo "# KernelSU object files" >> drivers/Makefile
-          echo -n "obj-y += " >> drivers/Makefile
-
-          pushd drivers/kernelsu/kernel > /dev/null
-          # 获取所有 .c 文件（包括子目录），转为 .o 并拼接到列表
-          find . -name "*.c" -printf "%P\n" | while read -r cfile; do
-            obj="${cfile%.c}.o"
-            echo -n "kernelsu/kernel/$obj " >> ../../Makefile
-          done
-          popd > /dev/null
-
-          echo "" >> drivers/Makefile
-          echo "# End KernelSU" >> drivers/Makefile
-
-          echo "drivers/Makefile updated successfully."
-
-      # ---------- 修复 defconfig（保留 KSU 配置） ----------
       - name: Fix defconfig for Kprobes + Modules
         working-directory: kernel
         run: |
@@ -182,7 +173,6 @@ jobs:
       - name: Set PATH for Clang
         run: echo "$(pwd)/clang/bin" >> $GITHUB_PATH
 
-      # ---------- 编译内核 ----------
       - name: Build Kernel
         working-directory: kernel
         run: |
@@ -219,7 +209,6 @@ jobs:
           fi
           echo "Kernel build succeeded."
 
-      # ---------- 打包 AnyKernel3 ----------
       - name: Clone AnyKernel3
         run: git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel3
 
