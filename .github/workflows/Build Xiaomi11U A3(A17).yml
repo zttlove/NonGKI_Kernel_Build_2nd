@@ -88,49 +88,65 @@ jobs:
           echo "Cloning KernelSU-Next (legacy) into drivers/kernelsu..."
           rm -rf drivers/kernelsu
           git clone --depth=1 -b legacy https://github.com/KernelSU-Next/KernelSU-Next.git drivers/kernelsu
-          if [ ! -f "drivers/kernelsu/kernel/allowlist.c" ]; then
-            echo "ERROR: KernelSU source not found"
+          echo "Listing cloned directory tree (first 3 levels):"
+          find drivers/kernelsu -maxdepth 3 -type f | head -20
+          # 检查是否存在 Makefile 或源文件，以判断克隆是否成功
+          if [ ! -f "drivers/kernelsu/kernel/Makefile" ] && [ ! -f "drivers/kernelsu/Makefile" ]; then
+            echo "ERROR: No Makefile found in KernelSU clone"
             exit 1
           fi
           echo "KernelSU-Next cloned successfully."
 
-      # ---------- 直接在 drivers/Makefile 中列出所有对象文件 ----------
-      - name: Add KernelSU objects directly to drivers/Makefile
+      # ---------- 动态确定源目录并生成 Makefile 规则 ----------
+      - name: Setup KernelSU build files
         working-directory: kernel
         run: |
-          echo "Adding KernelSU object files directly to drivers/Makefile..."
+          echo "Setting up KernelSU build files..."
 
-          # 清除旧条目
+          # 确定源文件所在目录（优先 kernel/，其次根）
+          KSU_SRC_DIR=""
+          if [ -d "drivers/kernelsu/kernel" ] && [ -f "drivers/kernelsu/kernel/Makefile" ]; then
+            KSU_SRC_DIR="drivers/kernelsu/kernel"
+          elif [ -d "drivers/kernelsu" ] && [ -f "drivers/kernelsu/Makefile" ]; then
+            KSU_SRC_DIR="drivers/kernelsu"
+          else
+            echo "ERROR: Could not locate KernelSU source directory"
+            exit 1
+          fi
+          echo "KSU_SRC_DIR=$KSU_SRC_DIR" >> $GITHUB_ENV
+
+          # 清理 drivers/Makefile 中旧的 KernelSU 条目
           sed -i '/^# KernelSU/,/^# End KernelSU/d' drivers/Makefile
-          sed -i '/^source.*kernelsu/d' drivers/Kconfig 2>/dev/null || true
 
-          # 添加包含路径
+          # 添加包含路径（根据实际目录调整）
           echo "# KernelSU" >> drivers/Makefile
-          echo "ccflags-y += -I\$(srctree)/drivers/kernelsu/kernel/include" >> drivers/Makefile
+          echo "ccflags-y += -I\$(srctree)/$KSU_SRC_DIR/include" >> drivers/Makefile
 
-          # 生成 obj-y 列表（所有 .c 文件转化为 .o）
+          # 生成 obj-y 列表：收集该目录下所有 .c 文件（包括子目录）
           echo -n "obj-y += " >> drivers/Makefile
-          pushd drivers/kernelsu/kernel > /dev/null
-          # 获取所有 .c 文件（包括子目录），输出相对路径（相对于 drivers）
+          pushd $KSU_SRC_DIR > /dev/null
+          # 获取所有 .c 文件，输出相对路径（相对于 kernel/ 根目录）
           find . -name "*.c" -printf "%P\n" | while read -r cfile; do
             obj="${cfile%.c}.o"
-            echo -n "kernelsu/kernel/$obj " >> ../../Makefile
+            echo -n "$KSU_SRC_DIR/$obj " >> ../../Makefile
           done
           popd > /dev/null
           echo "" >> drivers/Makefile
           echo "# End KernelSU" >> drivers/Makefile
 
-          # 可选：添加 Kconfig 引用（如果存在）
-          if [ -f "drivers/kernelsu/Kconfig" ]; then
+          # 添加 Kconfig 引用（如果存在）
+          sed -i '/^source.*kernelsu/d' drivers/Kconfig 2>/dev/null || true
+          if [ -f "$KSU_SRC_DIR/Kconfig" ]; then
+            echo "source \"$KSU_SRC_DIR/Kconfig\"" >> drivers/Kconfig
+          elif [ -f "drivers/kernelsu/Kconfig" ]; then
             echo "source \"drivers/kernelsu/Kconfig\"" >> drivers/Kconfig
-          elif [ -f "drivers/kernelsu/kernel/Kconfig" ]; then
-            echo "source \"drivers/kernelsu/kernel/Kconfig\"" >> drivers/Kconfig
           fi
 
-          echo "drivers/Makefile updated:"
+          echo "KernelSU build files setup complete."
+          echo "Updated drivers/Makefile:"
           grep -A 5 "KernelSU" drivers/Makefile || true
 
-      # ---------- 修复 defconfig（保留 KSU 配置） ----------
+      # ---------- 修复 defconfig ----------
       - name: Fix defconfig for Kprobes + Modules
         working-directory: kernel
         run: |
@@ -201,7 +217,6 @@ jobs:
           grep -A 5 "KernelSU" drivers/Makefile || true
 
           echo "Compiling kernel..."
-          # 强制定义 CONFIG_KSU 和 KSU_USE_KPROBES，屏蔽所有已知警告
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} \
             KCFLAGS="-DCONFIG_KSU=1 -DCONFIG_KSU_USE_KPROBES=1 -Wno-align-mismatch -Wno-unused-function -Wno-array-parameter -Wno-void-pointer-to-int-cast -Wno-sometimes-uninitialized -Wno-compare-distinct-pointer-types -Wno-pointer-to-int-cast -Wno-uninitialized"
 
