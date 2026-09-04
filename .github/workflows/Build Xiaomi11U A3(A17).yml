@@ -177,6 +177,12 @@ jobs:
 
           echo "KernelSU build files setup complete."
           grep -A 5 "KernelSU" drivers/Makefile || true
+    
+      - name: Generate SELinux flask.h
+        run: |
+          cd security/selinux/include
+          chmod +x genheaders.sh
+          ./genheaders.sh
 
       - name: Fix defconfig for Kprobes + Modules
         working-directory: kernel
