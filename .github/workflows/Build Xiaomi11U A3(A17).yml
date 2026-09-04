@@ -86,7 +86,7 @@ jobs:
         run: |
           echo "Cloning ReSukiSU (dev) into drivers/kernelsu..."
           rm -rf drivers/kernelsu
-          git clone --depth=1 -b main https://github.com/zttlove/ReSukiSU.git drivers/kernelsu
+          git clone --depth=1 -b dev https://github.com/zttlove/ReSukiSU.git drivers/kernelsu
           echo "Listing cloned directory tree (first 3 levels):"
           find drivers/kernelsu -maxdepth 3 -type f | head -20
           if [ ! -f "drivers/kernelsu/kernel/Makefile" ] && [ ! -f "drivers/kernelsu/Makefile" ]; then
@@ -134,15 +134,17 @@ jobs:
             fi
           fi
 
-          # ========== 关键修复：为 security/selinux/Makefile 添加包含路径 ==========
-          if [ -f "security/selinux/Makefile" ]; then
-            if ! grep -q "ccflags-y += -I\$(srctree)/security/selinux/include" security/selinux/Makefile; then
-              echo "ccflags-y += -I\$(srctree)/security/selinux/include" >> security/selinux/Makefile
-              echo "Added include path to security/selinux/Makefile"
+          # ========== 关键修复：为 security/selinux 和 ss 子目录添加包含路径 ==========
+          for makefile in security/selinux/Makefile security/selinux/ss/Makefile; do
+            if [ -f "$makefile" ]; then
+              if ! grep -q "ccflags-y += -I\$(srctree)/security/selinux/include" "$makefile"; then
+                echo "ccflags-y += -I\$(srctree)/security/selinux/include" >> "$makefile"
+                echo "Added include path to $makefile"
+              fi
+            else
+              echo "Warning: $makefile not found"
             fi
-          else
-            echo "Warning: security/selinux/Makefile not found"
-          fi
+          done
 
           # 清理 drivers/Makefile 中旧的 KernelSU 条目
           sed -i '/^# KernelSU/,/^# End KernelSU/d' drivers/Makefile
@@ -184,7 +186,7 @@ jobs:
           if [ ! -f "$DEFCONFIG_PATH" ]; then
             echo "ERROR: Defconfig not found at $DEFCONFIG_PATH"
             exit 1
-          fi
+           fi
           cp $DEFCONFIG_PATH ${DEFCONFIG_PATH}.bak
           sed -i '/^CONFIG_KSU/d' $DEFCONFIG_PATH
           sed -i '/^CONFIG_KPROBES/d' $DEFCONFIG_PATH
@@ -245,9 +247,9 @@ jobs:
           grep -A 5 "KernelSU" drivers/Makefile || true
 
           echo "Compiling kernel..."
-          # 全局 KCFLAGS（额外保险）
+          # 全局 KCFLAGS 添加 -Wno-strict-prototypes 并保留其他选项
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} \
-            KCFLAGS="-DCONFIG_KSU=1 -DCONFIG_KSU_USE_KPROBES=1 -Wno-align-mismatch -Wno-unused-function -Wno-array-parameter -Wno-void-pointer-to-int-cast -Wno-sometimes-uninitialized -Wno-compare-distinct-pointer-types -Wno-pointer-to-int-cast -Wno-uninitialized"
+            KCFLAGS="-DCONFIG_KSU=1 -DCONFIG_KSU_USE_KPROBES=1 -Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-array-parameter -Wno-void-pointer-to-int-cast -Wno-sometimes-uninitialized -Wno-compare-distinct-pointer-types -Wno-pointer-to-int-cast -Wno-uninitialized"
 
           if [ ! -f "${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image" ]; then
             echo "ERROR: Kernel image not generated!"
