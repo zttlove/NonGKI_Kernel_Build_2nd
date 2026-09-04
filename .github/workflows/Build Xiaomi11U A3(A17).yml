@@ -81,7 +81,6 @@ jobs:
           echo "CCACHE_DIR=~/.ccache" >> $GITHUB_ENV
           ccache -M 6G
 
-      # ---------- 克隆 KernelSU-Next 到 drivers/kernelsu ----------
       - name: Clone KernelSU-Next
         working-directory: kernel
         run: |
@@ -96,7 +95,6 @@ jobs:
           fi
           echo "KernelSU-Next cloned successfully."
 
-      # ---------- 设置 KernelSU 构建文件（修复 heredoc 问题） ----------
       - name: Setup KernelSU build files
         working-directory: kernel
         run: |
@@ -114,10 +112,13 @@ jobs:
           fi
           echo "KSU_SRC_DIR=$KSU_SRC_DIR" >> $GITHUB_ENV
 
+          # 计算相对于 drivers/ 的路径（去掉开头的 drivers/）
+          KSU_REL_PATH="${KSU_SRC_DIR#drivers/}"
+          echo "KSU_REL_PATH=$KSU_REL_PATH" >> $GITHUB_ENV
+
           # ========== 确保 drivers/kernelsu/Makefile 存在 ==========
           if [ ! -f "drivers/kernelsu/Makefile" ]; then
             echo "Creating placeholder drivers/kernelsu/Makefile..."
-            # 使用 echo 逐行写入，避免 heredoc 问题
             echo "# KernelSU placeholder Makefile" > drivers/kernelsu/Makefile
             echo "# Actual object files are added directly in drivers/Makefile" >> drivers/kernelsu/Makefile
             echo "# This file exists to satisfy Kbuild's directory traversal." >> drivers/kernelsu/Makefile
@@ -144,9 +145,11 @@ jobs:
           # 生成 obj-y 列表：收集该目录下所有 .c 文件（包括子目录）
           echo -n "obj-y += " >> drivers/Makefile
           pushd $KSU_SRC_DIR > /dev/null
+          # 获取所有 .c 文件，输出相对路径（相对于 drivers/ 目录）
           find . -name "*.c" -printf "%P\n" | while read -r cfile; do
             obj="${cfile%.c}.o"
-            echo -n "$KSU_SRC_DIR/$obj " >> ../../Makefile
+            # 使用 KSU_REL_PATH 作为前缀（不带 drivers/）
+            echo -n "$KSU_REL_PATH/$obj " >> ../../Makefile
           done
           popd > /dev/null
           echo "" >> drivers/Makefile
@@ -162,7 +165,6 @@ jobs:
           echo "Updated drivers/Makefile:"
           grep -A 5 "KernelSU" drivers/Makefile || true
 
-      # ---------- 修复 defconfig ----------
       - name: Fix defconfig for Kprobes + Modules
         working-directory: kernel
         run: |
@@ -205,7 +207,6 @@ jobs:
       - name: Set PATH for Clang
         run: echo "$(pwd)/clang/bin" >> $GITHUB_PATH
 
-      # ---------- 编译内核 ----------
       - name: Build Kernel
         working-directory: kernel
         run: |
@@ -242,7 +243,6 @@ jobs:
           fi
           echo "Kernel build succeeded."
 
-      # ---------- 打包 AnyKernel3 ----------
       - name: Clone AnyKernel3
         run: git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel3
 
