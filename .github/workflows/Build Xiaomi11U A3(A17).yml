@@ -94,53 +94,42 @@ jobs:
           fi
           echo "KernelSU-Next cloned successfully."
 
-      # ---------- 强制内建：重写 Makefile，直接包含所有源文件 ----------
-      - name: Force built-in compilation for KernelSU
-        working-directory: kernel/drivers/kernelsu/kernel
-        run: |
-          echo "Generating Makefile that includes all .c files (including subdirectories) ..."
-          # 删除原有的 Makefile
-          rm -f Makefile
-          # 使用 find 递归查找所有 .c 文件，并生成 obj-y 列表
-          echo "# Auto-generated Makefile for KernelSU" > Makefile
-          echo "obj-y += \\" >> Makefile
-          find . -name "*.c" -printf "%P\n" | sed 's/\.c$/.o/' | while read -r obj; do
-            echo "    $obj \\" >> Makefile
-          done
-          # 删除最后的反斜杠
-          sed -i '$ s/\\$//' Makefile
-          echo "Created Makefile:"
-          cat Makefile
-
-      # ---------- 集成到 drivers/ 和根 Makefile ----------
-      - name: Integrate KernelSU into Kernel Build
+      # ---------- 直接追加源文件到 drivers/Makefile ----------
+      - name: Add KernelSU source files to drivers Makefile
         working-directory: kernel
         run: |
-          echo "Integrating KernelSU into drivers subsystem..."
-          # 清除旧的 source 和 obj 条目
+          echo "Adding KernelSU source files directly to drivers/Makefile..."
+
+          # 清除可能存在的旧条目
+          sed -i '/^# KernelSU/,/^# End KernelSU/d' drivers/Makefile
           sed -i '/^source.*kernelsu/d' drivers/Kconfig
-          sed -i '/obj-.*kernelsu/d' drivers/Makefile
-          sed -i '/core-.*kernelsu/d' Makefile
 
           # 添加 Kconfig source（如果存在）
-          KSU_KCONFIG=""
           if [ -f "drivers/kernelsu/Kconfig" ]; then
-            KSU_KCONFIG="drivers/kernelsu/Kconfig"
+            echo "source \"drivers/kernelsu/Kconfig\"" >> drivers/Kconfig
           elif [ -f "drivers/kernelsu/kernel/Kconfig" ]; then
-            KSU_KCONFIG="drivers/kernelsu/kernel/Kconfig"
-          fi
-          if [ -n "$KSU_KCONFIG" ]; then
-            echo "source \"$KSU_KCONFIG\"" >> drivers/Kconfig
-            echo "Added source for KernelSU Kconfig."
-          else
-            echo "WARNING: No Kconfig found, skipping."
+            echo "source \"drivers/kernelsu/kernel/Kconfig\"" >> drivers/Kconfig
           fi
 
-          # 在 drivers/Makefile 中无条件添加 obj-y
-          echo "obj-y += kernelsu/kernel/" >> drivers/Makefile
-          # 在根 Makefile 中添加 core-y 作为备份
-          echo "core-y += drivers/kernelsu/kernel/" >> Makefile
-          echo "Integration complete."
+          # 添加头文件包含路径
+          echo "# KernelSU include path" >> drivers/Makefile
+          echo "ccflags-y += -I\$(srctree)/drivers/kernelsu/kernel/include" >> drivers/Makefile
+          echo "" >> drivers/Makefile
+
+          # 递归查找所有 .c 文件，生成 obj-y 列表
+          echo "# KernelSU object files" >> drivers/Makefile
+          echo -n "obj-y += " >> drivers/Makefile
+          cd drivers/kernelsu/kernel
+          # 获取所有 .c 文件（包括子目录），转换为相对路径（相对于 drivers/）
+          find . -name "*.c" | sed 's/^\.\///' | while read -r file; do
+            obj="${file%.c}.o"
+            echo -n "kernelsu/kernel/$obj " >> ../../Makefile
+          done
+          cd ../..
+          echo "" >> drivers/Makefile
+          echo "# End KernelSU" >> drivers/Makefile
+
+          echo "drivers/Makefile updated."
 
       # ---------- 修复 defconfig（保留 KSU 配置） ----------
       - name: Fix defconfig for Kprobes + Modules
@@ -181,7 +170,6 @@ jobs:
           CONFIG_FRAME_WARN=4096
           EOF
           echo "Defconfig updated successfully."
-          grep -E "CONFIG_(KSU|KPROBES|MODULES|SELINUX|FRAME_WARN)=" $DEFCONFIG_PATH || true
 
       - name: Set PATH for Clang
         run: echo "$(pwd)/clang/bin" >> $GITHUB_PATH
@@ -207,17 +195,15 @@ jobs:
           echo "Configuring kernel..."
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
 
-          echo "=== Verifying Kprobe and KSU configuration ==="
+          echo "=== Verifying configuration ==="
           grep -E "CONFIG_(KPROBES|KSU|KPROBE_EVENTS|KSU_USE_KPROBES)" ${{ env.OUTPUT_DIR }}/.config || true
 
-          echo "=== Checking integration ==="
-          grep -E "source.*kernelsu" drivers/Kconfig || echo "No source line"
-          grep -E "obj-.*kernelsu" drivers/Makefile || echo "No obj line"
+          echo "=== Checking drivers Makefile for KernelSU ==="
+          grep -A 5 "KernelSU" drivers/Makefile || true
 
           echo "Compiling kernel..."
-          # 编译时强制定义 CONFIG_KSU 和 KSU_USE_KPROBES，并屏蔽所有已知警告
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} \
-            KCFLAGS="-DCONFIG_KSU=1 -DCONFIG_KSU_USE_KPROBES=1 -Wno-align-mismatch -Wno-unused-function -Wno-array-parameter -Wno-void-pointer-to-int-cast -Wno-sometimes-uninitialized -Wno-compare-distinct-pointer-types -Wno-pointer-to-int-cast -Wno-uninitialized"
+            KCFLAGS="-Wno-align-mismatch -Wno-unused-function -Wno-array-parameter -Wno-void-pointer-to-int-cast -Wno-sometimes-uninitialized -Wno-compare-distinct-pointer-types -Wno-pointer-to-int-cast -Wno-uninitialized"
 
           if [ ! -f "${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image" ]; then
             echo "ERROR: Kernel image not generated!"
