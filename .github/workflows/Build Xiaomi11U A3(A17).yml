@@ -181,9 +181,9 @@ jobs:
           grep -E "CONFIG_(KPROBES|KSU|KPROBE_EVENTS)" ${{ env.OUTPUT_DIR }}/.config || true
 
           echo "Compiling kernel..."
-          # 屏蔽 -Walign-mismatch 和 -Wunused-function 两类警告
+          # 屏蔽各类无害警告
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} \
-            KCFLAGS="-Wno-align-mismatch -Wno-unused-function"
+            KCFLAGS="-Wno-align-mismatch -Wno-unused-function -Wno-array-parameter -Wno-void-pointer-to-int-cast"
 
           if [ ! -f "${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image" ]; then
             echo "ERROR: Kernel image not generated!"
