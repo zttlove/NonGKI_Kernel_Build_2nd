@@ -81,7 +81,6 @@ jobs:
           echo "CCACHE_DIR=~/.ccache" >> $GITHUB_ENV
           ccache -M 6G
 
-      # ---------- 克隆 KernelSU-Next ----------
       - name: Clone KernelSU-Next
         working-directory: kernel
         run: |
@@ -94,13 +93,15 @@ jobs:
           fi
           echo "KernelSU-Next cloned successfully."
 
-      # ---------- 修改 Makefile 强制内建 ----------
+      # ---------- 强力修改 KernelSU Makefile，强制内建编译 ----------
       - name: Patch KernelSU Makefile to built-in
         working-directory: kernel
         run: |
-          echo "Patching KernelSU/kernel/Makefile to use obj-y instead of obj-m..."
-          # 将 Makefile 中所有 obj-m 替换为 obj-y
-          sed -i 's/obj-m/obj-y/g' KernelSU/kernel/Makefile
+          echo "Patching KernelSU/kernel/Makefile to force built-in..."
+          # 将所有 obj-* 替换为 obj-y（包括 obj-m, obj-$(CONFIG_KSU) 等）
+          sed -i 's/obj-[^ ]*/obj-y/g' KernelSU/kernel/Makefile
+          # 如果还有 KSU-y 之类的变量，也替换为 obj-y
+          sed -i 's/KSU-y/obj-y/g' KernelSU/kernel/Makefile
           echo "Modified Makefile content:"
           cat KernelSU/kernel/Makefile
 
@@ -120,7 +121,6 @@ jobs:
             exit 1
           fi
           echo "source \"$KSU_KCONFIG\"" >> Kconfig
-          echo "Added source for KernelSU Kconfig."
 
           # 添加 obj-y 引用 (递归编译子目录)
           KSU_MAKEDIR="KernelSU/kernel"
@@ -129,7 +129,6 @@ jobs:
             exit 1
           fi
           echo "obj-y += $KSU_MAKEDIR/" >> Makefile
-          echo "Added KernelSU to root Makefile via obj-y."
 
           # 清理 drivers/Makefile 中可能残留的错误条目
           if grep -q "obj-\$(CONFIG_KSU) += kernelsu/" drivers/Makefile 2>/dev/null; then
@@ -203,14 +202,14 @@ jobs:
           echo "=== Verifying Kprobe configuration ==="
           grep -E "CONFIG_(KPROBES|KSU|KPROBE_EVENTS)" ${{ env.OUTPUT_DIR }}/.config || true
 
-          echo "=== Checking if KernelSU will be built ==="
-          grep -E "obj-.*KernelSU" Makefile || echo "No obj-y line found in root Makefile"
-          grep -E "source.*KernelSU" Kconfig || echo "No source line found in root Kconfig"
+          echo "=== Checking root build integration ==="
+          grep -E "obj-.*KernelSU" Makefile || echo "No obj-y line found"
+          grep -E "source.*KernelSU" Kconfig || echo "No source line found"
 
           echo "Compiling kernel..."
-          # 屏蔽各类无害警告
+          # 屏蔽各类无害警告（包含所有已知类型）
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} \
-            KCFLAGS="-Wno-align-mismatch -Wno-unused-function -Wno-array-parameter -Wno-void-pointer-to-int-cast -Wno-sometimes-uninitialized -Wno-compare-distinct-pointer-types -Wno-pointer-to-int-cast"
+            KCFLAGS="-Wno-align-mismatch -Wno-unused-function -Wno-array-parameter -Wno-void-pointer-to-int-cast -Wno-sometimes-uninitialized -Wno-compare-distinct-pointer-types -Wno-pointer-to-int-cast -Wno-uninitialized"
 
           if [ ! -f "${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image" ]; then
             echo "ERROR: Kernel image not generated!"
