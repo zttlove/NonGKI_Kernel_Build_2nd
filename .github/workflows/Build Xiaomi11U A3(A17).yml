@@ -81,7 +81,6 @@ jobs:
           echo "CCACHE_DIR=~/.ccache" >> $GITHUB_ENV
           ccache -M 6G
 
-      # ---------- 克隆 KernelSU-Next ----------
       - name: Clone KernelSU-Next
         working-directory: kernel
         run: |
@@ -94,7 +93,6 @@ jobs:
           fi
           echo "KernelSU-Next cloned successfully."
 
-      # ---------- 集成 KernelSU ----------
       - name: Integrate KernelSU into Kernel Build
         working-directory: kernel
         run: |
@@ -118,7 +116,6 @@ jobs:
           fi
           echo "KernelSU integration complete."
 
-      # ---------- 修复 defconfig ----------
       - name: Fix defconfig for Kprobes + Modules
         working-directory: kernel
         run: |
@@ -160,7 +157,6 @@ jobs:
       - name: Set PATH for Clang
         run: echo "$(pwd)/clang/bin" >> $GITHUB_PATH
 
-      # ---------- 编译内核（新增 KCFLAGS 屏蔽对齐警告） ----------
       - name: Build Kernel
         working-directory: kernel
         run: |
@@ -185,9 +181,9 @@ jobs:
           grep -E "CONFIG_(KPROBES|KSU|KPROBE_EVENTS)" ${{ env.OUTPUT_DIR }}/.config || true
 
           echo "Compiling kernel..."
-          # ⬇️ 关键修改：添加 KCFLAGS 屏蔽 -Walign-mismatch（以及可选的 -Wno-unused-function）
+          # 屏蔽 -Walign-mismatch 和 -Wunused-function 两类警告
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} \
-            KCFLAGS="-Wno-align-mismatch"
+            KCFLAGS="-Wno-align-mismatch -Wno-unused-function"
 
           if [ ! -f "${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image" ]; then
             echo "ERROR: Kernel image not generated!"
@@ -195,7 +191,6 @@ jobs:
           fi
           echo "Kernel build succeeded."
 
-      # ---------- 打包 AnyKernel3 ----------
       - name: Clone AnyKernel3
         run: git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel3
 
