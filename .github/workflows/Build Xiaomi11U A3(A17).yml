@@ -178,7 +178,7 @@ jobs:
           echo "KernelSU build files setup complete."
           grep -A 5 "KernelSU" drivers/Makefile || true
     
-            - name: Generate defconfig
+      - name: Generate defconfig
         run: |
           cd $KERNEL_ROOT
           make ARCH=${ARCH} star_defconfig
