@@ -86,7 +86,7 @@ jobs:
         run: |
           echo "Cloning ReSukiSU (dev) into drivers/kernelsu..."
           rm -rf drivers/kernelsu
-          git clone --depth=1 -b dev https://github.com/zttlove/ReSukiSU.git drivers/kernelsu
+          git clone --depth=1 -b main https://github.com/zttlove/ReSukiSU.git drivers/kernelsu
           echo "Listing cloned directory tree (first 3 levels):"
           find drivers/kernelsu -maxdepth 3 -type f | head -20
           if [ ! -f "drivers/kernelsu/kernel/Makefile" ] && [ ! -f "drivers/kernelsu/Makefile" ]; then
