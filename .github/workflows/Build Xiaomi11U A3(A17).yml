@@ -81,56 +81,56 @@ jobs:
           echo "CCACHE_DIR=~/.ccache" >> $GITHUB_ENV
           ccache -M 6G
 
+      # ---------- 克隆 KernelSU-Next 到 drivers/kernelsu ----------
       - name: Clone KernelSU-Next
         working-directory: kernel
         run: |
           echo "Cloning KernelSU-Next (legacy) into drivers/kernelsu..."
           rm -rf drivers/kernelsu
           git clone --depth=1 -b legacy https://github.com/KernelSU-Next/KernelSU-Next.git drivers/kernelsu
-          if [ ! -f "drivers/kernelsu/kernel/Makefile" ]; then
-            echo "ERROR: KernelSU kernel Makefile not found"
+          if [ ! -f "drivers/kernelsu/kernel/allowlist.c" ]; then
+            echo "ERROR: KernelSU source not found"
             exit 1
           fi
           echo "KernelSU-Next cloned successfully."
 
-      - name: Setup KernelSU build files
+      # ---------- 直接在 drivers/Makefile 中列出所有对象文件 ----------
+      - name: Add KernelSU objects directly to drivers/Makefile
         working-directory: kernel
         run: |
-          echo "Setting up KernelSU build files..."
+          echo "Adding KernelSU object files directly to drivers/Makefile..."
 
-          # 1. 重写 drivers/kernelsu/kernel/Makefile，强制内建所有 .c 文件（包括子目录）
-          cat > drivers/kernelsu/kernel/Makefile << 'EOF'
-          # KernelSU built-in objects (recursive)
-          obj-y += $(patsubst %.c,%.o,$(wildcard *.c))
-          # Include subdirectories (e.g., kprobe)
-          obj-y += $(wildcard */)
-          EOF
-
-          # 2. 创建 drivers/kernelsu/Makefile，指向 kernel 子目录
-          cat > drivers/kernelsu/Makefile << 'EOF'
-          # Include kernel subdirectory
-          obj-y += kernel/
-          EOF
-
-          # 3. 清理 drivers/Makefile 中旧的 KernelSU 条目
+          # 清除旧条目
           sed -i '/^# KernelSU/,/^# End KernelSU/d' drivers/Makefile
+          sed -i '/^source.*kernelsu/d' drivers/Kconfig 2>/dev/null || true
 
-          # 4. 在 drivers/Makefile 中添加 obj-y += kernelsu/
+          # 添加包含路径
           echo "# KernelSU" >> drivers/Makefile
-          echo "obj-y += kernelsu/" >> drivers/Makefile
+          echo "ccflags-y += -I\$(srctree)/drivers/kernelsu/kernel/include" >> drivers/Makefile
+
+          # 生成 obj-y 列表（所有 .c 文件转化为 .o）
+          echo -n "obj-y += " >> drivers/Makefile
+          pushd drivers/kernelsu/kernel > /dev/null
+          # 获取所有 .c 文件（包括子目录），输出相对路径（相对于 drivers）
+          find . -name "*.c" -printf "%P\n" | while read -r cfile; do
+            obj="${cfile%.c}.o"
+            echo -n "kernelsu/kernel/$obj " >> ../../Makefile
+          done
+          popd > /dev/null
+          echo "" >> drivers/Makefile
           echo "# End KernelSU" >> drivers/Makefile
 
-          # 5. 添加 Kconfig source（如果存在）
+          # 可选：添加 Kconfig 引用（如果存在）
           if [ -f "drivers/kernelsu/Kconfig" ]; then
-            sed -i '/^source.*kernelsu/d' drivers/Kconfig 2>/dev/null || true
             echo "source \"drivers/kernelsu/Kconfig\"" >> drivers/Kconfig
           elif [ -f "drivers/kernelsu/kernel/Kconfig" ]; then
-            sed -i '/^source.*kernelsu/d' drivers/Kconfig 2>/dev/null || true
             echo "source \"drivers/kernelsu/kernel/Kconfig\"" >> drivers/Kconfig
           fi
 
-          echo "KernelSU build files setup complete."
+          echo "drivers/Makefile updated:"
+          grep -A 5 "KernelSU" drivers/Makefile || true
 
+      # ---------- 修复 defconfig（保留 KSU 配置） ----------
       - name: Fix defconfig for Kprobes + Modules
         working-directory: kernel
         run: |
@@ -173,6 +173,7 @@ jobs:
       - name: Set PATH for Clang
         run: echo "$(pwd)/clang/bin" >> $GITHUB_PATH
 
+      # ---------- 编译内核 ----------
       - name: Build Kernel
         working-directory: kernel
         run: |
@@ -200,8 +201,9 @@ jobs:
           grep -A 5 "KernelSU" drivers/Makefile || true
 
           echo "Compiling kernel..."
+          # 强制定义 CONFIG_KSU 和 KSU_USE_KPROBES，屏蔽所有已知警告
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} \
-            KCFLAGS="-Wno-align-mismatch -Wno-unused-function -Wno-array-parameter -Wno-void-pointer-to-int-cast -Wno-sometimes-uninitialized -Wno-compare-distinct-pointer-types -Wno-pointer-to-int-cast -Wno-uninitialized"
+            KCFLAGS="-DCONFIG_KSU=1 -DCONFIG_KSU_USE_KPROBES=1 -Wno-align-mismatch -Wno-unused-function -Wno-array-parameter -Wno-void-pointer-to-int-cast -Wno-sometimes-uninitialized -Wno-compare-distinct-pointer-types -Wno-pointer-to-int-cast -Wno-uninitialized"
 
           if [ ! -f "${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image" ]; then
             echo "ERROR: Kernel image not generated!"
@@ -209,6 +211,7 @@ jobs:
           fi
           echo "Kernel build succeeded."
 
+      # ---------- 打包 AnyKernel3 ----------
       - name: Clone AnyKernel3
         run: git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel3
 
