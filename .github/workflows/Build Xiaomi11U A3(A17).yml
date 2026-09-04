@@ -81,59 +81,58 @@ jobs:
           echo "CCACHE_DIR=~/.ccache" >> $GITHUB_ENV
           ccache -M 6G
 
+      # ---------- 克隆 KernelSU-Next 到 drivers/kernelsu ----------
       - name: Clone KernelSU-Next
         working-directory: kernel
         run: |
-          echo "Cloning KernelSU-Next (legacy) into kernel/KernelSU..."
-          rm -rf KernelSU
-          git clone --depth=1 -b legacy https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU
-          if [ ! -f "KernelSU/kernel/Makefile" ]; then
-            echo "ERROR: KernelSU kernel Makefile not found"
+          echo "Cloning KernelSU-Next (legacy) into drivers/kernelsu..."
+          rm -rf drivers/kernelsu
+          git clone --depth=1 -b legacy https://github.com/KernelSU-Next/KernelSU-Next.git drivers/kernelsu
+          if [ ! -f "drivers/kernelsu/kernel/Makefile" ] && [ ! -f "drivers/kernelsu/Makefile" ]; then
+            echo "ERROR: KernelSU Makefile not found"
             exit 1
           fi
           echo "KernelSU-Next cloned successfully."
 
-      # ---------- 强力修改 KernelSU Makefile，强制内建编译 ----------
+      # ---------- 强制内建编译 ----------
       - name: Patch KernelSU Makefile to built-in
         working-directory: kernel
         run: |
-          echo "Patching KernelSU/kernel/Makefile to force built-in..."
-          # 将所有 obj-* 替换为 obj-y（包括 obj-m, obj-$(CONFIG_KSU) 等）
-          sed -i 's/obj-[^ ]*/obj-y/g' KernelSU/kernel/Makefile
-          # 如果还有 KSU-y 之类的变量，也替换为 obj-y
-          sed -i 's/KSU-y/obj-y/g' KernelSU/kernel/Makefile
-          echo "Modified Makefile content:"
-          cat KernelSU/kernel/Makefile
+          echo "Patching KernelSU Makefile to built-in..."
+          if [ -f "drivers/kernelsu/kernel/Makefile" ]; then
+            sed -i 's/obj-m/obj-y/g' drivers/kernelsu/kernel/Makefile
+            sed -i 's/KSU-y/obj-y/g' drivers/kernelsu/kernel/Makefile
+          fi
+          if [ -f "drivers/kernelsu/Makefile" ]; then
+            sed -i 's/obj-m/obj-y/g' drivers/kernelsu/Makefile
+            sed -i 's/KSU-y/obj-y/g' drivers/kernelsu/Makefile
+          fi
+          echo "Makefile patched."
 
-      # ---------- 集成 KernelSU 到根构建系统 ----------
+      # ---------- 集成到 drivers/ Kconfig 和 Makefile ----------
       - name: Integrate KernelSU into Kernel Build
         working-directory: kernel
         run: |
-          echo "Integrating KernelSU into kernel build (obj-y)..."
+          echo "Integrating KernelSU into kernel build (drivers)..."
           # 清除旧条目
-          sed -i '/^source.*KernelSU/d' Kconfig
-          sed -i '/obj-.*KernelSU/d' Makefile
+          sed -i '/^source.*kernelsu/d' drivers/Kconfig
+          sed -i '/obj-.*kernelsu/d' drivers/Makefile
 
-          # 添加 Kconfig source
-          KSU_KCONFIG="KernelSU/kernel/Kconfig"
-          if [ ! -f "$KSU_KCONFIG" ]; then
-            echo "ERROR: Kconfig not found at $KSU_KCONFIG"
+          # 查找并添加 Kconfig
+          KSU_KCONFIG=""
+          if [ -f "drivers/kernelsu/Kconfig" ]; then
+            KSU_KCONFIG="drivers/kernelsu/Kconfig"
+          elif [ -f "drivers/kernelsu/kernel/Kconfig" ]; then
+            KSU_KCONFIG="drivers/kernelsu/kernel/Kconfig"
+          else
+            echo "ERROR: Kconfig not found in drivers/kernelsu"
             exit 1
           fi
-          echo "source \"$KSU_KCONFIG\"" >> Kconfig
+          echo "source \"$KSU_KCONFIG\"" >> drivers/Kconfig
+          echo "Added source for KernelSU Kconfig."
 
-          # 添加 obj-y 引用 (递归编译子目录)
-          KSU_MAKEDIR="KernelSU/kernel"
-          if [ ! -f "$KSU_MAKEDIR/Makefile" ]; then
-            echo "ERROR: Makefile not found in $KSU_MAKEDIR"
-            exit 1
-          fi
-          echo "obj-y += $KSU_MAKEDIR/" >> Makefile
-
-          # 清理 drivers/Makefile 中可能残留的错误条目
-          if grep -q "obj-\$(CONFIG_KSU) += kernelsu/" drivers/Makefile 2>/dev/null; then
-            sed -i '/obj-\$(CONFIG_KSU) += kernelsu\//d' drivers/Makefile
-          fi
+          # 添加 Makefile 引用
+          echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
           echo "KernelSU integration complete."
 
       # ---------- 修复 defconfig ----------
@@ -158,6 +157,7 @@ jobs:
           CONFIG_KSU=y
           CONFIG_KSU_DEBUG=n
           CONFIG_KSU_KPROBES_HOOK=y
+          CONFIG_KSU_USE_KPROBES=y   # 额外选项，解决 "No hooks" 问题
           # Kprobes
           CONFIG_HAVE_KPROBES=y
           CONFIG_KPROBES=y
@@ -174,6 +174,7 @@ jobs:
           CONFIG_FRAME_WARN=4096
           EOF
           echo "Defconfig updated successfully."
+          grep -E "CONFIG_(KSU|KPROBES|MODULES|SELINUX|FRAME_WARN)=" $DEFCONFIG_PATH || true
 
       - name: Set PATH for Clang
         run: echo "$(pwd)/clang/bin" >> $GITHUB_PATH
@@ -202,12 +203,11 @@ jobs:
           echo "=== Verifying Kprobe configuration ==="
           grep -E "CONFIG_(KPROBES|KSU|KPROBE_EVENTS)" ${{ env.OUTPUT_DIR }}/.config || true
 
-          echo "=== Checking root build integration ==="
-          grep -E "obj-.*KernelSU" Makefile || echo "No obj-y line found"
-          grep -E "source.*KernelSU" Kconfig || echo "No source line found"
+          echo "=== Checking drivers integration ==="
+          grep -E "source.*kernelsu" drivers/Kconfig || echo "No source line in drivers/Kconfig"
+          grep -E "obj-.*kernelsu" drivers/Makefile || echo "No obj line in drivers/Makefile"
 
           echo "Compiling kernel..."
-          # 屏蔽各类无害警告（包含所有已知类型）
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} \
             KCFLAGS="-Wno-align-mismatch -Wno-unused-function -Wno-array-parameter -Wno-void-pointer-to-int-cast -Wno-sometimes-uninitialized -Wno-compare-distinct-pointer-types -Wno-pointer-to-int-cast -Wno-uninitialized"
 
