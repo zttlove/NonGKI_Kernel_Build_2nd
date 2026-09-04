@@ -178,14 +178,32 @@ jobs:
           echo "KernelSU build files setup complete."
           grep -A 5 "KernelSU" drivers/Makefile || true
     
-      - name: Generate SELinux flask.h
+            - name: Generate defconfig
         run: |
-          # 切换到内核源码根目录，改成你实际内核文件夹路径
-          cd $GITHUB_WORKSPACE/kernel
-          ls -la security/selinux/
-          cd security/selinux/include
-          chmod +x genheaders.sh
-          ./genheaders.sh
+          cd $KERNEL_ROOT
+          make ARCH=${ARCH} star_defconfig
+
+      - name: Fix SUSFS‑2.1 broken selinux Makefile & generate flask.h
+        run: |
+          cd $KERNEL_ROOT
+          # 补回被SUSFS2.1抹除的flask.h生成规则
+          cat >> security/selinux/Makefile <<'SELINUX_FIX'
+          quiet_cmd_flask = GEN     $@
+          cmd_flask = $(obj)/genflask.sh $< > $@
+          $(obj)/flask.h: $(src)/include/classmap.h FORCE $(call cmd,flask)
+          targets += flask.h
+          SELINUX_FIX
+          # 确保genflask.sh可执行
+          chmod +x security/selinux/genflask.sh
+          # 手动触发生成flask.h
+          make security/selinux/flask.h ARCH=${ARCH}
+
+      - name: Compile kernel
+        run: |
+          cd $KERNEL_ROOT
+          make -j$(nproc) ARCH=${ARCH} \
+            CROSS_COMPILE=${CLANG_PATH}/bin/aarch64-linux-gnu- \
+            CLANG_TRIPLE=aarch64-linux-gnu-
 
 
       - name: Fix defconfig for Kprobes + Modules
