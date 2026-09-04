@@ -211,8 +211,10 @@ jobs:
           CONFIG_MODULE_SIG_SHA256=y
           CONFIG_MODULE_SIG_FORCE=n
           # SELinux
+          CONFIG_SECURITY=y
           CONFIG_SECURITY_SELINUX=y
           CONFIG_SECURITY_SELINUX_BOOTPARAM=y
+          CONFIG_SECURITY_SELINUX_DISABLE=y
           CONFIG_FRAME_WARN=4096
           EOF
           echo "Defconfig updated successfully."
