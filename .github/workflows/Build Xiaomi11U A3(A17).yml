@@ -94,57 +94,29 @@ jobs:
           fi
           echo "KernelSU-Next cloned successfully."
 
-      # ---------- 集成 KernelSU（更彻底） ----------
+      # ---------- 集成 KernelSU ----------
       - name: Integrate KernelSU into Kernel Build
         working-directory: kernel
         run: |
           echo "Integrating KernelSU into kernel build..."
-          # 1. 清除所有可能冲突的旧条目
           sed -i '/^source.*KernelSU/d' Kconfig
           sed -i '/obj-.*KernelSU/d' Makefile
-          sed -i '/obj-y.*KernelSU/d' Makefile
-
-          # 2. 添加 Kconfig source（指向正确的路径）
-          #  legacy 分支的 Kconfig 在 KernelSU/kernel/Kconfig
           KSU_KCONFIG="KernelSU/kernel/Kconfig"
           if [ ! -f "$KSU_KCONFIG" ]; then
             echo "ERROR: Kconfig not found at $KSU_KCONFIG"
             exit 1
           fi
           echo "source \"$KSU_KCONFIG\"" >> Kconfig
-          echo "Added source for KernelSU Kconfig."
-
-          # 3. 添加 Makefile 引用（使用 obj-y 包含整个目录）
-          #   Legacy 分支的 Makefile 在 KernelSU/kernel/Makefile
           KSU_MAKEDIR="KernelSU/kernel"
           if [ ! -f "$KSU_MAKEDIR/Makefile" ]; then
             echo "ERROR: Makefile not found in $KSU_MAKEDIR"
             exit 1
           fi
-          # 使用条件编译，确保仅当 CONFIG_KSU=y 时编译
           echo "obj-\$(CONFIG_KSU) += $KSU_MAKEDIR/" >> Makefile
-          echo "Added KernelSU directory to Makefile."
-
-          # 4. 清理 drivers/Makefile 中可能残留的错误条目
           if grep -q "obj-\$(CONFIG_KSU) += kernelsu/" drivers/Makefile 2>/dev/null; then
             sed -i '/obj-\$(CONFIG_KSU) += kernelsu\//d' drivers/Makefile
-            echo "Removed stale KernelSU entry from drivers/Makefile."
           fi
-
           echo "KernelSU integration complete."
-
-      # ---------- 诊断：列出 KernelSU 目录结构 ----------
-      - name: Debug KernelSU structure
-        working-directory: kernel
-        run: |
-          echo "=== KernelSU directory tree ==="
-          find KernelSU -type f -name "*.c" -o -name "*.h" -o -name "Makefile" -o -name "Kconfig" | sort
-          echo "=== Content of KernelSU/kernel/Makefile ==="
-          cat KernelSU/kernel/Makefile || echo "Makefile not found"
-          echo "=== Checking root Kconfig for source ==="
-          grep "source.*KernelSU" Kconfig || echo "No source line found"
-          echo "=== Checking root Makefile for obj ==="
-          grep "obj.*KernelSU" Makefile || echo "No obj line found"
 
       # ---------- 修复 defconfig ----------
       - name: Fix defconfig for Kprobes + Modules
@@ -157,14 +129,12 @@ jobs:
             exit 1
           fi
           cp $DEFCONFIG_PATH ${DEFCONFIG_PATH}.bak
-
           sed -i '/^CONFIG_KSU/d' $DEFCONFIG_PATH
           sed -i '/^CONFIG_KPROBES/d' $DEFCONFIG_PATH
           sed -i '/^CONFIG_MODULES/d' $DEFCONFIG_PATH
           sed -i '/^CONFIG_MODULE_SIG/d' $DEFCONFIG_PATH
           sed -i '/^CONFIG_SECURITY_SELINUX/d' $DEFCONFIG_PATH
           sed -i '/^CONFIG_KPROBE_EVENTS/d' $DEFCONFIG_PATH
-
           cat >> $DEFCONFIG_PATH << 'EOF'
           # KernelSU
           CONFIG_KSU=y
@@ -183,16 +153,14 @@ jobs:
           # SELinux
           CONFIG_SECURITY_SELINUX=y
           CONFIG_SECURITY_SELINUX_BOOTPARAM=y
-          # 增加栈帧警告阈值（消除 ld.lld 警告）
           CONFIG_FRAME_WARN=4096
           EOF
           echo "Defconfig updated successfully."
-          grep -E "CONFIG_(KSU|KPROBES|MODULES|SELINUX|FRAME_WARN)=" $DEFCONFIG_PATH || true
 
       - name: Set PATH for Clang
         run: echo "$(pwd)/clang/bin" >> $GITHUB_PATH
 
-      # ---------- 编译内核 ----------
+      # ---------- 编译内核（新增 KCFLAGS 屏蔽对齐警告） ----------
       - name: Build Kernel
         working-directory: kernel
         run: |
@@ -217,7 +185,9 @@ jobs:
           grep -E "CONFIG_(KPROBES|KSU|KPROBE_EVENTS)" ${{ env.OUTPUT_DIR }}/.config || true
 
           echo "Compiling kernel..."
-          make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }}
+          # ⬇️ 关键修改：添加 KCFLAGS 屏蔽 -Walign-mismatch（以及可选的 -Wno-unused-function）
+          make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} \
+            KCFLAGS="-Wno-align-mismatch"
 
           if [ ! -f "${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image" ]; then
             echo "ERROR: Kernel image not generated!"
@@ -225,11 +195,10 @@ jobs:
           fi
           echo "Kernel build succeeded."
 
-      # ---------- 提前克隆 AnyKernel3 ----------
+      # ---------- 打包 AnyKernel3 ----------
       - name: Clone AnyKernel3
         run: git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel3
 
-      # ---------- 收集模块并复制到 AnyKernel3 ----------
       - name: Collect Kernel Modules
         if: env.PACK_KMODULES == 'true'
         working-directory: kernel
@@ -243,7 +212,6 @@ jobs:
           find "$MODULE_DIR" -name "*.ko" -exec cp --parents {} ../anykernel3/modules/system/lib/modules/ \;
           echo "Modules collected."
 
-      # ---------- 配置 AnyKernel3 ----------
       - name: Configure AnyKernel3
         working-directory: anykernel3
         run: |
