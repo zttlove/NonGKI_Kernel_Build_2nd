@@ -99,12 +99,10 @@ jobs:
         working-directory: kernel
         run: |
           echo "Integrating KernelSU into kernel build..."
-          # 在 drivers/Kconfig 中添加 source（如果尚未添加）
           if ! grep -q "source \"drivers/kernelsu/Kconfig\"" drivers/Kconfig; then
             echo "source \"drivers/kernelsu/Kconfig\"" >> drivers/Kconfig
             echo "Added KernelSU Kconfig source in drivers/Kconfig."
           fi
-          # 在 drivers/Makefile 中添加 obj-$(CONFIG_KSU) += kernelsu/
           if ! grep -q "obj-\$(CONFIG_KSU) += kernelsu/" drivers/Makefile; then
             echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
             echo "Added KernelSU to drivers/Makefile."
@@ -157,6 +155,7 @@ jobs:
       - name: Set PATH for Clang
         run: echo "$(pwd)/clang/bin" >> $GITHUB_PATH
 
+      # ---------- 编译内核 ----------
       - name: Build Kernel
         working-directory: kernel
         run: |
@@ -189,6 +188,11 @@ jobs:
           fi
           echo "Kernel build succeeded."
 
+      # ---------- 提前克隆 AnyKernel3 ----------
+      - name: Clone AnyKernel3
+        run: git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel3
+
+      # ---------- 收集模块并复制到 AnyKernel3 ----------
       - name: Collect Kernel Modules
         if: env.PACK_KMODULES == 'true'
         working-directory: kernel
@@ -198,13 +202,13 @@ jobs:
           mkdir -p "$MODULE_DIR"
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} \
             INSTALL_MOD_PATH="$MODULE_DIR" modules_install
+          # 创建 AnyKernel3 模块目录
           mkdir -p ../anykernel3/modules/system/lib/modules
+          # 复制所有 .ko 文件，保留子目录结构（如 extra/、kernel/ 等）
           find "$MODULE_DIR" -name "*.ko" -exec cp --parents {} ../anykernel3/modules/system/lib/modules/ \;
           echo "Modules collected."
 
-      - name: Clone AnyKernel3
-        run: git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel3
-
+      # ---------- 配置 AnyKernel3 ----------
       - name: Configure AnyKernel3
         working-directory: anykernel3
         run: |
