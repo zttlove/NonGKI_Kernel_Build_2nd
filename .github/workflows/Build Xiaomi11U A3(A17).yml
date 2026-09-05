@@ -193,7 +193,7 @@ jobs:
           echo "KernelSU build files setup complete."
           grep -A 5 "KernelSU" drivers/Makefile || true
 
-      - name: Fix SELinux headers
+            - name: Fix SELinux headers
         working-directory: kernel
         run: |
           echo "Fixing SELinux header files..."
@@ -391,25 +391,27 @@ jobs:
 
           echo "Created security.h"
 
-          # 创建干净的 avc.h
-          echo "Creating clean avc.h..."
+          # 创建完整的 avc.h - 与 SUSFS 补丁兼容
+          echo "Creating complete avc.h..."
           cat > security/selinux/include/avc.h << 'AVC_H'
           #ifndef _SELINUX_AVC_H_
           #define _SELINUX_AVC_H_
 
           #include <linux/types.h>
+          #include <linux/spinlock.h>
           #include "flask.h"
 
           #define XPERMS_ALLOWED       1
           #define XPERMS_AUDITALLOW    2
           #define XPERMS_DONTAUDIT     4
 
+          /* Extended permissions data - compatible with SUSFS */
           struct extended_perms_data {
               u8 p[64];
           };
 
           struct extended_perms {
-              struct extended_perms_data *p;
+              struct extended_perms_data drivers;
               u32 len;
           };
 
@@ -418,6 +420,7 @@ jobs:
               struct extended_perms *auditallow;
               struct extended_perms *dontaudit;
               u32 used;
+              u32 driver;
           };
 
           struct av_decision {
@@ -428,6 +431,16 @@ jobs:
               u32 flags;
           };
 
+          struct avc_cache_stats {
+              unsigned int lookups;
+              unsigned int hits;
+              unsigned int misses;
+              unsigned int allocations;
+              unsigned int reclaims;
+              unsigned int frees;
+          };
+
+          /* Function declarations */
           int slow_avc_audit(struct selinux_state *state,
                              u32 ssid, u32 tsid, u16 tclass,
                              u32 requested, u32 audited,
@@ -438,6 +451,11 @@ jobs:
           static inline int security_xperm_test(const u8 *perms, u32 perm)
           {
               return (perms[perm >> 3] >> (perm & 7)) & 1;
+          }
+
+          static inline void security_xperm_set(u8 *perms, u32 perm)
+          {
+              perms[perm >> 3] |= 1 << (perm & 7);
           }
 
           #endif /* _SELINUX_AVC_H_ */
