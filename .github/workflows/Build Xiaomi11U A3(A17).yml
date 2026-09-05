@@ -193,99 +193,30 @@ jobs:
           echo "KernelSU build files setup complete."
           grep -A 5 "KernelSU" drivers/Makefile || true
 
-      - name: Diagnose and fix SELinux Makefile
+      - name: Fix SELinux directory structure
         working-directory: kernel
         run: |
-          echo "=== Checking SELinux directory structure ==="
-          ls -la security/ 2>/dev/null || echo "security/ directory not found!"
-          echo ""
-          echo "=== Finding SELinux related directories ==="
-          find security -name "*selinux*" -type d 2>/dev/null | head -10
-          echo ""
-          echo "=== Finding Makefiles in security ==="
-          find security -name "Makefile" -type f 2>/dev/null | head -20
-          echo ""
-          echo "=== Finding genflask.sh ==="
-          find security -name "genflask.sh" -type f 2>/dev/null
-          if [ -d "security/selinux" ]; then
-            echo "SELinux directory found, applying fixes..."
-            if [ -f "security/selinux/Makefile" ]; then
-              echo "security/selinux/Makefile exists"
-            else
-              echo "Creating security/selinux/Makefile..."
-              mkdir -p security/selinux
-              cat > security/selinux/Makefile << 'SELINUX_MAKEFILE'
-              #
-              # Makefile for the SELinux security module
-              #
-              obj-$(CONFIG_SECURITY_SELINUX) := selinux.o
-              selinux-y := hooks.o selinuxfs.o netif.o netnode.o netport.o \
-                           exports.o status.o
-              selinux-y += ss/built-in.a
-              quiet_cmd_flask = GEN     $@
-              cmd_flask = $(obj)/genflask.sh $< > $@
-              $(obj)/flask.h: $(src)/include/classmap.h FORCE
-                      $(call if_changed,flask)
-              targets += flask.h
-              ccflags-y += -I$(srctree)/security/selinux/include
-              ccflags-y += -I$(srctree)/security/selinux/ss
-              SELINUX_MAKEFILE
-              echo "Created security/selinux/Makefile"
-            fi
-            if [ ! -d "security/selinux/ss" ]; then
-              mkdir -p security/selinux/ss
-            fi
-            if [ ! -f "security/selinux/ss/Makefile" ]; then
-              echo "Creating security/selinux/ss/Makefile..."
-              cat > security/selinux/ss/Makefile << 'SS_MAKEFILE'
-              #
-              # Makefile for the SELinux security module (ss subdirectory)
-              #
-              obj-y := avc.o services.o context.o ebitmap.o hashtab.o \
-                       sidtab.o symtab.o mls.o conditional.o policy.o \
-                       constraint.o policydb.o
-              SS_MAKEFILE
-              echo "Created security/selinux/ss/Makefile"
-            fi
-            if [ ! -f "security/selinux/genflask.sh" ]; then
-              echo "Creating genflask.sh..."
-              cat > security/selinux/genflask.sh << 'GENFLASK_SH'
-              #!/bin/sh
-              grep -E "^[[:space:]]*S_(SECCLASS_[A-Z0-9_]+)" "$1" | \
-                sed -E 's/^[[:space:]]*S_\(SECCLASS_([A-Z0-9_]+)\)/\1/' | \
-                while read class; do
-                  echo "#define SECCLASS_$class $class"
-                done
-              echo ""
-              echo "#define SECCLASS_NONE 0"
-             GENFLASK_SH
-              chmod +x security/selinux/genflask.sh
-              echo "Created genflask.sh"
-            fi
-            if [ -f "security/selinux/genflask.sh" ] && [ -f "security/selinux/include/classmap.h" ]; then
-              echo "Generating flask.h..."
-              cd security/selinux
-              ./genflask.sh include/classmap.h > flask.h
-              cd ../..
-              echo "flask.h generated"
-            else
-              echo "Warning: Cannot generate flask.h - missing genflask.sh or classmap.h"
-              echo "Creating placeholder flask.h..."
-              echo "/* Placeholder flask.h */" > security/selinux/flask.h
-              echo "#define SECCLASS_NONE 0" >> security/selinux/flask.h
-            fi
-          else
-            echo "SELinux directory not found! This kernel may not support SELinux."
-            echo "Creating dummy SELinux structure to satisfy build requirements..."
-            mkdir -p security/selinux/include
-            mkdir -p security/selinux/ss
-            echo "/* Placeholder */" > security/selinux/flask.h
-            echo "#define SECCLASS_NONE 0" >> security/selinux/flask.h
-            touch security/selinux/Makefile
-            touch security/selinux/ss/Makefile
-            echo "Created dummy SELinux files"
+          echo "Fixing SELinux directory structure..."
+          mkdir -p security/selinux/include
+          mkdir -p security/selinux/ss
+          echo "/* Placeholder flask.h */" > security/selinux/flask.h
+          echo "#define SECCLASS_NONE 0" >> security/selinux/flask.h
+          echo "Created placeholder flask.h"
+          if [ ! -f security/selinux/Makefile ]; then
+            echo "Creating security/selinux/Makefile..."
+            echo "obj-\$(CONFIG_SECURITY_SELINUX) := selinux.o" > security/selinux/Makefile
+            echo "selinux-y := hooks.o selinuxfs.o netif.o netnode.o netport.o exports.o status.o" >> security/selinux/Makefile
+            echo "selinux-y += ss/built-in.a" >> security/selinux/Makefile
+            echo "ccflags-y += -I\$(srctree)/security/selinux/include" >> security/selinux/Makefile
+            echo "ccflags-y += -I\$(srctree)/security/selinux/ss" >> security/selinux/Makefile
+            echo "Created security/selinux/Makefile"
           fi
-          echo "=== SELinux fix completed ==="
+          if [ ! -f security/selinux/ss/Makefile ]; then
+            echo "Creating security/selinux/ss/Makefile..."
+            echo "obj-y := avc.o services.o context.o ebitmap.o hashtab.o sidtab.o symtab.o mls.o conditional.o policy.o constraint.o policydb.o" > security/selinux/ss/Makefile
+            echo "Created security/selinux/ss/Makefile"
+          fi
+          echo "SELinux fix completed."
 
       - name: Generate defconfig with found config
         working-directory: kernel
