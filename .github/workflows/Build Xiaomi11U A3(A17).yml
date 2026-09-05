@@ -358,16 +358,15 @@ jobs:
           echo "Created complete flask.h"
           cp security/selinux/flask.h security/selinux/include/flask.h
 
-          echo "Checking security.h..."
+          echo "Fixing security.h - removing duplicates and adding function..."
           if [ -f security/selinux/include/security.h ]; then
-            if grep -q "security_is_socket_class" security/selinux/include/security.h; then
-              echo "security_is_socket_class already exists, skipping..."
-            else
-              printf '\n/* Added for compatibility */\nstatic inline int security_is_socket_class(u16 class)\n{\n    return (class >= SECCLASS_SOCKET && class <= SECCLASS_SCTP_SOCKET);\n}\n' >> security/selinux/include/security.h
-              echo "Added security_is_socket_class to security.h"
-            fi
+            # 删除所有 security_is_socket_class 定义
+            sed -i '/security_is_socket_class/,/^}/d' security/selinux/include/security.h
+            # 在文件末尾添加定义
+            printf '\n/* Added for compatibility */\nstatic inline int security_is_socket_class(u16 class)\n{\n    return (class >= SECCLASS_SOCKET && class <= SECCLASS_SCTP_SOCKET);\n}\n' >> security/selinux/include/security.h
+            echo "Added security_is_socket_class to security.h"
           else
-            echo "Creating security/selinux/include/security.h..."
+            echo "security/selinux/include/security.h not found, creating..."
             printf '%s\n' \
               '#ifndef _SELINUX_SECURITY_H_' \
               '#define _SELINUX_SECURITY_H_' \
@@ -405,6 +404,7 @@ jobs:
           fi
 
           echo "SELinux fix completed."
+          
       - name: Generate defconfig with found config
         working-directory: kernel
         run: |
