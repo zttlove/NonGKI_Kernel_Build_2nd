@@ -122,16 +122,18 @@ jobs:
 
       - name: 🔧 Patch Hide Stuff
         uses: ./.github/workflows/patch-hide-stuff
-          
-      - name: Purge SUSFS code injection (no‑git / no‑patch)
+      
+      - name: 修正错误
         run: |
-          set -euo pipefail
           cd "$GITHUB_WORKSPACE/device_kernel"
-
-          # 1. 清除defconfig所有SUSFS配置
-          sed -i '/CONFIG_KSU_SUSFS/d' arch/arm64/configs/star_defconfig
-          sed -i '/CONFIG_KSU_SUSFS_/d' arch/arm64/configs/star_defconfig
-
+          # 目标文件列表
+          GKI_INCOMPATIBLE_FILES=(
+          "fs/proc/task_mmu.c"
+          "kernel/kallsyms.c"
+          )
+          echo "=== Reverting GKI-incompatible source files ==="
+          git checkout HEAD -- "${GKI_INCOMPATIBLE_FILES[@]}"
+          
           
 
 
