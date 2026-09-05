@@ -193,376 +193,139 @@ jobs:
           echo "KernelSU build files setup complete."
           grep -A 5 "KernelSU" drivers/Makefile || true
 
-      - name: Fix SELinux directory structure
+      - name: Fix SELinux headers
         working-directory: kernel
         run: |
-          echo "Fixing SELinux directory structure..."
+          echo "Fixing SELinux header files..."
+
+          # 确保目录存在
           mkdir -p security/selinux/include
           mkdir -p security/selinux/ss
 
-          echo "Creating complete flask.h with all definitions..."
-          cat > security/selinux/flask.h <<- 'EOF'
-          /* Auto-generated flask.h - Complete definitions for SELinux */
+          # 检查 flask.h 是否存在，如果存在则补充缺失的定义
+          if [ -f security/selinux/flask.h ]; then
+            echo "flask.h exists, adding missing definitions..."
+            if ! grep -q "SECINITSID_NUM" security/selinux/flask.h; then
+              printf '\n#define SECINITSID_DEVNULL 14\n#define SECINITSID_NUM 15\n' >> security/selinux/flask.h
+            fi
+            if ! grep -q "SECCLASS_PERF_EVENT" security/selinux/flask.h; then
+              printf '\n#define SECCLASS_PERF_EVENT 123\n' >> security/selinux/flask.h
+            fi
+            # 复制到 include 目录
+            cp security/selinux/flask.h security/selinux/include/flask.h
+          else
+            echo "flask.h not found, creating..."
+            printf '%s\n' \
+              '/* Auto-generated flask.h */' \
+              '#define SECINITSID_NONE 0' \
+              '#define SECINITSID_UNLABELED 1' \
+              '#define SECINITSID_KERNEL 3' \
+              '#define SECINITSID_FILE 11' \
+              '#define SECINITSID_DEVNULL 14' \
+              '#define SECINITSID_NUM 15' \
+              '#define SECCLASS_NONE 0' \
+              '#define SECCLASS_PROCESS 2' \
+              '#define SECCLASS_SOCKET 14' \
+              '#define SECCLASS_TCP_SOCKET 15' \
+              '#define SECCLASS_UDP_SOCKET 16' \
+              '#define SECCLASS_UNIX_STREAM_SOCKET 23' \
+              '#define SECCLASS_UNIX_DGRAM_SOCKET 24' \
+              '#define SECCLASS_SCTP_SOCKET 48' \
+              '#define SECCLASS_PROCESS2 87' \
+              '#define SECCLASS_CAP_USERNS 88' \
+              '#define SECCLASS_CAP2_USERNS 89' \
+              '#define SECCLASS_BINDER 90' \
+              '#define SECCLASS_ANON_INODE 91' \
+              '#define SECCLASS_PACKET 92' \
+              '#define SECCLASS_MSGQ 93' \
+              '#define SECCLASS_MSG 94' \
+              '#define SECCLASS_SEM 95' \
+              '#define SECCLASS_SHM 96' \
+              '#define SECCLASS_IPC 97' \
+              '#define SECCLASS_PERF_EVENT 123' \
+              > security/selinux/flask.h
+            cp security/selinux/flask.h security/selinux/include/flask.h
+          fi
 
-          /* ============================================
-           * SECINITSID definitions - Initial SIDs
-           * ============================================ */
-          #define SECINITSID_NONE                          0
-          #define SECINITSID_UNLABELED                    1
-          #define SECINITSID_SECURITY                     2
-          #define SECINITSID_KERNEL                       3
-          #define SECINITSID_ANY_SOCKET                   4
-          #define SECINITSID_PORT                         5
-          #define SECINITSID_NETIF                        6
-          #define SECINITSID_NETMSG                       7
-          #define SECINITSID_NODE                         8
-          #define SECINITSID_FILE                        11
-          #define SECINITSID_INIT                        12
-          #define SECINITSID_SYSTEM                      13
-          #define SECINITSID_DEVNULL                     14
-          #define SECINITSID_NUM                         15
+          # 修复 security.h
+          if [ -f security/selinux/include/security.h ]; then
+            echo "security.h exists, checking for missing functions..."
+            if ! grep -q "security_is_socket_class" security/selinux/include/security.h; then
+              printf '\nstatic inline int security_is_socket_class(u16 class)\n{\n    return (class >= SECCLASS_SOCKET && class <= SECCLASS_SCTP_SOCKET);\n}\n' >> security/selinux/include/security.h
+            fi
+            if ! grep -q "security_sid_to_context" security/selinux/include/security.h; then
+              printf '\nint security_sid_to_context(struct selinux_state *state, u32 sid, char **scontext, u32 *scontext_len);\n' >> security/selinux/include/security.h
+            fi
+          else
+            echo "security.h not found, creating..."
+            printf '%s\n' \
+              '#ifndef _SELINUX_SECURITY_H_' \
+              '#define _SELINUX_SECURITY_H_' \
+              '#include <linux/types.h>' \
+              '#include "flask.h"' \
+              'struct selinux_state;' \
+              'int security_sid_to_context(struct selinux_state *state, u32 sid, char **scontext, u32 *scontext_len);' \
+              'static inline int security_is_socket_class(u16 class) { return (class >= SECCLASS_SOCKET && class <= SECCLASS_SCTP_SOCKET); }' \
+              '#endif' \
+              > security/selinux/include/security.h
+          fi
 
-          /* ============================================
-           * SECCLASS definitions - Security Classes
-           * ============================================ */
+          # 修复 avc.h
+          if [ -f security/selinux/include/avc.h ]; then
+            echo "avc.h exists, checking for missing structures..."
+            if ! grep -q "struct av_decision" security/selinux/include/avc.h; then
+              printf '\nstruct av_decision { u32 allowed; u32 auditallow; u32 auditdeny; u32 seqno; u32 flags; };\n' >> security/selinux/include/avc.h
+            fi
+            if ! grep -q "XPERMS_ALLOWED" security/selinux/include/avc.h; then
+              printf '\n#define XPERMS_ALLOWED 1\n#define XPERMS_AUDITALLOW 2\n#define XPERMS_DONTAUDIT 4\n' >> security/selinux/include/avc.h
+            fi
+            if ! grep -q "slow_avc_audit" security/selinux/include/avc.h; then
+              printf '\nint slow_avc_audit(struct selinux_state *state, u32 ssid, u32 tsid, u16 tclass, u32 requested, u32 audited, struct av_decision *avd, int result, struct common_audit_data *a);\n' >> security/selinux/include/avc.h
+            fi
+            if ! grep -q "security_xperm_set" security/selinux/include/avc.h; then
+              printf '\nvoid security_xperm_set(u8 *perms, u32 perm);\n' >> security/selinux/include/avc.h
+            fi
+          else
+            echo "avc.h not found, creating..."
+            printf '%s\n' \
+              '#ifndef _SELINUX_AVC_H_' \
+              '#define _SELINUX_AVC_H_' \
+              '#include <linux/types.h>' \
+              '#include "flask.h"' \
+              '#define XPERMS_ALLOWED 1' \
+              '#define XPERMS_AUDITALLOW 2' \
+              '#define XPERMS_DONTAUDIT 4' \
+              'struct extended_perms_data { u8 p[64]; };' \
+              'struct extended_perms { struct extended_perms_data *p; u32 len; };' \
+              'struct extended_perms_decision { struct extended_perms *allowed; struct extended_perms *auditallow; struct extended_perms *dontaudit; u32 used; };' \
+              'struct av_decision { u32 allowed; u32 auditallow; u32 auditdeny; u32 seqno; u32 flags; };' \
+              'int slow_avc_audit(struct selinux_state *state, u32 ssid, u32 tsid, u16 tclass, u32 requested, u32 audited, struct av_decision *avd, int result, struct common_audit_data *a);' \
+              'void security_xperm_set(u8 *perms, u32 perm);' \
+              'static inline int security_xperm_test(const u8 *perms, u32 perm) { return (perms[perm >> 3] >> (perm & 7)) & 1; }' \
+              '#endif' \
+              > security/selinux/include/avc.h
+          fi
 
-          /* Core classes */
-          #define SECCLASS_NONE                           0
-          #define SECCLASS_SECURITY                       1
-          #define SECCLASS_PROCESS                        2
-          #define SECCLASS_SYSTEM                         3
-          #define SECCLASS_CAPABILITY                     4
-          #define SECCLASS_FILESYSTEM                     5
-          #define SECCLASS_FILE                           6
-          #define SECCLASS_DIR                            7
-          #define SECCLASS_FD                             8
-          #define SECCLASS_LNK_FILE                       9
-          #define SECCLASS_CHR_FILE                       10
-          #define SECCLASS_BLK_FILE                       11
-          #define SECCLASS_SOCK_FILE                      12
-          #define SECCLASS_FIFO_FILE                      13
-          #define SECCLASS_SOCKET                         14
-          #define SECCLASS_TCP_SOCKET                     15
-          #define SECCLASS_UDP_SOCKET                     16
-          #define SECCLASS_RAWIP_SOCKET                   17
-          #define SECCLASS_NODE                           18
-          #define SECCLASS_NETIF                          19
-          #define SECCLASS_NETLINK_SOCKET                 20
-          #define SECCLASS_PACKET_SOCKET                  21
-          #define SECCLASS_KEY_SOCKET                     22
-          #define SECCLASS_UNIX_STREAM_SOCKET             23
-          #define SECCLASS_UNIX_DGRAM_SOCKET              24
-          #define SECCLASS_NETLINK_ROUTE_SOCKET           25
-          #define SECCLASS_NETLINK_FIREWALL_SOCKET        26
-          #define SECCLASS_NETLINK_TCPDIAG_SOCKET         27
-          #define SECCLASS_NETLINK_NFLOG_SOCKET           28
-          #define SECCLASS_NETLINK_XFRM_SOCKET            29
-          #define SECCLASS_NETLINK_SELINUX_SOCKET         30
-          #define SECCLASS_NETLINK_AUDIT_SOCKET           31
-          #define SECCLASS_NETLINK_IP6FW_SOCKET           32
-          #define SECCLASS_NETLINK_DNRT_SOCKET            33
-          #define SECCLASS_ASSOCIATION                    34
-          #define SECCLASS_NETLINK_KOBJECT_UEVENT_SOCKET  35
-          #define SECCLASS_APPLETALK_SOCKET               36
-          #define SECCLASS_DCCP_SOCKET                    37
-          #define SECCLASS_MEMPROTECT                     38
-          #define SECCLASS_PEER                           39
-          #define SECCLASS_CAPABILITY2                    40
-          #define SECCLASS_KERNEL_SERVICE                 41
-          #define SECCLASS_TUN_SOCKET                     42
-          #define SECCLASS_BPF                            43
-          #define SECCLASS_XDP_SOCKET                     44
-          #define SECCLASS_INFINIBAND_PKEY                45
-          #define SECCLASS_INFINIBAND_END_PORT            46
-          #define SECCLASS_DECNET_SOCKET                  47
-          #define SECCLASS_SCTP_SOCKET                    48
-          #define SECCLASS_ICMP_SOCKET                    49
-          #define SECCLASS_AX25_SOCKET                    50
-          #define SECCLASS_IPX_SOCKET                     51
-          #define SECCLASS_NETROM_SOCKET                  52
-          #define SECCLASS_ATMPVC_SOCKET                  53
-          #define SECCLASS_X25_SOCKET                     54
-          #define SECCLASS_ROSE_SOCKET                    55
-          #define SECCLASS_DECNET_NODE                    56
-          #define SECCLASS_NETLINK_ISCSI_SOCKET           57
-          #define SECCLASS_NETLINK_FIB_LOOKUP_SOCKET      58
-          #define SECCLASS_NETLINK_CONNECTOR_SOCKET       59
-          #define SECCLASS_NETLINK_NETFILTER_SOCKET       60
-          #define SECCLASS_NETLINK_GENERIC_SOCKET         61
-          #define SECCLASS_NETLINK_SCSITRANSPORT_SOCKET   62
-          #define SECCLASS_NETLINK_RDMA_SOCKET            63
-          #define SECCLASS_NETLINK_CRYPTO_SOCKET          64
-          #define SECCLASS_NETLINK_DNS_RESOLVER_SOCKET    65
-          #define SECCLASS_ATMSVC_SOCKET                  66
-          #define SECCLASS_RDS_SOCKET                     67
-          #define SECCLASS_IRDA_SOCKET                    68
-          #define SECCLASS_PPPOX_SOCKET                   69
-          #define SECCLASS_LLC_SOCKET                     70
-          #define SECCLASS_CAN_SOCKET                     71
-          #define SECCLASS_TIPC_SOCKET                    72
-          #define SECCLASS_BLUETOOTH_SOCKET               73
-          #define SECCLASS_IUCV_SOCKET                    74
-          #define SECCLASS_RXRPC_SOCKET                   75
-          #define SECCLASS_ISDN_SOCKET                    76
-          #define SECCLASS_PHONET_SOCKET                  77
-          #define SECCLASS_IEEE802154_SOCKET              78
-          #define SECCLASS_CAIF_SOCKET                    79
-          #define SECCLASS_ALG_SOCKET                     80
-          #define SECCLASS_NFC_SOCKET                     81
-          #define SECCLASS_VSOCK_SOCKET                   82
-          #define SECCLASS_KCM_SOCKET                     83
-          #define SECCLASS_QIPCRTR_SOCKET                 84
-          #define SECCLASS_SMC_SOCKET                     85
-          #define SECCLASS_SMC_PROC                       86
-
-          /* Additional classes needed by modern kernels */
-          #define SECCLASS_PROCESS2                       87
-          #define SECCLASS_CAP_USERNS                     88
-          #define SECCLASS_CAP2_USERNS                    89
-          #define SECCLASS_BINDER                         90
-          #define SECCLASS_ANON_INODE                     91
-          #define SECCLASS_PACKET                         92
-          #define SECCLASS_MSGQ                           93
-          #define SECCLASS_MSG                            94
-          #define SECCLASS_SEM                            95
-          #define SECCLASS_SHM                            96
-          #define SECCLASS_IPC                            97
-          #define SECCLASS_CRYPTO                         98
-          #define SECCLASS_KEY                            99
-          #define SECCLASS_DBUS                          100
-          #define SECCLASS_WAKE_ALARM                    101
-          #define SECCLASS_USB_DEVICE                    102
-          #define SECCLASS_USB_DEVICE_CONFIG             103
-          #define SECCLASS_USB_DEVICE_INTERFACE          104
-          #define SECCLASS_USB_DEVICE_FUNCTION           105
-          #define SECCLASS_PERSISTENT_FILE               106
-          #define SECCLASS_DEVICE                         107
-          #define SECCLASS_MODULE                        108
-          #define SECCLASS_SERVICE                       109
-          #define SECCLASS_SERVICE_MANAGER               110
-          #define SECCLASS_SYSTEM_SERVER                 111
-          #define SECCLASS_SYSTEM_APP                    112
-          #define SECCLASS_PLATFORM_APP                  113
-          #define SECCLASS_UNTRUSTED_APP                 114
-          #define SECCLASS_BLUETOOTH                     115
-          #define SECCLASS_LOGGING                       116
-          #define SECCLASS_APP_DATA                      117
-          #define SECCLASS_SENSORS                       118
-          #define SECCLASS_GPU                           119
-          #define SECCLASS_HW_INFO                       120
-          #define SECCLASS_SYSTEM_HEALTH                 121
-          #define SECCLASS_VENDOR                        122
-          #define SECCLASS_PERF_EVENT                    123
-          EOF
-
-          echo "Created complete flask.h"
-          cp security/selinux/flask.h security/selinux/include/flask.h
-
-          echo "Creating clean security.h..."
-          cat > security/selinux/include/security.h <<- 'SECURITY_H'
-          #ifndef _SELINUX_SECURITY_H_
-          #define _SELINUX_SECURITY_H_
-
-          #include <linux/types.h>
-          #include "flask.h"
-
-          struct selinux_state;
-
-          /* Function declarations */
-          int security_sid_to_context(struct selinux_state *state, u32 sid,
-                                      char **scontext, u32 *scontext_len);
-
-          static inline int security_is_socket_class(u16 class)
-          {
-              return (class >= SECCLASS_SOCKET && class <= SECCLASS_SCTP_SOCKET);
-          }
-
-          #endif /* _SELINUX_SECURITY_H_ */
-          SECURITY_H
-
-          echo "Created clean security/selinux/include/security.h"
-
-          echo "Creating complete avc.h..."
-          cat > security/selinux/include/avc.h <<- 'AVC_H'
-          #ifndef _SELINUX_AVC_H_
-          #define _SELINUX_AVC_H_
-
-          #include <linux/types.h>
-          #include <linux/spinlock.h>
-          #include <linux/atomic.h>
-          #include <linux/audit.h>
-          #include <linux/lsm_audit.h>
-          #include "flask.h"
-          #include "security.h"
-
-          /* Forward declarations */
-          struct selinux_state;
-          struct common_audit_data;
-          struct selinux_audit_data;
-
-          /* Extended permissions data structures */
-          #define XPERMS_ALLOWED       1
-          #define XPERMS_AUDITALLOW    2
-          #define XPERMS_DONTAUDIT     4
-
-          struct extended_perms_data {
-              u8 p[64];
-          };
-
-          struct extended_perms {
-              struct extended_perms_data *p;
-              u32 len;
-          };
-
-          struct extended_perms_decision {
-              struct extended_perms *allowed;
-              struct extended_perms *auditallow;
-              struct extended_perms *dontaudit;
-              u32 used;
-          };
-
-          /* Access Vector Decision structure */
-          struct av_decision {
-              u32 allowed;
-              u32 auditallow;
-              u32 auditdeny;
-              u32 seqno;
-              u32 flags;
-          };
-
-          struct avc_cache_stats {
-              unsigned int lookups;
-              unsigned int hits;
-              unsigned int misses;
-              unsigned int allocations;
-              unsigned int reclaims;
-              unsigned int frees;
-          };
-
-          /* External declarations */
-          extern struct security_class_mapping secclass_map[];
-
-          /* Function prototypes */
-          int avc_audit(struct selinux_state *state,
-                       u32 ssid, u32 tsid, u16 tclass,
-                       u32 requested, struct av_decision *avd,
-                       int result, struct common_audit_data *a);
-
-          int avc_has_perm(struct selinux_state *state,
-                           u32 ssid, u32 tsid, u16 tclass,
-                           u32 requested,
-                           struct common_audit_data *auditdata);
-
-          int avc_has_extended_perms(struct selinux_state *state,
-                                     u32 ssid, u32 tsid, u16 tclass,
-                                     u32 requested, u8 driver,
-                                     u8 *perms, int num_perms,
-                                     struct common_audit_data *auditdata);
-
-          u32 avc_policy_seqno(struct selinux_state *state);
-
-          void avc_init(void);
-
-          int slow_avc_audit(struct selinux_state *state,
-                             u32 ssid, u32 tsid, u16 tclass,
-                             u32 requested, u32 audited,
-                             struct av_decision *avd,
-                             int result,
-                             struct common_audit_data *a);
-
-          void security_xperm_set(u8 *perms, u32 perm);
-
-          static inline u32 avc_audit_required(u32 requested,
-                                               struct av_decision *avd,
-                                               int result,
-                                               u32 auditdeny,
-                                               u32 *deniedp)
-          {
-              u32 denied, audited;
-              denied = requested & ~avd->allowed;
-              if (deniedp)
-                  *deniedp = denied;
-              if (denied) {
-                  audited = denied & avd->auditdeny;
-                  if (audited && result)
-                      return audited;
-              } else if (result) {
-                  audited = requested & avd->auditallow;
-                  if (audited)
-                      return audited;
-              }
-              return 0;
-          }
-
-          static inline int security_xperm_test(const u8 *perms, u32 perm)
-          {
-              return (perms[perm >> 3] >> (perm & 7)) & 1;
-          }
-
-          #endif /* _SELINUX_AVC_H_ */
-          AVC_H
-
-          echo "Created complete security/selinux/include/avc.h"
-
-          echo "Creating lsm_audit.h if missing..."
+          # 创建 lsm_audit.h
           if [ ! -f security/selinux/include/lsm_audit.h ]; then
-            cat > security/selinux/include/lsm_audit.h <<- 'LSM_AUDIT_H'
-            #ifndef _SELINUX_LSM_AUDIT_H_
-            #define _SELINUX_LSM_AUDIT_H_
-
-            #include <linux/types.h>
-            #include <linux/audit.h>
-
-            struct common_audit_data {
-                int type;
-                union {
-                    struct {
-                        char *name;
-                    } path;
-                    struct {
-                        char *name;
-                    } inode;
-                } u;
-                void *selinux_audit_data;
-            };
-
-            struct selinux_audit_data {
-                struct selinux_state *state;
-                u32 ssid;
-                u32 tsid;
-                u16 tclass;
-                u32 audited;
-                u32 denied;
-                int result;
-            };
-
-            #endif /* _SELINUX_LSM_AUDIT_H_ */
-            LSM_AUDIT_H
-            echo "Created lsm_audit.h"
-          fi
-
-          if [ ! -f security/selinux/Makefile ]; then
-            echo "Creating security/selinux/Makefile..."
+            echo "Creating lsm_audit.h..."
             printf '%s\n' \
-              'obj-$(CONFIG_SECURITY_SELINUX) := selinux.o' \
-              'selinux-y := hooks.o selinuxfs.o netif.o netnode.o netport.o exports.o status.o' \
-              'selinux-y += ss/built-in.a' \
-              'ccflags-y += -I$(srctree)/security/selinux/include' \
-              'ccflags-y += -I$(srctree)/security/selinux/ss' \
-              > security/selinux/Makefile
-            echo "Created security/selinux/Makefile"
+              '#ifndef _SELINUX_LSM_AUDIT_H_' \
+              '#define _SELINUX_LSM_AUDIT_H_' \
+              '#include <linux/types.h>' \
+              'struct common_audit_data { int type; union { struct { char *name; } path; struct { char *name; } inode; } u; void *selinux_audit_data; };' \
+              'struct selinux_audit_data { struct selinux_state *state; u32 ssid; u32 tsid; u16 tclass; u32 audited; u32 denied; int result; };' \
+              '#endif' \
+              > security/selinux/include/lsm_audit.h
           fi
 
-          if [ ! -f security/selinux/ss/Makefile ]; then
-            echo "Creating security/selinux/ss/Makefile..."
-            printf '%s\n' \
-              'obj-y := avc.o services.o context.o ebitmap.o hashtab.o sidtab.o symtab.o mls.o conditional.o policy.o constraint.o policydb.o' \
-              > security/selinux/ss/Makefile
-            echo "Created security/selinux/ss/Makefile"
+          # 创建 selinux_state 前向声明
+          if ! grep -q "struct selinux_state" security/selinux/include/security.h; then
+            sed -i 's/#include "flask.h"/#include "flask.h"\nstruct selinux_state;/' security/selinux/include/security.h
           fi
 
-          echo "SELinux fix completed."
-          
+          echo "SELinux header fix completed."
+
       - name: Generate defconfig with found config
         working-directory: kernel
         run: |
@@ -590,7 +353,7 @@ jobs:
           sed -i '/^CONFIG_SECURITY_SELINUX/d' $DEFCONFIG_PATH
           sed -i '/^CONFIG_KPROBE_EVENTS/d' $DEFCONFIG_PATH
           sed -i '/^CONFIG_SUSFS/d' $DEFCONFIG_PATH
-          cat >> $DEFCONFIG_PATH <<- 'EOF'
+          cat >> $DEFCONFIG_PATH << 'EOF'
           # KernelSU
           CONFIG_KSU=y
           CONFIG_KSU_DEBUG=n
@@ -620,7 +383,7 @@ jobs:
           CONFIG_SECURITY_SELINUX_BOOTPARAM=y
           CONFIG_SECURITY_SELINUX_DISABLE=y
           CONFIG_FRAME_WARN=4096
-          EOF
+EOF
           echo "Defconfig updated successfully with SUSFS support."
 
       - name: Set PATH for Clang
