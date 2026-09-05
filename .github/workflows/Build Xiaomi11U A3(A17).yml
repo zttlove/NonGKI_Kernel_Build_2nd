@@ -313,21 +313,21 @@ jobs:
 
           if [ ! -f security/selinux/Makefile ]; then
             echo "Creating security/selinux/Makefile..."
-            cat > security/selinux/Makefile <<- 'MAKEFILE'
-            obj-$(CONFIG_SECURITY_SELINUX) := selinux.o
-            selinux-y := hooks.o selinuxfs.o netif.o netnode.o netport.o exports.o status.o
-            selinux-y += ss/built-in.a
-            ccflags-y += -I$(srctree)/security/selinux/include
-            ccflags-y += -I$(srctree)/security/selinux/ss
-            MAKEFILE
+            printf '%s\n' \
+              'obj-$(CONFIG_SECURITY_SELINUX) := selinux.o' \
+              'selinux-y := hooks.o selinuxfs.o netif.o netnode.o netport.o exports.o status.o' \
+              'selinux-y += ss/built-in.a' \
+              'ccflags-y += -I$(srctree)/security/selinux/include' \
+              'ccflags-y += -I$(srctree)/security/selinux/ss' \
+              > security/selinux/Makefile
             echo "Created security/selinux/Makefile"
           fi
 
           if [ ! -f security/selinux/ss/Makefile ]; then
             echo "Creating security/selinux/ss/Makefile..."
-            cat > security/selinux/ss/Makefile <<- 'SSMAKEFILE'
-            obj-y := avc.o services.o context.o ebitmap.o hashtab.o sidtab.o symtab.o mls.o conditional.o policy.o constraint.o policydb.o
-            SSMAKEFILE
+            printf '%s\n' \
+              'obj-y := avc.o services.o context.o ebitmap.o hashtab.o sidtab.o symtab.o mls.o conditional.o policy.o constraint.o policydb.o' \
+              > security/selinux/ss/Makefile
             echo "Created security/selinux/ss/Makefile"
           fi
 
