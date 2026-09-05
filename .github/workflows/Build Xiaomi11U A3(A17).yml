@@ -90,13 +90,11 @@ jobs:
           if grep -q "source \"drivers/kernelsu/Kconfig\"" drivers/Kconfig 2>/dev/null; then
             echo "KernelSU reference found in Kconfig"
             
-            # Remove existing directory if it exists
             if [ -d "drivers/kernelsu" ]; then
               echo "Removing existing KernelSU directory..."
               rm -rf drivers/kernelsu
             fi
             
-            # Clone ReSukiSU
             echo "Cloning ReSukiSU (KernelSU fork) from ${{ env.KERNELSU_REPO }} branch ${{ env.KERNELSU_BRANCH }}..."
             mkdir -p drivers
             git clone --depth=1 -b ${{ env.KERNELSU_BRANCH }} ${{ env.KERNELSU_REPO }} drivers/kernelsu
@@ -106,23 +104,17 @@ jobs:
               exit 1
             fi
             
-            # ReSukiSU has Kconfig in kernel/ subdirectory, create wrapper
-            echo "Setting up ReSukiSU Kconfig structure..."
             if [ -f "drivers/kernelsu/kernel/Kconfig" ]; then
-              echo "Found Kconfig in drivers/kernelsu/kernel/Kconfig"
               echo "# ReSukiSU KernelSU Kconfig" > drivers/kernelsu/Kconfig
               echo "source \"drivers/kernelsu/kernel/Kconfig\"" >> drivers/kernelsu/Kconfig
               echo "Kconfig wrapper created successfully"
             else
               echo "ERROR: drivers/kernelsu/kernel/Kconfig not found!"
-              echo "Contents of drivers/kernelsu:"
               ls -la drivers/kernelsu/
               exit 1
             fi
             
-            # Create Makefile wrapper using obj-y (recommended over include)
             if [ -f "drivers/kernelsu/kernel/Makefile" ] && [ ! -f "drivers/kernelsu/Makefile" ]; then
-              echo "Creating Makefile wrapper for ReSukiSU..."
               echo "# ReSukiSU KernelSU Makefile" > drivers/kernelsu/Makefile
               echo "obj-y += kernel/" >> drivers/kernelsu/Makefile
             fi
@@ -131,36 +123,6 @@ jobs:
           else
             echo "No KernelSU reference found in Kconfig, skipping"
           fi
-
-      - name: Generate defconfig
-        working-directory: kernel
-        run: |
-          echo "Using defconfig: ${{ env.DEFCONFIG_NAME }}"
-          make ARCH=${{ env.KERNEL_ARCH }} ${{ env.DEFCONFIG_NAME }}
-
-      - name: Enable KernelSU and Kprobes in config
-        working-directory: kernel
-        run: |
-          echo "Enabling KernelSU and Kprobes options in .config..."
-          # Enable required configs
-          ./scripts/config --file out/.config --enable CONFIG_KSU
-          ./scripts/config --file out/.config --enable CONFIG_KSU_USE_KPROBES
-          ./scripts/config --file out/.config --enable CONFIG_KSU_SUSFS
-          ./scripts/config --file out/.config --enable CONFIG_KPROBES
-          # Optional: KPROBE_EVENTS (usually selected by KPROBES)
-          ./scripts/config --file out/.config --enable CONFIG_KPROBE_EVENTS
-
-          # Resolve dependencies
-          make ARCH=arm64 olddefconfig O=out
-
-          # Ensure drivers/Makefile includes kernelsu directory
-          if ! grep -q "obj-\$(CONFIG_KSU) += kernelsu/" drivers/Makefile; then
-            echo "Adding kernelsu to drivers/Makefile"
-            echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
-          fi
-
-          echo "Configuration updated:"
-          grep -E "CONFIG_(KSU|KPROBES)" out/.config || true
 
       - name: Set PATH for Clang
         run: echo "$(pwd)/clang/bin" >> $GITHUB_PATH
@@ -183,24 +145,30 @@ jobs:
           make ARCH=arm64 mrproper 2>/dev/null || true
           rm -rf ${{ env.OUTPUT_DIR }}
 
-          echo "Configuring kernel with ${{ env.DEFCONFIG_NAME }}..."
+          echo "Generating defconfig (${{ env.DEFCONFIG_NAME }}) in ${{ env.OUTPUT_DIR }}..."
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
 
-          # Re-apply our config modifications (in case defconfig overwrote)
-          echo "Re-applying KernelSU configs..."
-          ./scripts/config --file out/.config --enable CONFIG_KSU
-          ./scripts/config --file out/.config --enable CONFIG_KSU_USE_KPROBES
-          ./scripts/config --file out/.config --enable CONFIG_KSU_SUSFS
-          ./scripts/config --file out/.config --enable CONFIG_KPROBES
-          make ARCH=arm64 olddefconfig O=out
+          echo "Enabling KernelSU and Kprobes options in .config..."
+          ./scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable CONFIG_KSU
+          ./scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable CONFIG_KSU_USE_KPROBES
+          ./scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable CONFIG_KSU_SUSFS
+          ./scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable CONFIG_KPROBES
+          ./scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable CONFIG_KPROBE_EVENTS
+
+          echo "Resolving dependencies with olddefconfig..."
+          make ARCH=arm64 olddefconfig O=${{ env.OUTPUT_DIR }}
+
+          echo "Ensuring drivers/Makefile includes kernelsu..."
+          if ! grep -q "obj-\$(CONFIG_KSU) += kernelsu/" drivers/Makefile; then
+            echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
+          fi
 
           echo "=== Final .config verification ==="
           grep -E "CONFIG_(KSU|KPROBES)" ${{ env.OUTPUT_DIR }}/.config || true
-          echo "=== Checking drivers Makefile for KernelSU ==="
-          grep -A 5 "KernelSU" drivers/Makefile || true
+          echo "=== drivers Makefile entry ==="
+          grep -A 5 "kernelsu" drivers/Makefile || true
 
           echo "Compiling kernel..."
-          # Removed -DCONFIG_KSU* from KCFLAGS because they are now in .config
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} \
             KCFLAGS="-Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-array-parameter -Wno-void-pointer-to-int-cast -Wno-sometimes-uninitialized -Wno-compare-distinct-pointer-types -Wno-pointer-to-int-cast -Wno-uninitialized"
 
@@ -220,23 +188,19 @@ jobs:
           echo "Collecting kernel modules..."
           mkdir -p modules
           find ${{ env.OUTPUT_DIR }} -name "*.ko" -exec cp {} modules/ \;
-          # Also copy to AnyKernel3 if needed
           if [ -d "../anykernel3" ]; then
             cp modules/*.ko ../anykernel3/ 2>/dev/null || true
           fi
 
       - name: Prepare AnyKernel3 Package
         run: |
-          # Copy kernel image
           cp kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image anykernel3/
-          # Copy DTBs if exist (e.g., dtb.img or *.dtb)
           if [ -f "kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/dtb.img" ]; then
             cp kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/dtb.img anykernel3/
           fi
           if [ -d "kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/dts" ]; then
             cp kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/dts/*.dtb anykernel3/ 2>/dev/null || true
           fi
-          # Copy modules if they exist
           if [ -d "kernel/modules" ] && [ "$(ls -A kernel/modules)" ]; then
             cp kernel/modules/*.ko anykernel3/ 2>/dev/null || true
           fi
