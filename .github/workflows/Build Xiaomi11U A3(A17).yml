@@ -193,7 +193,7 @@ jobs:
           echo "KernelSU build files setup complete."
           grep -A 5 "KernelSU" drivers/Makefile || true
 
-            - name: Fix SELinux directory structure
+      - name: Fix SELinux directory structure
         working-directory: kernel
         run: |
           echo "Fixing SELinux directory structure..."
