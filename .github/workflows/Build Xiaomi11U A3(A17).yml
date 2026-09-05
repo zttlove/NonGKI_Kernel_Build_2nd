@@ -193,7 +193,7 @@ jobs:
           echo "KernelSU build files setup complete."
           grep -A 5 "KernelSU" drivers/Makefile || true
 
-      - name: Fix SELinux directory structure
+            - name: Fix SELinux directory structure
         working-directory: kernel
         run: |
           echo "Fixing SELinux directory structure..."
@@ -363,7 +363,14 @@ jobs:
           #ifndef _SELINUX_SECURITY_H_
           #define _SELINUX_SECURITY_H_
 
+          #include <linux/types.h>
           #include "flask.h"
+
+          struct selinux_state;
+
+          /* Function declarations */
+          int security_sid_to_context(struct selinux_state *state, u32 sid,
+                                      char **scontext, u32 *scontext_len);
 
           static inline int security_is_socket_class(u16 class)
           {
@@ -383,9 +390,15 @@ jobs:
           #include <linux/types.h>
           #include <linux/spinlock.h>
           #include <linux/atomic.h>
+          #include <linux/audit.h>
+          #include <linux/lsm_audit.h>
+          #include "flask.h"
+          #include "security.h"
 
           /* Forward declarations */
           struct selinux_state;
+          struct common_audit_data;
+          struct selinux_audit_data;
 
           /* Extended permissions data structures */
           #define XPERMS_ALLOWED       1
@@ -426,6 +439,9 @@ jobs:
               unsigned int frees;
           };
 
+          /* External declarations */
+          extern struct security_class_mapping secclass_map[];
+
           /* Function prototypes */
           int avc_audit(struct selinux_state *state,
                        u32 ssid, u32 tsid, u16 tclass,
@@ -446,6 +462,15 @@ jobs:
           u32 avc_policy_seqno(struct selinux_state *state);
 
           void avc_init(void);
+
+          int slow_avc_audit(struct selinux_state *state,
+                             u32 ssid, u32 tsid, u16 tclass,
+                             u32 requested, u32 audited,
+                             struct av_decision *avd,
+                             int result,
+                             struct common_audit_data *a);
+
+          void security_xperm_set(u8 *perms, u32 perm);
 
           static inline u32 avc_audit_required(u32 requested,
                                                struct av_decision *avd,
@@ -478,6 +503,43 @@ jobs:
           AVC_H
 
           echo "Created complete security/selinux/include/avc.h"
+
+          echo "Creating lsm_audit.h if missing..."
+          if [ ! -f security/selinux/include/lsm_audit.h ]; then
+            cat > security/selinux/include/lsm_audit.h <<- 'LSM_AUDIT_H'
+            #ifndef _SELINUX_LSM_AUDIT_H_
+            #define _SELINUX_LSM_AUDIT_H_
+
+            #include <linux/types.h>
+            #include <linux/audit.h>
+
+            struct common_audit_data {
+                int type;
+                union {
+                    struct {
+                        char *name;
+                    } path;
+                    struct {
+                        char *name;
+                    } inode;
+                } u;
+                void *selinux_audit_data;
+            };
+
+            struct selinux_audit_data {
+                struct selinux_state *state;
+                u32 ssid;
+                u32 tsid;
+                u16 tclass;
+                u32 audited;
+                u32 denied;
+                int result;
+            };
+
+            #endif /* _SELINUX_LSM_AUDIT_H_ */
+            LSM_AUDIT_H
+            echo "Created lsm_audit.h"
+          fi
 
           if [ ! -f security/selinux/Makefile ]; then
             echo "Creating security/selinux/Makefile..."
