@@ -276,9 +276,11 @@ jobs:
               > security/selinux/include/security.h
           fi
 
-          # 修复 avc.h
+          # 修复 avc.h - 使用兼容的类型
           if [ -f security/selinux/include/avc.h ]; then
             echo "avc.h exists, checking for missing structures..."
+            # 删除已有的 security_xperm_set 声明
+            sed -i '/security_xperm_set/d' security/selinux/include/avc.h
             if ! grep -q "struct av_decision" security/selinux/include/avc.h; then
               printf '\nstruct av_decision { u32 allowed; u32 auditallow; u32 auditdeny; u32 seqno; u32 flags; };\n' >> security/selinux/include/avc.h
             fi
@@ -288,9 +290,8 @@ jobs:
             if ! grep -q "slow_avc_audit" security/selinux/include/avc.h; then
               printf '\nint slow_avc_audit(struct selinux_state *state, u32 ssid, u32 tsid, u16 tclass, u32 requested, u32 audited, struct av_decision *avd, int result, struct common_audit_data *a);\n' >> security/selinux/include/avc.h
             fi
-            if ! grep -q "security_xperm_set" security/selinux/include/avc.h; then
-              printf '\nvoid security_xperm_set(u8 *perms, u32 perm);\n' >> security/selinux/include/avc.h
-            fi
+            # 使用 void * 替代 u8 * 以兼容不同指针类型
+            printf '\nstatic inline void security_xperm_set(void *perms, u32 perm)\n{\n    u32 *p = (u32 *)perms;\n    p[perm >> 5] |= 1 << (perm & 0x1f);\n}\n' >> security/selinux/include/avc.h
           else
             echo "avc.h not found, creating..."
             printf '%s\n' \
@@ -306,7 +307,7 @@ jobs:
               'struct extended_perms_decision { struct extended_perms *allowed; struct extended_perms *auditallow; struct extended_perms *dontaudit; u32 used; };' \
               'struct av_decision { u32 allowed; u32 auditallow; u32 auditdeny; u32 seqno; u32 flags; };' \
               'int slow_avc_audit(struct selinux_state *state, u32 ssid, u32 tsid, u16 tclass, u32 requested, u32 audited, struct av_decision *avd, int result, struct common_audit_data *a);' \
-              'void security_xperm_set(u8 *perms, u32 perm);' \
+              'static inline void security_xperm_set(void *perms, u32 perm) { u32 *p = (u32 *)perms; p[perm >> 5] |= 1 << (perm & 0x1f); }' \
               'static inline int security_xperm_test(const u8 *perms, u32 perm) { return (perms[perm >> 3] >> (perm & 7)) & 1; }' \
               '#endif' \
               > security/selinux/include/avc.h
@@ -326,12 +327,13 @@ jobs:
           fi
 
           # 创建 selinux_state 前向声明
-          if ! grep -q "struct selinux_state" security/selinux/include/security.h; then
-            sed -i 's/#include "flask.h"/#include "flask.h"\nstruct selinux_state;/' security/selinux/include/security.h
+          if [ -f security/selinux/include/security.h ]; then
+            if ! grep -q "struct selinux_state" security/selinux/include/security.h; then
+              sed -i 's/#include "flask.h"/#include "flask.h"\nstruct selinux_state;/' security/selinux/include/security.h
+            fi
           fi
 
           echo "SELinux header fix completed."
-
       - name: Generate defconfig with found config
         working-directory: kernel
         run: |
