@@ -106,11 +106,10 @@ jobs:
               exit 1
             fi
             
-            # ReSukiSU has Kconfig in kernel/ subdirectory, we need to create a symlink or copy
+            # ReSukiSU has Kconfig in kernel/ subdirectory, create wrapper
             echo "Setting up ReSukiSU Kconfig structure..."
             if [ -f "drivers/kernelsu/kernel/Kconfig" ]; then
               echo "Found Kconfig in drivers/kernelsu/kernel/Kconfig"
-              # Create a Kconfig file that includes the actual one
               echo "# ReSukiSU KernelSU Kconfig" > drivers/kernelsu/Kconfig
               echo "source \"drivers/kernelsu/kernel/Kconfig\"" >> drivers/kernelsu/Kconfig
               echo "Kconfig wrapper created successfully"
@@ -121,11 +120,11 @@ jobs:
               exit 1
             fi
             
-            # Also need to set up the Makefile if it's in kernel/ subdirectory
+            # Create Makefile wrapper using obj-y (recommended over include)
             if [ -f "drivers/kernelsu/kernel/Makefile" ] && [ ! -f "drivers/kernelsu/Makefile" ]; then
               echo "Creating Makefile wrapper for ReSukiSU..."
               echo "# ReSukiSU KernelSU Makefile" > drivers/kernelsu/Makefile
-              echo "include drivers/kernelsu/kernel/Makefile" >> drivers/kernelsu/Makefile
+              echo "obj-y += kernel/" >> drivers/kernelsu/Makefile
             fi
             
             echo "KernelSU setup verified successfully"
@@ -133,11 +132,35 @@ jobs:
             echo "No KernelSU reference found in Kconfig, skipping"
           fi
 
-      - name: Generate defconfig with found config
+      - name: Generate defconfig
         working-directory: kernel
         run: |
           echo "Using defconfig: ${{ env.DEFCONFIG_NAME }}"
           make ARCH=${{ env.KERNEL_ARCH }} ${{ env.DEFCONFIG_NAME }}
+
+      - name: Enable KernelSU and Kprobes in config
+        working-directory: kernel
+        run: |
+          echo "Enabling KernelSU and Kprobes options in .config..."
+          # Enable required configs
+          ./scripts/config --file out/.config --enable CONFIG_KSU
+          ./scripts/config --file out/.config --enable CONFIG_KSU_USE_KPROBES
+          ./scripts/config --file out/.config --enable CONFIG_KSU_SUSFS
+          ./scripts/config --file out/.config --enable CONFIG_KPROBES
+          # Optional: KPROBE_EVENTS (usually selected by KPROBES)
+          ./scripts/config --file out/.config --enable CONFIG_KPROBE_EVENTS
+
+          # Resolve dependencies
+          make ARCH=arm64 olddefconfig O=out
+
+          # Ensure drivers/Makefile includes kernelsu directory
+          if ! grep -q "obj-\$(CONFIG_KSU) += kernelsu/" drivers/Makefile; then
+            echo "Adding kernelsu to drivers/Makefile"
+            echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
+          fi
+
+          echo "Configuration updated:"
+          grep -E "CONFIG_(KSU|KPROBES)" out/.config || true
 
       - name: Set PATH for Clang
         run: echo "$(pwd)/clang/bin" >> $GITHUB_PATH
@@ -163,14 +186,23 @@ jobs:
           echo "Configuring kernel with ${{ env.DEFCONFIG_NAME }}..."
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
 
-          echo "=== Verifying configuration ==="
-          grep -E "CONFIG_(KPROBES|KSU|KPROBE_EVENTS|KSU_USE_KPROBES|KSU_SUSFS)" ${{ env.OUTPUT_DIR }}/.config || true
+          # Re-apply our config modifications (in case defconfig overwrote)
+          echo "Re-applying KernelSU configs..."
+          ./scripts/config --file out/.config --enable CONFIG_KSU
+          ./scripts/config --file out/.config --enable CONFIG_KSU_USE_KPROBES
+          ./scripts/config --file out/.config --enable CONFIG_KSU_SUSFS
+          ./scripts/config --file out/.config --enable CONFIG_KPROBES
+          make ARCH=arm64 olddefconfig O=out
+
+          echo "=== Final .config verification ==="
+          grep -E "CONFIG_(KSU|KPROBES)" ${{ env.OUTPUT_DIR }}/.config || true
           echo "=== Checking drivers Makefile for KernelSU ==="
           grep -A 5 "KernelSU" drivers/Makefile || true
 
           echo "Compiling kernel..."
+          # Removed -DCONFIG_KSU* from KCFLAGS because they are now in .config
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} \
-            KCFLAGS="-DCONFIG_KSU=1 -DCONFIG_KSU_USE_KPROBES=1 -DCONFIG_KSU_SUSFS=1 -Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-array-parameter -Wno-void-pointer-to-int-cast -Wno-sometimes-uninitialized -Wno-compare-distinct-pointer-types -Wno-pointer-to-int-cast -Wno-uninitialized"
+            KCFLAGS="-Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-array-parameter -Wno-void-pointer-to-int-cast -Wno-sometimes-uninitialized -Wno-compare-distinct-pointer-types -Wno-pointer-to-int-cast -Wno-uninitialized"
 
           if [ ! -f "${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image" ]; then
             echo "ERROR: Kernel image not generated!"
@@ -185,55 +217,42 @@ jobs:
         if: env.PACK_KMODULES == 'true'
         working-directory: kernel
         run: |
-          echo "Collecting kernel modules from ${{ env.OUTPUT_DIR }}..."
-          MODULE_DIR="${{ env.OUTPUT_DIR }}/modules_tmp"
-          mkdir -p "$MODULE_DIR"
-          make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} \
-            INSTALL_MOD_PATH="$MODULE_DIR" modules_install
-          mkdir -p ../anykernel3/modules/system/lib/modules
-          find "$MODULE_DIR" -name "*.ko" -exec cp --parents {} ../anykernel3/modules/system/lib/modules/ \;
-          echo "Modules collected."
-
-      - name: Configure AnyKernel3
-        working-directory: anykernel3
-        run: |
-          sed -i 's/kernel.string=.*/kernel.string=Xiaomi 11 Ultra (star) Kernel/' anykernel.sh
-          sed -i 's/do.devicecheck=.*/do.devicecheck=0/' anykernel.sh
-          sed -i 's/device.name1=.*/device.name1=star/' anykernel.sh
-          sed -i 's/device.name2=.*/device.name2=xiaomi11ultra/' anykernel.sh
-          if [ "${{ env.PACK_KMODULES }}" == "true" ]; then
-            sed -i 's/do.modules=.*/do.modules=1/' anykernel.sh
-          else
-            sed -i 's/do.modules=.*/do.modules=0/' anykernel.sh
-          fi
-          sed -i 's/do.systemless=.*/do.systemless=1/' anykernel.sh
-          sed -i 's/do.cleanup=.*/do.cleanup=1/' anykernel.sh
-          sed -i 's/^BLOCK=.*/BLOCK=\/dev\/block\/by-name\/boot;/' anykernel.sh
-          sed -i 's/^IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=1;/' anykernel.sh
-
-      - name: Copy Kernel Image to AnyKernel3
-        run: |
-          IMG_SRC="kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot"
-          if [ -f "$IMG_SRC/Image.gz-dtb" ]; then
-            cp "$IMG_SRC/Image.gz-dtb" anykernel3/Image
-          elif [ -f "$IMG_SRC/Image.gz" ]; then
-            cp "$IMG_SRC/Image.gz" anykernel3/Image
-          elif [ -f "$IMG_SRC/Image" ]; then
-            cp "$IMG_SRC/Image" anykernel3/Image
-          else
-            echo "No kernel image found!"
-            exit 1
+          echo "Collecting kernel modules..."
+          mkdir -p modules
+          find ${{ env.OUTPUT_DIR }} -name "*.ko" -exec cp {} modules/ \;
+          # Also copy to AnyKernel3 if needed
+          if [ -d "../anykernel3" ]; then
+            cp modules/*.ko ../anykernel3/ 2>/dev/null || true
           fi
 
-      - name: Package Flashable ZIP
-        working-directory: anykernel3
+      - name: Prepare AnyKernel3 Package
         run: |
-          zip -r9 "../Kernel-${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-$(date +%Y%m%d-%H%M).zip" * -x "*.git*" "*.zip"
-          echo "ZIP packaged successfully."
+          # Copy kernel image
+          cp kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image anykernel3/
+          # Copy DTBs if exist (e.g., dtb.img or *.dtb)
+          if [ -f "kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/dtb.img" ]; then
+            cp kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/dtb.img anykernel3/
+          fi
+          if [ -d "kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/dts" ]; then
+            cp kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/dts/*.dtb anykernel3/ 2>/dev/null || true
+          fi
+          # Copy modules if they exist
+          if [ -d "kernel/modules" ] && [ "$(ls -A kernel/modules)" ]; then
+            cp kernel/modules/*.ko anykernel3/ 2>/dev/null || true
+          fi
+          echo "AnyKernel3 contents:"
+          ls -la anykernel3/
 
-      - name: Upload Kernel ZIP
+      - name: Create Flashable ZIP
+        run: |
+          cd anykernel3
+          zip -r9 ${{ env.DEVICE_CODENAME }}_kernel_${{ env.ROM_TEXT }}_$(date +%Y%m%d).zip * -x .git README.md
+          echo "ZIP created:"
+          ls -la *.zip
+
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Kernel-${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}
-          path: Kernel-*.zip
+          name: ${{ env.DEVICE_CODENAME }}-kernel-${{ env.ROM_TEXT }}
+          path: anykernel3/*.zip
           retention-days: 7
