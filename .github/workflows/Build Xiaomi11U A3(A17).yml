@@ -21,7 +21,7 @@ env:
   PACK_METHOD: "Anykernel3"
   PACK_KMODULES: "true"
   ROM_TEXT: "HyperA17"
-  KERNELSU_REPO: "https://github.com/ReSukiSU/ReSukiSU"
+  KERNELSU_REPO: "https://github.com/hushangda/ReSukiSU"
   KERNELSU_BRANCH: "main"
 
 jobs:
