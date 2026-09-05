@@ -371,7 +371,7 @@ jobs:
           }
 
           #endif /* _SELINUX_SECURITY_H_ */
-SECURITY_H
+          SECURITY_H
 
           echo "Created clean security/selinux/include/security.h"
 
