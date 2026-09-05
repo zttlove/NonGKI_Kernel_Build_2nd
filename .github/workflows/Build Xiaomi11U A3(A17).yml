@@ -192,8 +192,7 @@ jobs:
           fi
           echo "KernelSU build files setup complete."
           grep -A 5 "KernelSU" drivers/Makefile || true
-
-            - name: Fix SELinux headers
+      - name: Fix SELinux headers
         working-directory: kernel
         run: |
           echo "Fixing SELinux header files..."
