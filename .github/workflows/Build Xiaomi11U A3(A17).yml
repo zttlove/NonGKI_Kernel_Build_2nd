@@ -350,6 +350,7 @@ jobs:
           #define SECCLASS_HW_INFO                       120
           #define SECCLASS_SYSTEM_HEALTH                 121
           #define SECCLASS_VENDOR                        122
+          #define SECCLASS_PERF_EVENT                    123
           EOF
 
           echo "Created complete flask.h"
