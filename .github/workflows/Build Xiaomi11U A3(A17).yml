@@ -202,6 +202,12 @@ jobs:
           mkdir -p security/selinux/include
           mkdir -p security/selinux/ss
 
+          # 修复 security.h - 删除冲突的宏定义
+          if [ -f security/selinux/include/security.h ]; then
+            echo "Removing conflicting security_xperm_set macro from security.h..."
+            sed -i '/#define security_xperm_set/d' security/selinux/include/security.h
+          fi
+
           # 检查 flask.h 是否存在，如果存在则补充缺失的定义
           if [ -f security/selinux/flask.h ]; then
             echo "flask.h exists, adding missing definitions..."
