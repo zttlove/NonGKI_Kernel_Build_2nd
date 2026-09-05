@@ -202,15 +202,15 @@ jobs:
           mkdir -p security/selinux/include
           mkdir -p security/selinux/ss
 
-          # 修复 security.h - 删除冲突的宏定义
+          # 删除 security.h 中所有 security_xperm_set 相关定义
           if [ -f security/selinux/include/security.h ]; then
-            echo "Removing conflicting security_xperm_set macro from security.h..."
-            sed -i '/#define security_xperm_set/d' security/selinux/include/security.h
+            echo "Removing all security_xperm_set from security.h..."
+            sed -i '/security_xperm_set/d' security/selinux/include/security.h
           fi
 
-          # 删除 avc.h 中重复的 security_xperm_set
+          # 删除 avc.h 中所有 security_xperm_set 相关定义
           if [ -f security/selinux/include/avc.h ]; then
-            echo "Removing duplicate security_xperm_set from avc.h..."
+            echo "Removing all security_xperm_set from avc.h..."
             sed -i '/security_xperm_set/d' security/selinux/include/avc.h
           fi
 
@@ -367,85 +367,115 @@ jobs:
           cp security/selinux/flask.h security/selinux/include/flask.h
           echo "Created flask.h"
 
-          # 修复 security.h
-          if [ -f security/selinux/include/security.h ]; then
-            echo "security.h exists, checking for missing functions..."
-            if ! grep -q "security_is_socket_class" security/selinux/include/security.h; then
-              printf '\nstatic inline int security_is_socket_class(u16 class)\n{\n    return (class >= SECCLASS_SOCKET && class <= SECCLASS_SCTP_SOCKET);\n}\n' >> security/selinux/include/security.h
-            fi
-            if ! grep -q "security_sid_to_context" security/selinux/include/security.h; then
-              printf '\nint security_sid_to_context(struct selinux_state *state, u32 sid, char **scontext, u32 *scontext_len);\n' >> security/selinux/include/security.h
-            fi
-          else
-            echo "security.h not found, creating..."
-            printf '%s\n' \
-              '#ifndef _SELINUX_SECURITY_H_' \
-              '#define _SELINUX_SECURITY_H_' \
-              '#include <linux/types.h>' \
-              '#include "flask.h"' \
-              'struct selinux_state;' \
-              'int security_sid_to_context(struct selinux_state *state, u32 sid, char **scontext, u32 *scontext_len);' \
-              'static inline int security_is_socket_class(u16 class) { return (class >= SECCLASS_SOCKET && class <= SECCLASS_SCTP_SOCKET); }' \
-              '#endif' \
-              > security/selinux/include/security.h
-          fi
+          # 创建干净的 security.h
+          echo "Creating clean security.h..."
+          cat > security/selinux/include/security.h << 'SECURITY_H'
+          #ifndef _SELINUX_SECURITY_H_
+          #define _SELINUX_SECURITY_H_
 
-          # 修复 avc.h
-          if [ -f security/selinux/include/avc.h ]; then
-            echo "avc.h exists, checking for missing structures..."
-            if ! grep -q "struct av_decision" security/selinux/include/avc.h; then
-              printf '\nstruct av_decision { u32 allowed; u32 auditallow; u32 auditdeny; u32 seqno; u32 flags; };\n' >> security/selinux/include/avc.h
-            fi
-            if ! grep -q "XPERMS_ALLOWED" security/selinux/include/avc.h; then
-              printf '\n#define XPERMS_ALLOWED 1\n#define XPERMS_AUDITALLOW 2\n#define XPERMS_DONTAUDIT 4\n' >> security/selinux/include/avc.h
-            fi
-            if ! grep -q "slow_avc_audit" security/selinux/include/avc.h; then
-              printf '\nint slow_avc_audit(struct selinux_state *state, u32 ssid, u32 tsid, u16 tclass, u32 requested, u32 audited, struct av_decision *avd, int result, struct common_audit_data *a);\n' >> security/selinux/include/avc.h
-            fi
-            # 只在没有定义时添加 security_xperm_set
-            if ! grep -q "security_xperm_set" security/selinux/include/avc.h; then
-              printf '\nstatic inline void security_xperm_set(void *perms, u32 perm)\n{\n    u32 *p = (u32 *)perms;\n    p[perm >> 5] |= 1 << (perm & 0x1f);\n}\n' >> security/selinux/include/avc.h
-            fi
-          else
-            echo "avc.h not found, creating..."
-            printf '%s\n' \
-              '#ifndef _SELINUX_AVC_H_' \
-              '#define _SELINUX_AVC_H_' \
-              '#include <linux/types.h>' \
-              '#include "flask.h"' \
-              '#define XPERMS_ALLOWED 1' \
-              '#define XPERMS_AUDITALLOW 2' \
-              '#define XPERMS_DONTAUDIT 4' \
-              'struct extended_perms_data { u8 p[64]; };' \
-              'struct extended_perms { struct extended_perms_data *p; u32 len; };' \
-              'struct extended_perms_decision { struct extended_perms *allowed; struct extended_perms *auditallow; struct extended_perms *dontaudit; u32 used; };' \
-              'struct av_decision { u32 allowed; u32 auditallow; u32 auditdeny; u32 seqno; u32 flags; };' \
-              'int slow_avc_audit(struct selinux_state *state, u32 ssid, u32 tsid, u16 tclass, u32 requested, u32 audited, struct av_decision *avd, int result, struct common_audit_data *a);' \
-              'static inline void security_xperm_set(void *perms, u32 perm) { u32 *p = (u32 *)perms; p[perm >> 5] |= 1 << (perm & 0x1f); }' \
-              'static inline int security_xperm_test(const u8 *perms, u32 perm) { return (perms[perm >> 3] >> (perm & 7)) & 1; }' \
-              '#endif' \
-              > security/selinux/include/avc.h
-          fi
+          #include <linux/types.h>
+          #include "flask.h"
+
+          struct selinux_state;
+
+          int security_sid_to_context(struct selinux_state *state, u32 sid,
+                                      char **scontext, u32 *scontext_len);
+
+          static inline int security_is_socket_class(u16 class)
+          {
+              return (class >= SECCLASS_SOCKET && class <= SECCLASS_SCTP_SOCKET);
+          }
+
+          #endif /* _SELINUX_SECURITY_H_ */
+          SECURITY_H
+
+          echo "Created security.h"
+
+          # 创建干净的 avc.h
+          echo "Creating clean avc.h..."
+          cat > security/selinux/include/avc.h << 'AVC_H'
+          #ifndef _SELINUX_AVC_H_
+          #define _SELINUX_AVC_H_
+
+          #include <linux/types.h>
+          #include "flask.h"
+
+          #define XPERMS_ALLOWED       1
+          #define XPERMS_AUDITALLOW    2
+          #define XPERMS_DONTAUDIT     4
+
+          struct extended_perms_data {
+              u8 p[64];
+          };
+
+          struct extended_perms {
+              struct extended_perms_data *p;
+              u32 len;
+          };
+
+          struct extended_perms_decision {
+              struct extended_perms *allowed;
+              struct extended_perms *auditallow;
+              struct extended_perms *dontaudit;
+              u32 used;
+          };
+
+          struct av_decision {
+              u32 allowed;
+              u32 auditallow;
+              u32 auditdeny;
+              u32 seqno;
+              u32 flags;
+          };
+
+          int slow_avc_audit(struct selinux_state *state,
+                             u32 ssid, u32 tsid, u16 tclass,
+                             u32 requested, u32 audited,
+                             struct av_decision *avd,
+                             int result,
+                             struct common_audit_data *a);
+
+          static inline int security_xperm_test(const u8 *perms, u32 perm)
+          {
+              return (perms[perm >> 3] >> (perm & 7)) & 1;
+          }
+
+          #endif /* _SELINUX_AVC_H_ */
+          AVC_H
+
+          echo "Created avc.h"
 
           # 创建 lsm_audit.h
-          if [ ! -f security/selinux/include/lsm_audit.h ]; then
-            echo "Creating lsm_audit.h..."
-            printf '%s\n' \
-              '#ifndef _SELINUX_LSM_AUDIT_H_' \
-              '#define _SELINUX_LSM_AUDIT_H_' \
-              '#include <linux/types.h>' \
-              'struct common_audit_data { int type; union { struct { char *name; } path; struct { char *name; } inode; } u; void *selinux_audit_data; };' \
-              'struct selinux_audit_data { struct selinux_state *state; u32 ssid; u32 tsid; u16 tclass; u32 audited; u32 denied; int result; };' \
-              '#endif' \
-              > security/selinux/include/lsm_audit.h
-          fi
+          echo "Creating lsm_audit.h..."
+          cat > security/selinux/include/lsm_audit.h << 'LSM_AUDIT_H'
+          #ifndef _SELINUX_LSM_AUDIT_H_
+          #define _SELINUX_LSM_AUDIT_H_
 
-          # 创建 selinux_state 前向声明
-          if [ -f security/selinux/include/security.h ]; then
-            if ! grep -q "struct selinux_state" security/selinux/include/security.h; then
-              sed -i 's/#include "flask.h"/#include "flask.h"\nstruct selinux_state;/' security/selinux/include/security.h
-            fi
-          fi
+          #include <linux/types.h>
+
+          struct common_audit_data {
+              int type;
+              union {
+                  struct { char *name; } path;
+                  struct { char *name; } inode;
+              } u;
+              void *selinux_audit_data;
+          };
+
+          struct selinux_audit_data {
+              struct selinux_state *state;
+              u32 ssid;
+              u32 tsid;
+              u16 tclass;
+              u32 audited;
+              u32 denied;
+              int result;
+          };
+
+          #endif /* _SELINUX_LSM_AUDIT_H_ */
+          LSM_AUDIT_H
+
+          echo "Created lsm_audit.h"
 
           echo "SELinux header fix completed."
           
