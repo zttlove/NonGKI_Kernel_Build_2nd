@@ -219,6 +219,8 @@ jobs:
           #define SECINITSID_FILE                        11
           #define SECINITSID_INIT                        12
           #define SECINITSID_SYSTEM                      13
+          #define SECINITSID_DEVNULL                     14
+          #define SECINITSID_NUM                         15
 
           /* ============================================
            * SECCLASS definitions - Security Classes
