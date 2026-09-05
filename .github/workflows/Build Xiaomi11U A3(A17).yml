@@ -383,7 +383,7 @@ jobs:
           CONFIG_SECURITY_SELINUX_BOOTPARAM=y
           CONFIG_SECURITY_SELINUX_DISABLE=y
           CONFIG_FRAME_WARN=4096
-EOF
+          EOF
           echo "Defconfig updated successfully with SUSFS support."
 
       - name: Set PATH for Clang
