@@ -358,6 +358,30 @@ jobs:
           echo "Created complete flask.h"
           cp security/selinux/flask.h security/selinux/include/flask.h
 
+          echo "Fixing security.h - adding missing function declarations..."
+          if [ -f security/selinux/include/security.h ]; then
+            if ! grep -q "security_is_socket_class" security/selinux/include/security.h; then
+              printf '\n/* Added for compatibility */\nstatic inline int security_is_socket_class(u16 class)\n{\n    return (class >= SECCLASS_SOCKET && class <= SECCLASS_SCTP_SOCKET);\n}\n' >> security/selinux/include/security.h
+              echo "Added security_is_socket_class to security.h"
+            fi
+          else
+            echo "security/selinux/include/security.h not found, creating..."
+            cat > security/selinux/include/security.h <<- 'EOF'
+            #ifndef _SELINUX_SECURITY_H_
+            #define _SELINUX_SECURITY_H_
+
+            #include "flask.h"
+
+            static inline int security_is_socket_class(u16 class)
+            {
+                return (class >= SECCLASS_SOCKET && class <= SECCLASS_SCTP_SOCKET);
+            }
+
+            #endif /* _SELINUX_SECURITY_H_ */
+            EOF
+            echo "Created security/selinux/include/security.h"
+          fi
+
           if [ ! -f security/selinux/Makefile ]; then
             echo "Creating security/selinux/Makefile..."
             printf '%s\n' \
@@ -379,7 +403,6 @@ jobs:
           fi
 
           echo "SELinux fix completed."
-
       - name: Generate defconfig with found config
         working-directory: kernel
         run: |
