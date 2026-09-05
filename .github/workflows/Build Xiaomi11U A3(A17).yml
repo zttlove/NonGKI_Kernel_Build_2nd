@@ -366,19 +366,19 @@ jobs:
             fi
           else
             echo "security/selinux/include/security.h not found, creating..."
-            cat > security/selinux/include/security.h <<- 'EOF'
-            #ifndef _SELINUX_SECURITY_H_
-            #define _SELINUX_SECURITY_H_
-
-            #include "flask.h"
-
-            static inline int security_is_socket_class(u16 class)
-            {
-                return (class >= SECCLASS_SOCKET && class <= SECCLASS_SCTP_SOCKET);
-            }
-
-            #endif /* _SELINUX_SECURITY_H_ */
-            EOF
+            printf '%s\n' \
+              '#ifndef _SELINUX_SECURITY_H_' \
+              '#define _SELINUX_SECURITY_H_' \
+              '' \
+              '#include "flask.h"' \
+              '' \
+              'static inline int security_is_socket_class(u16 class)' \
+              '{' \
+              '    return (class >= SECCLASS_SOCKET && class <= SECCLASS_SCTP_SOCKET);' \
+              '}' \
+              '' \
+              '#endif /* _SELINUX_SECURITY_H_ */' \
+              > security/selinux/include/security.h
             echo "Created security/selinux/include/security.h"
           fi
 
