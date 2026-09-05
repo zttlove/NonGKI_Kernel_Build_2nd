@@ -90,33 +90,45 @@ jobs:
           if grep -q "source \"drivers/kernelsu/Kconfig\"" drivers/Kconfig 2>/dev/null; then
             echo "KernelSU reference found in Kconfig"
             
-            # Remove existing directory if it exists but is incomplete
+            # Remove existing directory if it exists
             if [ -d "drivers/kernelsu" ]; then
               echo "Removing existing KernelSU directory..."
               rm -rf drivers/kernelsu
             fi
             
-            # Create parent directory and clone
+            # Clone ReSukiSU
             echo "Cloning ReSukiSU (KernelSU fork) from ${{ env.KERNELSU_REPO }} branch ${{ env.KERNELSU_BRANCH }}..."
             mkdir -p drivers
             git clone --depth=1 -b ${{ env.KERNELSU_BRANCH }} ${{ env.KERNELSU_REPO }} drivers/kernelsu
             
-            # Verify clone was successful
             if [ $? -ne 0 ]; then
               echo "ERROR: Failed to clone KernelSU repository!"
               exit 1
             fi
             
-            if [ ! -f "drivers/kernelsu/Kconfig" ]; then
-              echo "ERROR: drivers/kernelsu/Kconfig missing after clone!"
+            # ReSukiSU has Kconfig in kernel/ subdirectory, we need to create a symlink or copy
+            echo "Setting up ReSukiSU Kconfig structure..."
+            if [ -f "drivers/kernelsu/kernel/Kconfig" ]; then
+              echo "Found Kconfig in drivers/kernelsu/kernel/Kconfig"
+              # Create a Kconfig file that includes the actual one
+              echo "# ReSukiSU KernelSU Kconfig" > drivers/kernelsu/Kconfig
+              echo "source \"drivers/kernelsu/kernel/Kconfig\"" >> drivers/kernelsu/Kconfig
+              echo "Kconfig wrapper created successfully"
+            else
+              echo "ERROR: drivers/kernelsu/kernel/Kconfig not found!"
               echo "Contents of drivers/kernelsu:"
-              ls -la drivers/kernelsu/ || echo "Directory not found"
+              ls -la drivers/kernelsu/
               exit 1
             fi
             
-            echo "KernelSU Kconfig verified successfully"
-            echo "KernelSU version:"
-            cat drivers/kernelsu/Kconfig | head -10 || true
+            # Also need to set up the Makefile if it's in kernel/ subdirectory
+            if [ -f "drivers/kernelsu/kernel/Makefile" ] && [ ! -f "drivers/kernelsu/Makefile" ]; then
+              echo "Creating Makefile wrapper for ReSukiSU..."
+              echo "# ReSukiSU KernelSU Makefile" > drivers/kernelsu/Makefile
+              echo "include drivers/kernelsu/kernel/Makefile" >> drivers/kernelsu/Makefile
+            fi
+            
+            echo "KernelSU setup verified successfully"
           else
             echo "No KernelSU reference found in Kconfig, skipping"
           fi
