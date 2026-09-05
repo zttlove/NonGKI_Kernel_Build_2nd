@@ -99,20 +99,17 @@ jobs:
               break
             fi
           done
-          
           if [ -z "$DEFCONFIG_PATH" ]; then
             echo "Checking vendor subdirectories..."
             find arch/${{ env.KERNEL_ARCH }}/configs/vendor -name "*defconfig" -type f 2>/dev/null | grep -i star | head -5
             DEFCONFIG_PATH=$(find arch/${{ env.KERNEL_ARCH }}/configs/vendor -name "*defconfig" -type f 2>/dev/null | grep -i star | head -1)
           fi
-          
           if [ -z "$DEFCONFIG_PATH" ]; then
             echo "ERROR: No star-related defconfig found!"
             echo "All available defconfigs:"
             find arch/${{ env.KERNEL_ARCH }}/configs -name "*defconfig" -type f
             exit 1
           fi
-          
           DEFCONFIG_NAME=$(basename "$DEFCONFIG_PATH")
           echo "Found defconfig: $DEFCONFIG_NAME"
           echo "DEFCONFIG_NAME=$DEFCONFIG_NAME" >> $GITHUB_ENV
@@ -148,12 +145,10 @@ jobs:
           echo "KSU_SRC_DIR=$KSU_SRC_DIR" >> $GITHUB_ENV
           KSU_REL_PATH="${KSU_SRC_DIR#drivers/}"
           echo "KSU_REL_PATH=$KSU_REL_PATH" >> $GITHUB_ENV
-          
           if [ ! -f "drivers/kernelsu/Makefile" ]; then
             echo "# KernelSU placeholder Makefile" > drivers/kernelsu/Makefile
             echo "# Actual object files are added directly in drivers/Makefile" >> drivers/kernelsu/Makefile
           fi
-          
           if [ ! -f "drivers/kernelsu/Kconfig" ]; then
             if [ -f "$KSU_SRC_DIR/Kconfig" ]; then
               cp "$KSU_SRC_DIR/Kconfig" drivers/kernelsu/Kconfig
@@ -162,8 +157,6 @@ jobs:
               touch drivers/kernelsu/Kconfig
             fi
           fi
-          
-          # 为 security/selinux 添加包含路径（如果存在）
           for makefile in security/selinux/Makefile security/selinux/ss/Makefile; do
             if [ -f "$makefile" ]; then
               if ! grep -q "ccflags-y += -I\$(srctree)/security/selinux/include" "$makefile"; then
@@ -174,21 +167,16 @@ jobs:
               echo "Warning: $makefile not found, skipping"
             fi
           done
-          
           sed -i '/^# KernelSU/,/^# End KernelSU/d' drivers/Makefile
-          
           echo "# KernelSU" >> drivers/Makefile
           echo "ccflags-y += -I\$(srctree)/$KSU_SRC_DIR" >> drivers/Makefile
           echo "ccflags-y += -I\$(srctree)/$KSU_SRC_DIR/include" >> drivers/Makefile
-          
-          # 只在 SELinux 目录存在时添加这些路径
           if [ -d "security/selinux" ]; then
             echo "ccflags-y += -I\$(srctree)/security" >> drivers/Makefile
             echo "ccflags-y += -I\$(srctree)/security/selinux" >> drivers/Makefile
             echo "ccflags-y += -I\$(srctree)/security/selinux/include" >> drivers/Makefile
             echo "ccflags-y += -I\$(srctree)/security/selinux/ss" >> drivers/Makefile
           fi
-          
           echo -n "obj-y += " >> drivers/Makefile
           pushd $KSU_SRC_DIR > /dev/null
           find . -name "*.c" -printf "%P\n" | while read -r cfile; do
@@ -198,12 +186,10 @@ jobs:
           popd > /dev/null
           echo "" >> drivers/Makefile
           echo "# End KernelSU" >> drivers/Makefile
-          
           sed -i '/^source.*kernelsu/d' drivers/Kconfig 2>/dev/null || true
           if [ -f "drivers/kernelsu/Kconfig" ]; then
             echo "source \"drivers/kernelsu/Kconfig\"" >> drivers/Kconfig
           fi
-          
           echo "KernelSU build files setup complete."
           grep -A 5 "KernelSU" drivers/Makefile || true
 
@@ -221,12 +207,8 @@ jobs:
           echo ""
           echo "=== Finding genflask.sh ==="
           find security -name "genflask.sh" -type f 2>/dev/null
-          
-          # 如果存在 SELinux 目录，尝试修复
           if [ -d "security/selinux" ]; then
             echo "SELinux directory found, applying fixes..."
-            
-            # 检查并修复 selinux/Makefile
             if [ -f "security/selinux/Makefile" ]; then
               echo "security/selinux/Makefile exists"
             else
@@ -237,30 +219,19 @@ jobs:
               # Makefile for the SELinux security module
               #
               obj-$(CONFIG_SECURITY_SELINUX) := selinux.o
-              
               selinux-y := hooks.o selinuxfs.o netif.o netnode.o netport.o \
                            exports.o status.o
-              
-              # Add ss subdirectory
               selinux-y += ss/built-in.a
-              
-              # Flask generation
               quiet_cmd_flask = GEN     $@
               cmd_flask = $(obj)/genflask.sh $< > $@
-              
               $(obj)/flask.h: $(src)/include/classmap.h FORCE
                       $(call if_changed,flask)
-              
               targets += flask.h
-              
-              # Include paths
               ccflags-y += -I$(srctree)/security/selinux/include
               ccflags-y += -I$(srctree)/security/selinux/ss
 SELINUX_MAKEFILE
               echo "Created security/selinux/Makefile"
             fi
-            
-            # 检查并修复 selinux/ss/Makefile
             if [ ! -d "security/selinux/ss" ]; then
               mkdir -p security/selinux/ss
             fi
@@ -276,13 +247,10 @@ SELINUX_MAKEFILE
 SS_MAKEFILE
               echo "Created security/selinux/ss/Makefile"
             fi
-            
-            # 创建 genflask.sh（如果不存在）
             if [ ! -f "security/selinux/genflask.sh" ]; then
               echo "Creating genflask.sh..."
               cat > security/selinux/genflask.sh << 'GENFLASK_SH'
               #!/bin/sh
-              # Generate flask.h from classmap.h
               grep -E "^[[:space:]]*S_(SECCLASS_[A-Z0-9_]+)" "$1" | \
                 sed -E 's/^[[:space:]]*S_\(SECCLASS_([A-Z0-9_]+)\)/\1/' | \
                 while read class; do
@@ -294,8 +262,6 @@ GENFLASK_SH
               chmod +x security/selinux/genflask.sh
               echo "Created genflask.sh"
             fi
-            
-            # 触发生成 flask.h
             if [ -f "security/selinux/genflask.sh" ] && [ -f "security/selinux/include/classmap.h" ]; then
               echo "Generating flask.h..."
               cd security/selinux
@@ -319,7 +285,6 @@ GENFLASK_SH
             touch security/selinux/ss/Makefile
             echo "Created dummy SELinux files"
           fi
-          
           echo "=== SELinux fix completed ==="
 
       - name: Generate defconfig with found config
@@ -355,7 +320,6 @@ GENFLASK_SH
           CONFIG_KSU_DEBUG=n
           CONFIG_KSU_KPROBES_HOOK=y
           CONFIG_KSU_USE_KPROBES=y
-          
           # SUSFS (Required by ReSukiSU)
           CONFIG_KSU_SUSFS=y
           CONFIG_KSU_SUSFS_SUS_SU=y
@@ -364,19 +328,16 @@ GENFLASK_SH
           CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
           CONFIG_KSU_SUSFS_SUS_MAP=y
           CONFIG_KSU_SUSFS_HIDE_MAGIC_MOUNTS=y
-          
           # Kprobes
           CONFIG_HAVE_KPROBES=y
           CONFIG_KPROBES=y
           CONFIG_KPROBE_EVENTS=y
           CONFIG_KPROBE_EVENTS_ON_NOTRACE=y
-          
           # Modules
           CONFIG_MODULES=y
           CONFIG_MODULE_SIG=y
           CONFIG_MODULE_SIG_SHA256=y
           CONFIG_MODULE_SIG_FORCE=n
-          
           # SELinux
           CONFIG_SECURITY=y
           CONFIG_SECURITY_SELINUX=y
