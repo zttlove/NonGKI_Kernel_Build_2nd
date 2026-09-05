@@ -295,10 +295,10 @@ jobs:
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           
-          # 彻底清理输出目录
-          echo "Cleaning output directory..."
+          # 清理内核源码树（在源码根目录执行）
+          echo "Cleaning kernel source tree..."
+          make ARCH=arm64 mrproper 2>/dev/null || true
           rm -rf ${{ env.OUTPUT_DIR }}
-          mkdir -p ${{ env.OUTPUT_DIR }}
           
           echo "Configuring kernel with ${{ env.DEFCONFIG_NAME }}..."
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
