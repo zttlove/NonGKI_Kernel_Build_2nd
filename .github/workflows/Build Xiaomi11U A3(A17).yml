@@ -200,11 +200,13 @@ jobs:
           mkdir -p security/selinux/include
           mkdir -p security/selinux/ss
 
-          echo "Creating complete flask.h..."
+          echo "Creating complete flask.h with all definitions..."
           cat > security/selinux/flask.h <<- 'EOF'
-          /* Auto-generated flask.h - Complete definitions */
+          /* Auto-generated flask.h - Complete definitions for SELinux */
 
-          /* SECINITSID definitions - Initial SIDs */
+          /* ============================================
+           * SECINITSID definitions - Initial SIDs
+           * ============================================ */
           #define SECINITSID_NONE                          0
           #define SECINITSID_UNLABELED                    1
           #define SECINITSID_SECURITY                     2
@@ -218,7 +220,11 @@ jobs:
           #define SECINITSID_INIT                        12
           #define SECINITSID_SYSTEM                      13
 
-          /* SECCLASS definitions - Security Classes */
+          /* ============================================
+           * SECCLASS definitions - Security Classes
+           * ============================================ */
+
+          /* Core classes */
           #define SECCLASS_NONE                           0
           #define SECCLASS_SECURITY                       1
           #define SECCLASS_PROCESS                        2
@@ -306,6 +312,44 @@ jobs:
           #define SECCLASS_QIPCRTR_SOCKET                 84
           #define SECCLASS_SMC_SOCKET                     85
           #define SECCLASS_SMC_PROC                       86
+
+          /* Additional classes needed by modern kernels */
+          #define SECCLASS_PROCESS2                       87
+          #define SECCLASS_CAP_USERNS                     88
+          #define SECCLASS_CAP2_USERNS                    89
+          #define SECCLASS_BINDER                         90
+          #define SECCLASS_ANON_INODE                     91
+          #define SECCLASS_PACKET                         92
+          #define SECCLASS_MSGQ                           93
+          #define SECCLASS_MSG                            94
+          #define SECCLASS_SEM                            95
+          #define SECCLASS_SHM                            96
+          #define SECCLASS_IPC                            97
+          #define SECCLASS_CRYPTO                         98
+          #define SECCLASS_KEY                            99
+          #define SECCLASS_DBUS                          100
+          #define SECCLASS_WAKE_ALARM                    101
+          #define SECCLASS_USB_DEVICE                    102
+          #define SECCLASS_USB_DEVICE_CONFIG             103
+          #define SECCLASS_USB_DEVICE_INTERFACE          104
+          #define SECCLASS_USB_DEVICE_FUNCTION           105
+          #define SECCLASS_PERSISTENT_FILE               106
+          #define SECCLASS_DEVICE                         107
+          #define SECCLASS_MODULE                        108
+          #define SECCLASS_SERVICE                       109
+          #define SECCLASS_SERVICE_MANAGER               110
+          #define SECCLASS_SYSTEM_SERVER                 111
+          #define SECCLASS_SYSTEM_APP                    112
+          #define SECCLASS_PLATFORM_APP                  113
+          #define SECCLASS_UNTRUSTED_APP                 114
+          #define SECCLASS_BLUETOOTH                     115
+          #define SECCLASS_LOGGING                       116
+          #define SECCLASS_APP_DATA                      117
+          #define SECCLASS_SENSORS                       118
+          #define SECCLASS_GPU                           119
+          #define SECCLASS_HW_INFO                       120
+          #define SECCLASS_SYSTEM_HEALTH                 121
+          #define SECCLASS_VENDOR                        122
           EOF
 
           echo "Created complete flask.h"
