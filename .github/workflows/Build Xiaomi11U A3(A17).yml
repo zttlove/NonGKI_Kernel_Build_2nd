@@ -193,17 +193,17 @@ jobs:
           echo "KernelSU build files setup complete."
           grep -A 5 "KernelSU" drivers/Makefile || true
 
-          - name: Fix SELinux directory structure
-          working-directory: kernel
-          run: |
+      - name: Fix SELinux directory structure
+        working-directory: kernel
+        run: |
           echo "Fixing SELinux directory structure..."
           mkdir -p security/selinux/include
           mkdir -p security/selinux/ss
-          
+
           echo "Creating complete flask.h..."
-          cat > security/selinux/flask.h << 'EOF'
+          cat > security/selinux/flask.h <<- 'EOF'
           /* Auto-generated flask.h - Complete definitions */
-          
+
           /* SECINITSID definitions - Initial SIDs */
           #define SECINITSID_NONE                          0
           #define SECINITSID_UNLABELED                    1
@@ -217,7 +217,7 @@ jobs:
           #define SECINITSID_FILE                        11
           #define SECINITSID_INIT                        12
           #define SECINITSID_SYSTEM                      13
-          
+
           /* SECCLASS definitions - Security Classes */
           #define SECCLASS_NONE                           0
           #define SECCLASS_SECURITY                       1
@@ -307,25 +307,30 @@ jobs:
           #define SECCLASS_SMC_SOCKET                     85
           #define SECCLASS_SMC_PROC                       86
           EOF
+
           echo "Created complete flask.h"
-          
-          # 复制到 include/ 目录
           cp security/selinux/flask.h security/selinux/include/flask.h
-          
+
           if [ ! -f security/selinux/Makefile ]; then
             echo "Creating security/selinux/Makefile..."
-            echo "obj-\$(CONFIG_SECURITY_SELINUX) := selinux.o" > security/selinux/Makefile
-            echo "selinux-y := hooks.o selinuxfs.o netif.o netnode.o netport.o exports.o status.o" >> security/selinux/Makefile
-            echo "selinux-y += ss/built-in.a" >> security/selinux/Makefile
-            echo "ccflags-y += -I\$(srctree)/security/selinux/include" >> security/selinux/Makefile
-            echo "ccflags-y += -I\$(srctree)/security/selinux/ss" >> security/selinux/Makefile
+            cat > security/selinux/Makefile <<- 'MAKEFILE'
+            obj-$(CONFIG_SECURITY_SELINUX) := selinux.o
+            selinux-y := hooks.o selinuxfs.o netif.o netnode.o netport.o exports.o status.o
+            selinux-y += ss/built-in.a
+            ccflags-y += -I$(srctree)/security/selinux/include
+            ccflags-y += -I$(srctree)/security/selinux/ss
+            MAKEFILE
             echo "Created security/selinux/Makefile"
           fi
+
           if [ ! -f security/selinux/ss/Makefile ]; then
             echo "Creating security/selinux/ss/Makefile..."
-            echo "obj-y := avc.o services.o context.o ebitmap.o hashtab.o sidtab.o symtab.o mls.o conditional.o policy.o constraint.o policydb.o" > security/selinux/ss/Makefile
+            cat > security/selinux/ss/Makefile <<- 'SSMAKEFILE'
+            obj-y := avc.o services.o context.o ebitmap.o hashtab.o sidtab.o symtab.o mls.o conditional.o policy.o constraint.o policydb.o
+            SSMAKEFILE
             echo "Created security/selinux/ss/Makefile"
           fi
+
           echo "SELinux fix completed."
 
       - name: Generate defconfig with found config
@@ -355,7 +360,7 @@ jobs:
           sed -i '/^CONFIG_SECURITY_SELINUX/d' $DEFCONFIG_PATH
           sed -i '/^CONFIG_KPROBE_EVENTS/d' $DEFCONFIG_PATH
           sed -i '/^CONFIG_SUSFS/d' $DEFCONFIG_PATH
-          cat >> $DEFCONFIG_PATH << 'EOF'
+          cat >> $DEFCONFIG_PATH <<- 'EOF'
           # KernelSU
           CONFIG_KSU=y
           CONFIG_KSU_DEBUG=n
@@ -404,23 +409,23 @@ jobs:
           export CC=clang
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
-          
+
           echo "Cleaning kernel source tree..."
           make ARCH=arm64 mrproper 2>/dev/null || true
           rm -rf ${{ env.OUTPUT_DIR }}
-          
+
           echo "Configuring kernel with ${{ env.DEFCONFIG_NAME }}..."
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
-          
+
           echo "=== Verifying configuration ==="
           grep -E "CONFIG_(KPROBES|KSU|KPROBE_EVENTS|KSU_USE_KPROBES|KSU_SUSFS)" ${{ env.OUTPUT_DIR }}/.config || true
           echo "=== Checking drivers Makefile for KernelSU ==="
           grep -A 5 "KernelSU" drivers/Makefile || true
-          
+
           echo "Compiling kernel..."
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} \
             KCFLAGS="-DCONFIG_KSU=1 -DCONFIG_KSU_USE_KPROBES=1 -DCONFIG_KSU_SUSFS=1 -Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-array-parameter -Wno-void-pointer-to-int-cast -Wno-sometimes-uninitialized -Wno-compare-distinct-pointer-types -Wno-pointer-to-int-cast -Wno-uninitialized"
-          
+
           if [ ! -f "${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image" ]; then
             echo "ERROR: Kernel image not generated!"
             exit 1
