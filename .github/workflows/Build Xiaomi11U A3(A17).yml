@@ -81,15 +81,34 @@ jobs:
           echo "CCACHE_DIR=~/.ccache" >> $GITHUB_ENV
           ccache -M 6G
 
-     
-          
+      - name: Setup KernelSU Submodule
+        working-directory: kernel
+        run: |
+          echo "Checking for KernelSU Kconfig..."
+          if grep -q "source \"drivers/kernelsu/Kconfig\"" drivers/Kconfig 2>/dev/null; then
+            echo "KernelSU reference found in Kconfig"
+            if [ ! -d "drivers/kernelsu" ]; then
+              echo "KernelSU directory not found, cloning..."
+              git clone --depth=1 -b  https://github.com/ReSukiSU/ReSukiSU drivers/kernelsu
+            else
+              echo "KernelSU directory already exists"
+            fi
+            # Verify Kconfig exists
+            if [ ! -f "drivers/kernelsu/Kconfig" ]; then
+              echo "ERROR: drivers/kernelsu/Kconfig still missing!"
+              exit 1
+            fi
+            echo "KernelSU Kconfig verified"
+          else
+            echo "No KernelSU reference found in Kconfig, skipping"
+          fi
+
       - name: Generate defconfig with found config
         working-directory: kernel
         run: |
           echo "Using defconfig: ${{ env.DEFCONFIG_NAME }}"
           make ARCH=${{ env.KERNEL_ARCH }} ${{ env.DEFCONFIG_NAME }}
 
-      
       - name: Set PATH for Clang
         run: echo "$(pwd)/clang/bin" >> $GITHUB_PATH
 
