@@ -229,7 +229,7 @@ jobs:
               targets += flask.h
               ccflags-y += -I$(srctree)/security/selinux/include
               ccflags-y += -I$(srctree)/security/selinux/ss
-SELINUX_MAKEFILE
+              SELINUX_MAKEFILE
               echo "Created security/selinux/Makefile"
             fi
             if [ ! -d "security/selinux/ss" ]; then
@@ -244,7 +244,7 @@ SELINUX_MAKEFILE
               obj-y := avc.o services.o context.o ebitmap.o hashtab.o \
                        sidtab.o symtab.o mls.o conditional.o policy.o \
                        constraint.o policydb.o
-SS_MAKEFILE
+              SS_MAKEFILE
               echo "Created security/selinux/ss/Makefile"
             fi
             if [ ! -f "security/selinux/genflask.sh" ]; then
@@ -258,7 +258,7 @@ SS_MAKEFILE
                 done
               echo ""
               echo "#define SECCLASS_NONE 0"
-GENFLASK_SH
+             GENFLASK_SH
               chmod +x security/selinux/genflask.sh
               echo "Created genflask.sh"
             fi
