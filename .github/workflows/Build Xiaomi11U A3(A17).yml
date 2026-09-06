@@ -1,4 +1,4 @@
-name: Build Kernel (A17) - Stable with Kprobes Hook (Fixed)
+1name: Build Kernel (A17) - Stable with Kprobes Hook (Fixed)
 
 on:
   push:
@@ -150,7 +150,7 @@ jobs:
           ./scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable CONFIG_KSU
           ./scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable CONFIG_KSU_USE_KPROBES
           ./scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable CONFIG_KSU_ZYGISK
-          ./scripts/config --file ${{ env.OUTPUT_DIR }}/.config --disable CONFIG_KSU_AUTO_INIT
+          ./scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable CONFIG_KSU_AUTO_INIT
           ./scripts/config --file ${{ env.OUTPUT_DIR }}/.config --disable CONFIG_KSU_SUSFS
           ./scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable CONFIG_KPROBES
           ./scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable CONFIG_KPROBE_EVENTS
