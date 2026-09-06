@@ -123,12 +123,13 @@ jobs:
           else
             echo "No KernelSU reference found in Kconfig, skipping"
           fi
-      - name: Patch SUSFS
+      - name: Apply SUSFS & fix devpts hook for 5.4‑y non‑gki
         run: |
-          # 删除GKI专属 devpts xarray.c 补丁块，5.4‑y non‑gki不兼容
-          sed -i '/fs\/devpts\/xarray\.c/,/^@@/d' susfs.patch
-          patch -p1 < susfs.patch
-          grep "fs/devpts/xarray.c" susfs.patch
+          # 1. 打完整susfs补丁（会错误插入ksu_handle_devpts代码）
+          patch -p1 < susfs2.1.patch
+          # 2. 直接修改内核源码 inode.c，删掉整个KSU钩子块
+          sed -i '/#ifdef CONFIG_KSU/,/#endif/d' fs/devpts/inode.c
+
 
       - name: Set PATH for Clang
         run: echo "$(pwd)/clang/bin" >> $GITHUB_PATH
