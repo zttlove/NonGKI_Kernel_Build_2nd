@@ -171,8 +171,37 @@ jobs:
           fi
           bash drivers/kernelsu/scripts/magisk-boot.sh "${IMG_LZ4}"
           echo "magisk‑boot inject done"
+          
+      - name: Clone AnyKernel3
+        run: git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel3
 
-      # 打包Anykernel3 仅Image内核专用
+      - name: Collect Kernel Modules
+        if: env.PACK_KMODULES == 'true'
+        working-directory: kernel
+        run: |
+          echo "Collecting kernel modules..."
+          mkdir -p modules
+          find ${{ env.OUTPUT_DIR }} -name "*.ko" -exec cp {} modules/ \;
+          if [ -d "../anykernel3" ]; then
+            cp modules/*.ko ../anykernel3/ 2>/dev/null || true
+          fi
+
+      - name: Prepare AnyKernel3 Package
+        run: |
+          cp kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image anykernel3/
+          if [ -f "kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/dtb.img" ]; then
+            cp kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/dtb.img anykernel3/
+          fi
+          if [ -d "kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/dts" ]; then
+            cp kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/dts/*.dtb anykernel3/ 2>/dev/null || true
+          fi
+          if [ -d "kernel/modules" ] && [ "$(ls -A kernel/modules)" ]; then
+            cp kernel/modules/*.ko anykernel3/ 2>/dev/null || true
+          fi
+          echo "AnyKernel3 contents:"
+          ls -la anykernel3/
+          
+      
       - name: 📦 Package Anykernel3 Flash Zip
         if: env.PACK_METHOD == 'Anykernel3'
         shell: bash
