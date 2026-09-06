@@ -164,10 +164,17 @@ jobs:
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} \
             KCFLAGS="-Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-array-parameter -Wno-void-pointer-to-int-cast -Wno-sometimes-uninitialized -Wno-compare-distinct-pointer-types -Wno-pointer-to-int-cast -Wno-uninitialized"
 
-          IMG_LZ4=${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image.lz4
-          if [ ! -f "${IMG_LZ4}" ];then
-            echo "ERROR: Image.lz4 not found"
-            exit 1
+          IMG=${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image
+          if [ ! -f "${IMG}" ]; then
+          echo "ERROR: Image not found"
+          exit 1
+          fi
+          # （可选）若存在 Image.lz4 且脚本存在则执行注入
+          if [ -f "${IMG}.lz4" ] && [ -f "drivers/kernelsu/scripts/magisk-boot.sh" ]; then
+          bash drivers/kernelsu/scripts/magisk-boot.sh "${IMG}.lz4"
+          echo "magisk‑boot inject done"
+          else
+          echo "⚠️ 跳过 magisk-boot 注入（Image.lz4 或脚本不存在）"
           fi
           # 增加脚本存在性判断，避免因缺失而失败
           if [ -f "drivers/kernelsu/scripts/magisk-boot.sh" ]; then
