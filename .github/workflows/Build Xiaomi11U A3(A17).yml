@@ -128,6 +128,7 @@ jobs:
           # 删除GKI专属 devpts xarray.c 补丁块，5.4‑y non‑gki不兼容
           sed -i '/fs\/devpts\/xarray\.c/,/^@@/d' susfs.patch
           patch -p1 < susfs.patch
+          grep "fs/devpts/xarray.c" susfs.patch
 
       - name: Set PATH for Clang
         run: echo "$(pwd)/clang/bin" >> $GITHUB_PATH
