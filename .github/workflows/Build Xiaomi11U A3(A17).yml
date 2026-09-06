@@ -1,4 +1,4 @@
-1name: Build Kernel (A17) - Stable with Kprobes Hook (Fixed)
+name: Build Kernel (A17) - Stable with Kprobes Hook (Fixed)
 
 on:
   push:
