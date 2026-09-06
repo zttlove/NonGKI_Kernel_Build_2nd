@@ -147,14 +147,7 @@ jobs:
 
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
 
-          ./scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable CONFIG_KSU
-          ./scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable CONFIG_KSU_USE_KPROBES
-          ./scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable CONFIG_KSU_ZYGISK
-          ./scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable CONFIG_KSU_AUTO_INIT
-          ./scripts/config --file ${{ env.OUTPUT_DIR }}/.config --disable CONFIG_KSU_SUSFS
-          ./scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable CONFIG_KPROBES
-          ./scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable CONFIG_KPROBE_EVENTS
-
+          
           make ARCH=arm64 olddefconfig O=${{ env.OUTPUT_DIR }}
 
           if ! grep -q "obj-\$(CONFIG_KSU) += kernelsu/" drivers/Makefile; then
