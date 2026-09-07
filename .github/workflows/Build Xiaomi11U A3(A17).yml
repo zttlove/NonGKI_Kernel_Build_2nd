@@ -113,9 +113,7 @@ jobs:
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU_SUSFS_SPOOF_UNAME
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU_SUSFS_SUS_MOUNT
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable MODULES
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable CONFIG_OVERLAY_FS=y
-
-
+          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable OVERLAY_FS
           
           make ARCH=arm64 olddefconfig O=${{ env.OUTPUT_DIR }}
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} \
