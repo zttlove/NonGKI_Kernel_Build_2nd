@@ -39,11 +39,20 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt update
-          # 修正：使用 libncurses-dev 替代已废弃的 libtinfo5
+          # 安装基本依赖
           sudo apt install -y \
             bc bison flex libelf-dev libssl-dev libncurses-dev \
             make python3 device-tree-compiler git curl xz-utils \
             ccache p7zip-full
+            
+          # 关键修复：安装 libtinfo5 (Clang 18 的硬依赖)
+          # 如果 Ubuntu 22.04 源中找不到 libtinfo5，则创建软链接伪装成 libtinfo.so.5
+          if ! sudo apt install -y libtinfo5 2>/dev/null; then
+            echo "libtinfo5 包不存在，尝试创建兼容性软链接..."
+            sudo ln -sf /lib/x86_64-linux-gnu/libtinfo.so.6 /lib/x86_64-linux-gnu/libtinfo.so.5
+          fi
+          echo "依赖安装完成，验证 libtinfo 链接："
+          ls -la /lib/x86_64-linux-gnu/libtinfo.so*
 
       - name: Cache Clang
         id: cache-clang
