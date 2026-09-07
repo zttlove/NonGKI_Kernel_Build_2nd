@@ -52,19 +52,31 @@ jobs:
           rm clang.tar.xz
           clang/bin/clang --version
 
-      - name: Setup KernelSU (Auto Integration via setup.sh)
+      - name: Setup KernelSU (Manual Wrapper for zttlove)
         working-directory: kernel
         run: |
           set -e
           echo "Cloning KernelSU from ${{ env.KERNELSU_REPO }} branch ${{ env.KERNELSU_BRANCH }}"
+    
+          # 1. 清理并克隆
           rm -rf drivers/kernelsu
           git clone --depth=1 -b ${{ env.KERNELSU_BRANCH }} ${{ env.KERNELSU_REPO }} drivers/kernelsu
-          
-          echo "Running official setup.sh script..."
-          # 这里会自动打补丁，将服务注入 init.rc，设置 Kconfig 和 Makefile
-          bash drivers/kernelsu/kernel/setup.sh
-          echo "KernelSU setup successful!"
 
+          # 2. 关键步骤：在 drivers/kernelsu/ 下创建包装文件，指向真正的 kernel/ 子目录
+          echo "source \"drivers/kernelsu/kernel/Kconfig\"" > drivers/kernelsu/Kconfig
+          echo "obj-y += kernel/" > drivers/kernelsu/Makefile
+    
+          # 3. 集成到顶层的 Kconfig 和 Makefile
+          # 先清理掉可能导致报错的旧引用（如果有）
+          sed -i '/source "drivers\/kernelsu\/Kconfig"/d' drivers/Kconfig
+          sed -i '/obj-\$(CONFIG_KSU) += kernelsu\//d' drivers/Makefile
+    
+          # 然后加入正确的引用
+          echo "source \"drivers/kernelsu/Kconfig\"" >> drivers/Kconfig
+          echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
+    
+          echo "KernelSU setup successful!"
+    
       - name: Build Kernel (Manual Hook Enabled)
         working-directory: kernel
         run: |
