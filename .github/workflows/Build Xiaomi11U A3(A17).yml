@@ -99,10 +99,11 @@ jobs:
           make ARCH=arm64 mrproper 2>/dev/null || true
           rm -rf ${{ env.OUTPUT_DIR }}
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
-          # 强制开启 Manual Hook 模式，禁用 Kprobes
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU_MANUAL_HOOK
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --disable KPROBES
+          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --disable KSU_MANUAL_HOOK
+          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KPROBES
+          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable HAVE_KPROBES
+          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KPROBE_EVENTS
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU_SELINUX
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU_ZYGISK
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KALLSYMS
