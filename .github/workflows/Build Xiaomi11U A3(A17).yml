@@ -113,7 +113,7 @@ jobs:
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU_SUSFS_SPOOF_UNAME
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU_SUSFS_SUS_MOUNT
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable MODULES
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU_AUTO_INIT
+          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable CONFIG_OVERLAY_FS=y
 
 
           
