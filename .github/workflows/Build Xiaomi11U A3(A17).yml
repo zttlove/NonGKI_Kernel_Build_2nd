@@ -52,40 +52,18 @@ jobs:
           rm clang.tar.xz
           clang/bin/clang --version
 
-      - name: Setup KernelSU (zttlove master - Directory Auto Detect)
+      - name: Setup KernelSU (Auto Integration via setup.sh)
         working-directory: kernel
         run: |
           set -e
-          echo "Setting up KernelSU from ${{ env.KERNELSU_REPO }} branch ${{ env.KERNELSU_BRANCH }}..."
-          
-          # 清理目录
+          echo "Cloning KernelSU from ${{ env.KERNELSU_REPO }} branch ${{ env.KERNELSU_BRANCH }}"
           rm -rf drivers/kernelsu
           git clone --depth=1 -b ${{ env.KERNELSU_BRANCH }} ${{ env.KERNELSU_REPO }} drivers/kernelsu
           
-          # 关键修复：自动检测 Kconfig 在根目录还是 kernel/ 子目录
-          if [ -f "drivers/kernelsu/kernel/Kconfig" ]; then
-            echo "Kconfig found in kernel/ subdir, creating wrappers..."
-            echo "source \"drivers/kernelsu/kernel/Kconfig\"" > drivers/kernelsu/Kconfig
-            echo "obj-y += kernel/" > drivers/kernelsu/Makefile
-          elif [ -f "drivers/kernelsu/Kconfig" ]; then
-            echo "Kconfig found in root..."
-            if [ ! -f "drivers/kernelsu/Makefile" ]; then
-              echo "obj-y += ./" > drivers/kernelsu/Makefile
-            fi
-          else
-            echo "ERROR: KernelSU Kconfig not found in cloned repo! Listing contents:"
-            ls -la drivers/kernelsu
-            exit 1
-          fi
-
-          # 强制集成到主 Kconfig 和 Makefile
-          if ! grep -q "source \"drivers/kernelsu/Kconfig\"" drivers/Kconfig; then
-            echo "source \"drivers/kernelsu/Kconfig\"" >> drivers/Kconfig
-          fi
-          if ! grep -q "obj-\$(CONFIG_KSU) += kernelsu/" drivers/Makefile; then
-            echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
-          fi
-          echo "KernelSU Setup Complete."
+          echo "Running official setup.sh script..."
+          # 这里会自动打补丁，将服务注入 init.rc，设置 Kconfig 和 Makefile
+          bash drivers/kernelsu/kernel/setup.sh
+          echo "KernelSU setup successful!"
 
       - name: Build Kernel (Manual Hook Enabled)
         working-directory: kernel
@@ -122,6 +100,7 @@ jobs:
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU_SUSFS_SPOOF_UNAME
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU_SUSFS_SUS_MOUNT
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable MODULES
+          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU_AUTO_INIT
 
 
           
