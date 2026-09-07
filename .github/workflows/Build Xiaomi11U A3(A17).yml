@@ -1,28 +1,22 @@
-name: Build Kernel (A17) - Stable with Kprobes Hook (Fixed)
+name: Build Kernel (A17) - zttlove KernelSU (Fixed)
 
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
   workflow_dispatch:
 
 env:
   TZ: Asia/Shanghai
-  DEVICE_NAME: "xiaomi_11U"
   DEVICE_CODENAME: "star"
   KERNEL_ARCH: "arm64"
   KERNEL_REPO: "zttlove/android_kernel_xiaomi_sm8350_miyume"
   KERNEL_BRANCH: "main"
-  CLANG_VERSION: "18.1.8"
-  CLANG_URL: "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-18.04.tar.xz"
+  # 严格使用你指定的配置
+  KERNELSU_REPO: "https://github.com/zttlove/KernelSU"
+  KERNELSU_BRANCH: "master"
   DEFCONFIG_NAME: "star_defconfig"
   OUTPUT_DIR: "out"
   PACK_METHOD: "Anykernel3"
   PACK_KMODULES: "true"
   ROM_TEXT: "HyperA17"
-  KERNELSU_REPO: "https://github.com/zttlove/KernelSU"  # 或你成功挽留的 xxksu 仓库
-  KERNELSU_BRANCH: "master" # 或你成功挽留的 xxksu 分支
 
 jobs:
   build:
@@ -34,108 +28,66 @@ jobs:
           repository: ${{ env.KERNEL_REPO }}
           ref: ${{ env.KERNEL_BRANCH }}
           path: kernel
-          submodules: true
 
-      - name: Install Dependencies
+      - name: Install Dependencies (Fully Fixed)
         run: |
           sudo apt update
-          # 安装基本依赖
           sudo apt install -y \
             bc bison flex libelf-dev libssl-dev libncurses-dev \
             make python3 device-tree-compiler git curl xz-utils \
             ccache p7zip-full
-            
-          # 关键修复：安装 libtinfo5 (Clang 18 的硬依赖)
-          # 如果 Ubuntu 22.04 源中找不到 libtinfo5，则创建软链接伪装成 libtinfo.so.5
+
+          # 关键修复：处理 Clang 依赖 libtinfo.so.5 缺失的问题
           if ! sudo apt install -y libtinfo5 2>/dev/null; then
-            echo "libtinfo5 包不存在，尝试创建兼容性软链接..."
+            echo "libtinfo5 包不存在，创建兼容性软链接..."
             sudo ln -sf /lib/x86_64-linux-gnu/libtinfo.so.6 /lib/x86_64-linux-gnu/libtinfo.so.5
           fi
-          echo "依赖安装完成，验证 libtinfo 链接："
-          ls -la /lib/x86_64-linux-gnu/libtinfo.so*
 
-      - name: Cache Clang
-        id: cache-clang
-        uses: actions/cache@v4
-        with:
-          path: clang
-          key: clang-${{ env.CLANG_VERSION }}-x86_64
-
-      - name: Download Clang
-        if: steps.cache-clang.outputs.cache-hit != 'true'
+      - name: Download & Verify Clang
         run: |
-          echo "Downloading Clang ${{ env.CLANG_VERSION }}..."
-          curl -L --retry 3 --retry-delay 5 -o clang.tar.xz "${{ env.CLANG_URL }}"
+          echo "Setting up Clang..."
           mkdir -p clang
+          curl -L --retry 3 -o clang.tar.xz "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-18.04.tar.xz"
           tar -xf clang.tar.xz -C clang --strip-components=1
           rm clang.tar.xz
-
-      - name: Verify Clang
-        run: |
-          if [ ! -f "clang/bin/clang" ]; then
-            echo "Clang binary missing!"
-            exit 1
-          fi
           clang/bin/clang --version
 
-      - name: Cache CCache
-        uses: actions/cache@v4
-        with:
-          path: ~/.ccache
-          key: ccache-${{ runner.os }}-${{ env.KERNEL_BRANCH }}-${{ env.DEFCONFIG_NAME }}
-          restore-keys: |
-            ccache-${{ runner.os }}-${{ env.KERNEL_BRANCH }}-
-            ccache-${{ runner.os }}-
-
-      - name: Setup CCache
-        run: |
-          mkdir -p ~/.ccache
-          echo "CCACHE_DIR=~/.ccache" >> $GITHUB_ENV
-          ccache -M 6G
-
-      - name: Setup KernelSU (xxksu)
+      - name: Setup KernelSU (zttlove master - Directory Auto Detect)
         working-directory: kernel
         run: |
-          # 关键1：开启 set -e，任何一步失败直接终止，防止后续写入错误配置
-          set -e 
+          set -e
+          echo "Setting up KernelSU from ${{ env.KERNELSU_REPO }} branch ${{ env.KERNELSU_BRANCH }}..."
           
-          echo "Setting up KernelSU..."
+          # 清理目录
           rm -rf drivers/kernelsu
-          echo "Cloning from ${{ env.KERNELSU_REPO }} branch ${{ env.KERNELSU_BRANCH }}"
           git clone --depth=1 -b ${{ env.KERNELSU_BRANCH }} ${{ env.KERNELSU_REPO }} drivers/kernelsu
           
-          # 关键2：存在性检查，如果克隆失败直接退出，不再往 Kconfig 里乱写
-          if [ ! -d "drivers/kernelsu" ]; then
-            echo "ERROR: drivers/kernelsu 目录未创建，克隆失败！"
+          # 关键修复：自动检测 Kconfig 在根目录还是 kernel/ 子目录
+          if [ -f "drivers/kernelsu/kernel/Kconfig" ]; then
+            echo "Kconfig found in kernel/ subdir, creating wrappers..."
+            echo "source \"drivers/kernelsu/kernel/Kconfig\"" > drivers/kernelsu/Kconfig
+            echo "obj-y += kernel/" > drivers/kernelsu/Makefile
+          elif [ -f "drivers/kernelsu/Kconfig" ]; then
+            echo "Kconfig found in root..."
+            if [ ! -f "drivers/kernelsu/Makefile" ]; then
+              echo "obj-y += ./" > drivers/kernelsu/Makefile
+            fi
+          else
+            echo "ERROR: KernelSU Kconfig not found in cloned repo! Listing contents:"
+            ls -la drivers/kernelsu
             exit 1
           fi
-          
-          echo "Forcing integration into Kernel drivers..."
+
+          # 强制集成到主 Kconfig 和 Makefile
           if ! grep -q "source \"drivers/kernelsu/Kconfig\"" drivers/Kconfig; then
             echo "source \"drivers/kernelsu/Kconfig\"" >> drivers/Kconfig
           fi
-
           if ! grep -q "obj-\$(CONFIG_KSU) += kernelsu/" drivers/Makefile; then
             echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
           fi
+          echo "KernelSU Setup Complete."
 
-          # 关键3：兼容两种常见的源码结构（有些KSU库结构在根目录，有些在kernel子目录）
-          if [ ! -f "drivers/kernelsu/Kconfig" ] && [ -f "drivers/kernelsu/kernel/Kconfig" ]; then
-            echo "# ReSukiSU KernelSU Kconfig" > drivers/kernelsu/Kconfig
-            echo "source \"drivers/kernelsu/kernel/Kconfig\"" >> drivers/kernelsu/Kconfig
-          fi
-
-          if [ -f "drivers/kernelsu/kernel/Makefile" ] && [ ! -f "drivers/kernelsu/Makefile" ]; then
-            echo "# ReSukiSU KernelSU Makefile" > drivers/kernelsu/Makefile
-            echo "obj-y += kernel/" >> drivers/kernelsu/Makefile
-          fi
-          
-          echo "KernelSU setup verified successfully"
-
-      - name: Set PATH for Clang
-        run: echo "$(pwd)/clang/bin" >> $GITHUB_PATH
-
-      - name: Build Kernel
+      - name: Build Kernel (Manual Hook Enabled)
         working-directory: kernel
         run: |
           set -e
@@ -150,122 +102,41 @@ jobs:
 
           make ARCH=arm64 mrproper 2>/dev/null || true
           rm -rf ${{ env.OUTPUT_DIR }}
-
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
-          
-          # 修正3（核心关键）：显式开启内核配置，防止 undefined symbol
-          echo "Enabling KernelSU configurations..."
+
+          # 核心配置：强制开启 Manual Hook，禁用 Kprobes，修复模块无法生效的问题
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU
+          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU_MANUAL_HOOK
+          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --disable KPROBES
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU_SELINUX
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU_ZYGISK
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KALLSYMS
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KALLSYMS_ALL
-          # 除非你手动修补了每个函数的调用点，否则必须禁用手动 Hook 以使用 Kprobes
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --disable KSU_MANUAL_HOOK
           
-          # 重新生成配置
           make ARCH=arm64 olddefconfig O=${{ env.OUTPUT_DIR }}
-
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} \
-            KCFLAGS="-Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function \ 
-            -Wno-array-parameter -Wno-void-pointer-to-int-cast -Wno-sometimes-uninitialized \
-            -Wno-compare-distinct-pointer-types -Wno-pointer-to-int-cast -Wno-uninitialized -Wno-frame-larger-than"
+            KCFLAGS="-Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-frame-larger-than"
 
           IMG=${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image
           if [ ! -f "${IMG}" ]; then
             echo "ERROR: Image not found"
             exit 1
           fi
-          
-          # 修正4：清理 Magisk-boot 注入部分，避免误用不存在的脚本
-          if [ -f "${IMG}.lz4" ] && [ -f "drivers/kernelsu/scripts/magisk-boot.sh" ]; then
-            bash drivers/kernelsu/scripts/magisk-boot.sh "${IMG}.lz4"
-            echo "magisk-boot inject done"
-          else
-            echo "⚠️ 跳过 magisk-boot 注入（依赖缺失或未启用）"
-          fi
 
-      - name: Clone AnyKernel3
-        run: git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel3
-
-      - name: Collect Kernel Modules
-        if: env.PACK_KMODULES == 'true'
-        working-directory: kernel
+      - name: Clone AnyKernel3 & Package
         run: |
-          echo "Collecting kernel modules..."
-          mkdir -p modules
-          find ${{ env.OUTPUT_DIR }} -name "*.ko" -exec cp {} modules/ \;
-          if [ -d "../anykernel3" ]; then
-            cp modules/*.ko ../anykernel3/ 2>/dev/null || true
-          fi
-
-      - name: Prepare AnyKernel3 Package
-        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel3
           cp kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image anykernel3/
-          if [ -f "kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/dtb.img" ]; then
-            cp kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/dtb.img anykernel3/
-          fi
-          if [ -d "kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/dts" ]; then
-            cp kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/dts/*.dtb anykernel3/ 2>/dev/null || true
-          fi
-          if [ -d "kernel/modules" ] && [ "$(ls -A kernel/modules)" ]; then
-            cp kernel/modules/*.ko anykernel3/ 2>/dev/null || true
-          fi
-          echo "AnyKernel3 contents:"
-          ls -la anykernel3/
-
-      - name: 📦 Package Anykernel3 Flash Zip
-        if: env.PACK_METHOD == 'Anykernel3'
-        shell: bash
-        run: |
-          set -euo pipefail
+          
+          # 打包 ZIP
+          cd anykernel3
           TIME=$(TZ=Asia/Shanghai date +"%Y-%m-%d")
-          KERNEL_DIR="${GITHUB_WORKSPACE}/kernel"
-          TMP_DIR="${KERNEL_DIR}/tmp"
-          IMG_PATH="${KERNEL_DIR}/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image"
-          cd "${KERNEL_DIR}"
-
-          if [[ ! -f "${IMG_PATH}" ]]; then
-            echo "::error::❌ 编译失败，未找到 Image 内核文件"
-            exit 1
-          fi
-
-          rm -rf "${TMP_DIR}"
-          mkdir -p "${TMP_DIR}"
-
-          AK3_DIR="${GITHUB_WORKSPACE}/anykernel3"
-          if [[ -d "${AK3_DIR}" && -f "${AK3_DIR}/anykernel.sh" ]]; then
-            sed -i \
-              -e 's/^name=.*/name="Star-HyperA17-NonGKI-Kernel"/' \
-              -e 's/^do\.devicecheck=.*/do.devicecheck=0/' \
-              -e 's/^IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=1/' \
-              -e 's/^BLOCK=.*/BLOCK=boot/' \
-              "${AK3_DIR}/anykernel.sh"
-            chmod +x "${AK3_DIR}/anykernel.sh"
-          fi
-
-          cp -v "${IMG_PATH}" "${TMP_DIR}/Image"
-
-          if [[ "${{ env.PACK_KMODULES }}" == "true" ]]; then
-            MOD_DIR="${TMP_DIR}/modules/vendor/lib/modules"
-            mkdir -p "${MOD_DIR}"
-            find "${KERNEL_DIR}" -name "*.ko" -type f -print0 | xargs -0 cp -t "${MOD_DIR}/" 2>/dev/null || true
-            module_count=$(find "${MOD_DIR}" -name "*.ko" | wc -l)
-            echo "📦 打包内核模块: ${module_count} 个"
-            [[ ${module_count} -eq 0 ]] && rm -rf "${TMP_DIR}/modules"
-          fi
-
-          [[ -d "${AK3_DIR}" ]] && cp -rp "${AK3_DIR}"/* "${TMP_DIR}/"
-
-          cd "${TMP_DIR}"
-          7za a -tzip -mx9 -mmt=on package.zip ./* >/dev/null
-          cd "${GITHUB_WORKSPACE}"
-
           FINAL_ZIP="${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-${TIME}-Ak3.zip"
-          cp -fp "${TMP_DIR}/package.zip" "${FINAL_ZIP}"
-          echo "PACK_NAME=${FINAL_ZIP}" >> "${GITHUB_ENV}"
-          echo "✅ 刷机包打包完成: ${FINAL_ZIP}"
-          rm -rf "${TMP_DIR}"
+          # 打包所有文件
+          zip -r9 "$FINAL_ZIP" . -x "*.git*"
+          echo "PACK_NAME=$(pwd)/$FINAL_ZIP" >> $GITHUB_ENV
+          
+         
 
       - name: 🚀 Auto Upload To Github Release
         if: env.PACK_METHOD == 'Anykernel3'
