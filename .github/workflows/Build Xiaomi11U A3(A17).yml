@@ -130,23 +130,42 @@ jobs:
           
           # 启用 KernelSU 和相关功能
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
-            --enable KSU \
-            --enable INIT_ON_ALLOC_DEFAULT_ON  \
-            --disable KSU_MANUAL_HOOK \
-            --enable KPROBES \
-            --enable HAVE_KPROBES \
-            --enable KPROBE_EVENTS \
-            --enable KSU_SELINUX \
-            --enable KSU_ZYGISK \
-            --enable KALLSYMS \
-            --enable KALLSYMS_ALL \
-            --enable KSU_SUSFS \
-            --enable KSU_SUSFS_KSTAT \
-            --enable KSU_SUSFS_SPOOF_UNAME \
-            --enable KSU_SUSFS_SUS_MOUNT \
-            --enable MODULES \
-            --enable MODULE_UNLOAD \
-            --enable OVERLAY_FS
+          # ==================== 基础核心 (必选) ==================== \
+          --enable KSU \
+          --enable INIT_ON_ALLOC_DEFAULT_ON \
+          --disable KSU_MANUAL_HOOK \
+          --enable KSU_SELINUX \
+          --enable KSU_ZYGISK \
+          # ==================== Inline Hook 配置 (不再需要 KPROBES) ==================== \
+          --disable KPROBES \
+          --disable HAVE_KPROBES \
+          --disable KPROBE_EVENTS \
+          # ==================== 符号表 (保留) ==================== \
+          --enable KALLSYMS \
+          --enable KALLSYMS_ALL \
+          # ==================== 文件系统 & 模块 ==================== \
+          --enable MODULES \
+          --enable MODULE_UNLOAD \
+          --enable OVERLAY_FS \
+          --enable EXT4_FS \
+          --enable NAMESPACES \
+          # ==================== SUSFS 核心功能 ==================== \
+          --enable KSU_SUSFS \
+          --enable KSU_SUSFS_KSTAT \
+          --enable KSU_SUSFS_SPOOF_UNAME \
+          --enable KSU_SUSFS_SUS_MOUNT \
+          # ==================== SUSFS 高级隐藏 ==================== \
+          --enable KSU_SUSFS_SUS_PATH \
+          --enable KSU_SUSFS_TRY_UMOUNT \
+          --enable KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+          --enable KSU_SUSFS_OPEN_REDIRECT \
+          --enable KSU_SUSFS_SUS_MAP \
+          --enable KSU_SUSFS_HAS_MAGIC_MOUNT \
+          --enable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+          # ==================== 日志与SUS_SU (核心) ==================== \
+          --disable KSU_DEBUG \
+          --enable KSU_SUSFS_ENABLE_LOG \
+          --enable KSU_SUSFS_SUS_SU    # <--- 务必开启此选项
           
           make olddefconfig O=${{ env.OUTPUT_DIR }}
           
