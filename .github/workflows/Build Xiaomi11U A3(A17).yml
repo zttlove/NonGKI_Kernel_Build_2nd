@@ -93,22 +93,23 @@ jobs:
           echo "CCACHE_DIR=~/.ccache" >> $GITHUB_ENV
           ccache -M 6G
 
-      - name: Setup KernelSU (ReSukiSU)
+      - name: Setup KernelSU (xxksu)
         working-directory: kernel
         run: |
+          # 关键1：开启 set -e，任何一步失败直接终止，防止后续写入错误配置
+          set -e 
+          
           echo "Setting up KernelSU..."
           rm -rf drivers/kernelsu
-          
-          echo "Cloning ReSukiSU (KernelSU fork) from ${{ env.KERNELSU_REPO }} branch ${{ env.KERNELSU_BRANCH }}..."
-          mkdir -p drivers
+          echo "Cloning from ${{ env.KERNELSU_REPO }} branch ${{ env.KERNELSU_BRANCH }}"
           git clone --depth=1 -b ${{ env.KERNELSU_BRANCH }} ${{ env.KERNELSU_REPO }} drivers/kernelsu
           
-          if [ $? -ne 0 ]; then
-            echo "ERROR: Failed to clone KernelSU repository!"
+          # 关键2：存在性检查，如果克隆失败直接退出，不再往 Kconfig 里乱写
+          if [ ! -d "drivers/kernelsu" ]; then
+            echo "ERROR: drivers/kernelsu 目录未创建，克隆失败！"
             exit 1
           fi
-
-          # 修正1：无条件强制将源添加到主 Makefile 和 Kconfig
+          
           echo "Forcing integration into Kernel drivers..."
           if ! grep -q "source \"drivers/kernelsu/Kconfig\"" drivers/Kconfig; then
             echo "source \"drivers/kernelsu/Kconfig\"" >> drivers/Kconfig
@@ -118,7 +119,12 @@ jobs:
             echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
           fi
 
-          # 修正2：检查驱动目录下的 Makefile 是否正确指向内核源码
+          # 关键3：兼容两种常见的源码结构（有些KSU库结构在根目录，有些在kernel子目录）
+          if [ ! -f "drivers/kernelsu/Kconfig" ] && [ -f "drivers/kernelsu/kernel/Kconfig" ]; then
+            echo "# ReSukiSU KernelSU Kconfig" > drivers/kernelsu/Kconfig
+            echo "source \"drivers/kernelsu/kernel/Kconfig\"" >> drivers/kernelsu/Kconfig
+          fi
+
           if [ -f "drivers/kernelsu/kernel/Makefile" ] && [ ! -f "drivers/kernelsu/Makefile" ]; then
             echo "# ReSukiSU KernelSU Makefile" > drivers/kernelsu/Makefile
             echo "obj-y += kernel/" >> drivers/kernelsu/Makefile
