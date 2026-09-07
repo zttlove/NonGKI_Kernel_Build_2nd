@@ -405,7 +405,7 @@ jobs:
           zip -r9 "$FINAL_ZIP" . -x "*.git*"
           echo "PACK_NAME=$(pwd)/$FINAL_ZIP" >> $GITHUB_ENV
 
-       - name: 🚀 Auto Upload To Github Release
+      - name: 🚀 Auto Upload To Github Release
         if: env.PACK_METHOD == 'Anykernel3'
         uses: softprops/action-gh-release@v3
         with:
