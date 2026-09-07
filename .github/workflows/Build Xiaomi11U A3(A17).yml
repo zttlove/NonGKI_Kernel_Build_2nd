@@ -53,17 +53,30 @@ jobs:
           ${{ env.CLANG_DIR }}/bin/clang --version
 
       # 3. 安装依赖
-      - name: Install Dependencies
+            - name: Install Dependencies
         run: |
           sudo apt update
           sudo apt install -y \
           bc bison flex libelf-dev libssl-dev libncurses-dev \
           make python3 device-tree-compiler git curl xz-utils \
           ccache zip unzip
-          # 修复 libtinfo.so.5 缺失问题
-          if ! sudo apt install -y libtinfo5 2>/dev/null; then
-            echo "Creating symlink for libtinfo..."
+
+          # --- 强力修复 libtinfo.so.5 缺失问题 ---
+          echo "正在修复 libtinfo.so.5 依赖..."
+          # 1. 尝试直接安装 libtinfo5 包
+          if ! sudo apt install -y libtinfo5; then
+            echo "直接安装 libtinfo5 失败，尝试创建软链接..."
+            # 2. 如果安装失败，手动创建从 libtinfo.so.6 到 libtinfo.so.5 的链接
             sudo ln -sf /lib/x86_64-linux-gnu/libtinfo.so.6 /lib/x86_64-linux-gnu/libtinfo.so.5
+          fi
+          
+          # 3. 最终验证，确保库文件存在
+          if [ ! -f /lib/x86_64-linux-gnu/libtinfo.so.5 ]; then
+            echo "::error::修复失败！libtinfo.so.5 仍然不存在。"
+            exit 1
+          else
+            echo "✅ libtinfo.so.5 修复成功！"
+            ls -l /lib/x86_64-linux-gnu/libtinfo.so.5
           fi
 
       # 4. 缓存 KernelSU (加速克隆)
