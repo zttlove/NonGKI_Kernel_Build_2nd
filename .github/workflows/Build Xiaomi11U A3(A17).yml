@@ -127,7 +127,8 @@ jobs:
           
           make ARCH=arm64 olddefconfig O=${{ env.OUTPUT_DIR }}
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} \
-            KCFLAGS="-Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-frame-larger-than"
+          KCFLAGS="-Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-array-parameter -Wno-void-pointer-to-int-cast -Wno-sometimes-uninitialized -Wno-compare-distinct-pointer-types -Wno-pointer-to-int-cast -Wno-uninitialized
+          -Wno-frame-larger-than"
 
           IMG=${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image
           if [ ! -f "${IMG}" ]; then
