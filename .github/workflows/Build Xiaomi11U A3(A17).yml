@@ -10,7 +10,7 @@ env:
   KERNEL_REPO: "zttlove/android_kernel_xiaomi_sm8350_miyume"
   KERNEL_BRANCH: "main"
   # 严格使用你指定的配置
-  KERNELSU_REPO: "https://github.com/zttlove/KernelSU"
+  KERNELSU_REPO: "https://github.com/backslashxx/KernelSU"
   KERNELSU_BRANCH: "master"
   DEFCONFIG_NAME: "star_defconfig"
   OUTPUT_DIR: "out"
