@@ -52,7 +52,7 @@ jobs:
           rm clang.tar.xz
           ${{ env.CLANG_DIR }}/bin/clang --version
 
-      # 3. 安装依赖
+         # 3. 安装依赖
             - name: Install Dependencies
         run: |
           sudo apt update
