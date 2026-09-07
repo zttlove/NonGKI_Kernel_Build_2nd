@@ -131,6 +131,7 @@ jobs:
           # 启用 KernelSU 和相关功能
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
             --enable KSU \
+            --enable INIT_ON_ALLOC_DEFAULT_ON
             --disable KSU_MANUAL_HOOK \
             --enable KPROBES \
             --enable HAVE_KPROBES \
