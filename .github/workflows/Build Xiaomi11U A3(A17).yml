@@ -20,9 +20,9 @@ env:
   OUTPUT_DIR: "out"
   PACK_METHOD: "Anykernel3"
   PACK_KMODULES: "true"
-  ROM_TEXT: "HyperA17"          # 已修正为 A17
-  KERNELSU_REPO: "https://github.com/zttlove/KernelSU"
-  KERNELSU_BRANCH: "master"
+  ROM_TEXT: "HyperA17"
+  KERNELSU_REPO: "https://github.com/zttlove/KernelSU"  # 或你成功挽留的 xxksu 仓库
+  KERNELSU_BRANCH: "master" # 或你成功挽留的 xxksu 分支
 
 jobs:
   build:
@@ -39,10 +39,11 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt update
+          # 修正：使用 libncurses-dev 替代已废弃的 libtinfo5
           sudo apt install -y \
-            bc bison flex libelf-dev libssl-dev \
+            bc bison flex libelf-dev libssl-dev libncurses-dev \
             make python3 device-tree-compiler git curl xz-utils \
-            libtinfo5 ccache p7zip-full
+            ccache p7zip-full
 
       - name: Cache Clang
         id: cache-clang
@@ -86,49 +87,39 @@ jobs:
       - name: Setup KernelSU (ReSukiSU)
         working-directory: kernel
         run: |
-          echo "Checking for KernelSU Kconfig..."
-          if grep -q "source \"drivers/kernelsu/Kconfig\"" drivers/Kconfig 2>/dev/null; then
-            echo "KernelSU reference found in Kconfig"
-            
-            if [ -d "drivers/kernelsu" ]; then
-              echo "Removing existing KernelSU directory..."
-              rm -rf drivers/kernelsu
-            fi
-            
-            echo "Cloning ReSukiSU (KernelSU fork) from ${{ env.KERNELSU_REPO }} branch ${{ env.KERNELSU_BRANCH }}..."
-            mkdir -p drivers
-            git clone --depth=1 -b ${{ env.KERNELSU_BRANCH }} ${{ env.KERNELSU_REPO }} drivers/kernelsu
-            
-            if [ $? -ne 0 ]; then
-              echo "ERROR: Failed to clone KernelSU repository!"
-              exit 1
-            fi
-            
-            if [ -f "drivers/kernelsu/kernel/Kconfig" ]; then
-              echo "# ReSukiSU KernelSU Kconfig" > drivers/kernelsu/Kconfig
-              echo "source \"drivers/kernelsu/kernel/Kconfig\"" >> drivers/kernelsu/Kconfig
-              echo "Kconfig wrapper created successfully"
-            else
-              echo "ERROR: drivers/kernelsu/kernel/Kconfig not found!"
-              ls -la drivers/kernelsu/
-              exit 1
-            fi
-            
-            if [ -f "drivers/kernelsu/kernel/Makefile" ] && [ ! -f "drivers/kernelsu/Makefile" ]; then
-              echo "# ReSukiSU KernelSU Makefile" > drivers/kernelsu/Makefile
-              echo "obj-y += kernel/" >> drivers/kernelsu/Makefile
-            fi
-            
-            echo "KernelSU setup verified successfully"
-          else
-            echo "No KernelSU reference found in Kconfig, skipping"
+          echo "Setting up KernelSU..."
+          rm -rf drivers/kernelsu
+          
+          echo "Cloning ReSukiSU (KernelSU fork) from ${{ env.KERNELSU_REPO }} branch ${{ env.KERNELSU_BRANCH }}..."
+          mkdir -p drivers
+          git clone --depth=1 -b ${{ env.KERNELSU_BRANCH }} ${{ env.KERNELSU_REPO }} drivers/kernelsu
+          
+          if [ $? -ne 0 ]; then
+            echo "ERROR: Failed to clone KernelSU repository!"
+            exit 1
           fi
-      
+
+          # 修正1：无条件强制将源添加到主 Makefile 和 Kconfig
+          echo "Forcing integration into Kernel drivers..."
+          if ! grep -q "source \"drivers/kernelsu/Kconfig\"" drivers/Kconfig; then
+            echo "source \"drivers/kernelsu/Kconfig\"" >> drivers/Kconfig
+          fi
+
+          if ! grep -q "obj-\$(CONFIG_KSU) += kernelsu/" drivers/Makefile; then
+            echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
+          fi
+
+          # 修正2：检查驱动目录下的 Makefile 是否正确指向内核源码
+          if [ -f "drivers/kernelsu/kernel/Makefile" ] && [ ! -f "drivers/kernelsu/Makefile" ]; then
+            echo "# ReSukiSU KernelSU Makefile" > drivers/kernelsu/Makefile
+            echo "obj-y += kernel/" >> drivers/kernelsu/Makefile
+          fi
+          
+          echo "KernelSU setup verified successfully"
 
       - name: Set PATH for Clang
         run: echo "$(pwd)/clang/bin" >> $GITHUB_PATH
 
-      
       - name: Build Kernel
         working-directory: kernel
         run: |
@@ -146,39 +137,39 @@ jobs:
           rm -rf ${{ env.OUTPUT_DIR }}
 
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
-
           
+          # 修正3（核心关键）：显式开启内核配置，防止 undefined symbol
+          echo "Enabling KernelSU configurations..."
+          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU
+          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU_SELINUX
+          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU_ZYGISK
+          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KALLSYMS
+          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KALLSYMS_ALL
+          # 除非你手动修补了每个函数的调用点，否则必须禁用手动 Hook 以使用 Kprobes
+          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --disable KSU_MANUAL_HOOK
+          
+          # 重新生成配置
           make ARCH=arm64 olddefconfig O=${{ env.OUTPUT_DIR }}
-
-          if ! grep -q "obj-\$(CONFIG_KSU) += kernelsu/" drivers/Makefile; then
-            echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
-          fi
 
           make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} \
             KCFLAGS="-Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-array-parameter -Wno-void-pointer-to-int-cast -Wno-sometimes-uninitialized -Wno-compare-distinct-pointer-types -Wno-pointer-to-int-cast -Wno-uninitialized"
 
           IMG=${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image
           if [ ! -f "${IMG}" ]; then
-          echo "ERROR: Image not found"
-          exit 1
-          fi
-          # （可选）若存在 Image.lz4 且脚本存在则执行注入
-          if [ -f "${IMG}.lz4" ] && [ -f "drivers/kernelsu/scripts/magisk-boot.sh" ]; then
-          bash drivers/kernelsu/scripts/magisk-boot.sh "${IMG}.lz4"
-          echo "magisk‑boot inject done"
-          else
-          echo "⚠️ 跳过 magisk-boot 注入（Image.lz4 或脚本不存在）"
-          fi
-          # 增加脚本存在性判断，避免因缺失而失败
-          if [ -f "drivers/kernelsu/scripts/magisk-boot.sh" ]; then
-            bash drivers/kernelsu/scripts/magisk-boot.sh "${IMG_LZ4}"
-            echo "magisk‑boot inject done"
-          else
-            echo "⚠️ magisk-boot.sh not found, skip injection"
+            echo "ERROR: Image not found"
+            exit 1
           fi
           
+          # 修正4：清理 Magisk-boot 注入部分，避免误用不存在的脚本
+          if [ -f "${IMG}.lz4" ] && [ -f "drivers/kernelsu/scripts/magisk-boot.sh" ]; then
+            bash drivers/kernelsu/scripts/magisk-boot.sh "${IMG}.lz4"
+            echo "magisk-boot inject done"
+          else
+            echo "⚠️ 跳过 magisk-boot 注入（依赖缺失或未启用）"
+          fi
+
       - name: Clone AnyKernel3
-        run: git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel3   # 目录名小写
+        run: git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel3
 
       - name: Collect Kernel Modules
         if: env.PACK_KMODULES == 'true'
@@ -193,7 +184,6 @@ jobs:
 
       - name: Prepare AnyKernel3 Package
         run: |
-          # 复制 Image 和 dtb 到 anykernel3 目录（小写）
           cp kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image anykernel3/
           if [ -f "kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/dtb.img" ]; then
             cp kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/dtb.img anykernel3/
@@ -206,34 +196,26 @@ jobs:
           fi
           echo "AnyKernel3 contents:"
           ls -la anykernel3/
-          
+
       - name: 📦 Package Anykernel3 Flash Zip
         if: env.PACK_METHOD == 'Anykernel3'
         shell: bash
         run: |
           set -euo pipefail
-          echo "============================================="
-          echo "📦 开始打包 Star Hyper A17 内核卡刷包"   # 修正版本号
-          echo "============================================="
-
           TIME=$(TZ=Asia/Shanghai date +"%Y-%m-%d")
-          # 修正：内核源码目录为 kernel
           KERNEL_DIR="${GITHUB_WORKSPACE}/kernel"
           TMP_DIR="${KERNEL_DIR}/tmp"
           IMG_PATH="${KERNEL_DIR}/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image"
           cd "${KERNEL_DIR}"
 
           if [[ ! -f "${IMG_PATH}" ]]; then
-            echo "::error::❌ 编译失败，未找到 out/arch/arm64/boot/Image 内核文件"
+            echo "::error::❌ 编译失败，未找到 Image 内核文件"
             exit 1
           fi
-          IMG_SIZE=$(du -h "${IMG_PATH}" | awk '{print $1}')
-          echo "✅ 检测到内核镜像 Image | 大小: ${IMG_SIZE}"
 
           rm -rf "${TMP_DIR}"
           mkdir -p "${TMP_DIR}"
 
-          # 修正：AnyKernel3 目录名小写，位于工作区根目录
           AK3_DIR="${GITHUB_WORKSPACE}/anykernel3"
           if [[ -d "${AK3_DIR}" && -f "${AK3_DIR}/anykernel.sh" ]]; then
             sed -i \
@@ -242,8 +224,6 @@ jobs:
               -e 's/^IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=1/' \
               -e 's/^BLOCK=.*/BLOCK=boot/' \
               "${AK3_DIR}/anykernel.sh"
-            # 如需覆盖，可使用 curl，但注意 URL 有效性
-            # curl -L https://raw.githubusercontent.com/zttlove/NonGKI_Kernel_Build_2nd/mainline/Patches/anykernel.sh -o "${AK3_DIR}/anykernel.sh"
             chmod +x "${AK3_DIR}/anykernel.sh"
           fi
 
@@ -252,16 +232,12 @@ jobs:
           if [[ "${{ env.PACK_KMODULES }}" == "true" ]]; then
             MOD_DIR="${TMP_DIR}/modules/vendor/lib/modules"
             mkdir -p "${MOD_DIR}"
-            # 从 kernel 源码目录查找所有 .ko 文件（包括 out 目录）
             find "${KERNEL_DIR}" -name "*.ko" -type f -print0 | xargs -0 cp -t "${MOD_DIR}/" 2>/dev/null || true
             module_count=$(find "${MOD_DIR}" -name "*.ko" | wc -l)
             echo "📦 打包内核模块: ${module_count} 个"
             [[ ${module_count} -eq 0 ]] && rm -rf "${TMP_DIR}/modules"
-          else
-            echo "ℹ️ 已关闭模块打包，跳过ko文件"
           fi
 
-          # 复制 AnyKernel3 全部文件
           [[ -d "${AK3_DIR}" ]] && cp -rp "${AK3_DIR}"/* "${TMP_DIR}/"
 
           cd "${TMP_DIR}"
@@ -272,14 +248,13 @@ jobs:
           cp -fp "${TMP_DIR}/package.zip" "${FINAL_ZIP}"
           echo "PACK_NAME=${FINAL_ZIP}" >> "${GITHUB_ENV}"
           echo "✅ 刷机包打包完成: ${FINAL_ZIP}"
-
           rm -rf "${TMP_DIR}"
 
       - name: 🚀 Auto Upload To Github Release
         if: env.PACK_METHOD == 'Anykernel3'
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: Star-${{ env.ROM_TEXT }}-Kernel-${{ github.run_number }}   # 统一使用 ROM_TEXT
+          tag_name: Star-${{ env.ROM_TEXT }}-Kernel-${{ github.run_number }}
           name: Xiaomi 11 Ultra Star ${{ env.ROM_TEXT }} NonGKI Kernel
           body: |
             ## Xiaomi 11 Ultra Star ${{ env.ROM_TEXT }} 内核刷机包
@@ -288,7 +263,7 @@ jobs:
             - SUSFS 隐藏文件系统免补丁
             - NonGKI 通用免解boot补丁
             - Osm0sis Anykernel3 官方卡刷格式
-            - Clang 20 最新编译
+            - Clang 18 最新编译
           files: ${{ env.PACK_NAME }}
           draft: false
           prerelease: false
@@ -296,4 +271,3 @@ jobs:
           make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
