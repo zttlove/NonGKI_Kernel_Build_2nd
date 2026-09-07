@@ -34,7 +34,7 @@ jobs:
           path: kernel
           fetch-depth: 1
 
-      # 2. 缓存 Clang 编译器 (加速下载)
+      # 2. 缓存 Clang 编译器
       - name: Cache Clang
         id: cache-clang
         uses: actions/cache@v4
@@ -42,17 +42,7 @@ jobs:
           path: ${{ env.CLANG_DIR }}
           key: clang-18.1.8-ubuntu-18.04
 
-      - name: Download Clang
-        if: steps.cache-clang.outputs.cache-hit != 'true'
-        run: |
-          echo "Setting up Clang..."
-          mkdir -p ${{ env.CLANG_DIR }}
-          curl -L --retry 3 -o clang.tar.xz "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-18.04.tar.xz"
-          tar -xf clang.tar.xz -C ${{ env.CLANG_DIR }} --strip-components=1
-          rm clang.tar.xz
-          ${{ env.CLANG_DIR }}/bin/clang --version
-
-          # 3. 安装依赖
+      # 3. 安装依赖 (将此步骤提前)
       - name: Install Dependencies
         run: |
           sudo apt update
@@ -63,23 +53,30 @@ jobs:
 
           # --- 强力修复 libtinfo.so.5 缺失问题 ---
           echo "正在修复 libtinfo.so.5 依赖..."
-          # 1. 尝试直接安装 libtinfo5 包
           if ! sudo apt install -y libtinfo5; then
             echo "直接安装 libtinfo5 失败，尝试创建软链接..."
-            # 2. 如果安装失败，手动创建从 libtinfo.so.6 到 libtinfo.so.5 的链接
             sudo ln -sf /lib/x86_64-linux-gnu/libtinfo.so.6 /lib/x86_64-linux-gnu/libtinfo.so.5
           fi
           
-          # 3. 最终验证，确保库文件存在
           if [ ! -f /lib/x86_64-linux-gnu/libtinfo.so.5 ]; then
             echo "::error::修复失败！libtinfo.so.5 仍然不存在。"
             exit 1
           else
             echo "✅ libtinfo.so.5 修复成功！"
-            ls -l /lib/x86_64-linux-gnu/libtinfo.so.5
           fi
 
-      # 4. 缓存 KernelSU (加速克隆)
+      # 4. 下载 Clang (确保此步骤在安装依赖之后)
+      - name: Download Clang
+        if: steps.cache-clang.outputs.cache-hit != 'true'
+        run: |
+          echo "Setting up Clang..."
+          mkdir -p ${{ env.CLANG_DIR }}
+          curl -L --retry 3 -o clang.tar.xz "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-18.04.tar.xz"
+          tar -xf clang.tar.xz -C ${{ env.CLANG_DIR }} --strip-components=1
+          rm clang.tar.xz
+          ${{ env.CLANG_DIR }}/bin/clang --version
+
+      # 5. 缓存 KernelSU
       - name: Cache KernelSU
         id: cache-kernelsu
         uses: actions/cache@v4
