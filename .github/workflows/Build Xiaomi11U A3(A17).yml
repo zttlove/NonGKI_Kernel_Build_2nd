@@ -16,22 +16,25 @@ env:
   PACK_METHOD: "Anykernel3"
   PACK_KMODULES: "true"
   ROM_TEXT: "HyperA17"
-  # 新增：定义缓存路径变量
+  # 定义缓存路径变量
   CCACHE_DIR: "${{ github.workspace }}/.ccache"
   CLANG_DIR: "${{ github.workspace }}/clang"
+  KERNEL_DIR: "${{ github.workspace }}/kernel" # 统一工作目录变量
 
 jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
+      # 1. 检出内核源码
       - name: Checkout Kernel Source
         uses: actions/checkout@v4
         with:
           repository: ${{ env.KERNEL_REPO }}
           ref: ${{ env.KERNEL_BRANCH }}
           path: kernel
+          fetch-depth: 1
 
-      # --- 优化点 1：缓存 Clang 编译器 ---
+      # 2. 缓存 Clang 编译器 (加速下载)
       - name: Cache Clang
         id: cache-clang
         uses: actions/cache@v4
@@ -39,8 +42,7 @@ jobs:
           path: ${{ env.CLANG_DIR }}
           key: clang-18.1.8-ubuntu-18.04
 
-      - name: Download & Verify Clang
-        # 只有当缓存未命中时才执行下载
+      - name: Download Clang
         if: steps.cache-clang.outputs.cache-hit != 'true'
         run: |
           echo "Setting up Clang..."
@@ -50,401 +52,157 @@ jobs:
           rm clang.tar.xz
           ${{ env.CLANG_DIR }}/bin/clang --version
 
-      - name: Install Dependencies (Fully Fixed)
+      # 3. 安装依赖
+      - name: Install Dependencies
         run: |
           sudo apt update
           sudo apt install -y \
           bc bison flex libelf-dev libssl-dev libncurses-dev \
           make python3 device-tree-compiler git curl xz-utils \
-          ccache p7zip-full
-          # 关键修复：处理 Clang 依赖 libtinfo.so.5 缺失的问题
+          ccache zip unzip
+          # 修复 libtinfo.so.5 缺失问题
           if ! sudo apt install -y libtinfo5 2>/dev/null; then
-            echo "libtinfo5 包不存在，创建兼容性软链接..."
+            echo "Creating symlink for libtinfo..."
             sudo ln -sf /lib/x86_64-linux-gnu/libtinfo.so.6 /lib/x86_64-linux-gnu/libtinfo.so.5
           fi
 
-      # --- 优化点 2：缓存 KernelSU 源码 ---
+      # 4. 缓存 KernelSU (加速克隆)
       - name: Cache KernelSU
         id: cache-kernelsu
         uses: actions/cache@v4
         with:
-          path: kernel/drivers/kernelsu
-          key: ${{ env.KERNELSU_REPO }}-${{ env.KERNELSU_BRANCH }}
+          path: ${{ env.KERNEL_DIR }}/drivers/kernelsu
+          key: kernelsu-${{ env.KERNELSU_BRANCH }}
 
-      - name: Setup KernelSU (Manual Wrapper for zttlove)
-        # 只有当缓存未命中时才执行克隆
+      # 5. 集成 KernelSU
+      - name: Setup KernelSU
         if: steps.cache-kernelsu.outputs.cache-hit != 'true'
         working-directory: kernel
         run: |
           set -e
-          echo "Cloning KernelSU from ${{ env.KERNELSU_REPO }} branch ${{ env.KERNELSU_BRANCH }}"
+          echo "Cloning KernelSU..."
           rm -rf drivers/kernelsu
           git clone --depth=1 -b ${{ env.KERNELSU_BRANCH }} ${{ env.KERNELSU_REPO }} drivers/kernelsu
+          
           # 创建包装文件
           echo "source \"drivers/kernelsu/kernel/Kconfig\"" > drivers/kernelsu/Kconfig
           echo "obj-y += kernel/" > drivers/kernelsu/Makefile
-          # 集成到顶层
+          
+          # 注入到顶层 Makefile 和 Kconfig
           sed -i '/source "drivers\/kernelsu\/Kconfig"/d' drivers/Kconfig
           sed -i '/obj-\$(CONFIG_KSU) += kernelsu\//d' drivers/Makefile
           echo "source \"drivers/kernelsu/Kconfig\"" >> drivers/Kconfig
           echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
-          echo "KernelSU setup successful!"
 
-      - name: Build Kernel (Manual Hook Enabled)
+      # 6. 编译内核
+      - name: Build Kernel
         working-directory: kernel
         run: |
           set -e
           export ARCH=${{ env.KERNEL_ARCH }}
           export PATH="${{ env.CLANG_DIR }}/bin:$PATH"
-          export LD="${{ env.CLANG_DIR }}/bin/ld.lld"
+          export CCACHE_EXEC=$(which ccache)
+          export CCACHE_DIR="${{ env.CCACHE_DIR }}"
+          ccache -M 2G
+          
+          # 环境变量
           export LLVM=1
           export LLVM_IAS=1
           export CLANG_TRIPLE=aarch64-linux-gnu-
-          export CC=clang
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           
-          # --- 优化点 3：启用 Ccache ---
-          export CCACHE_EXEC=$(which ccache)
-          export CCACHE_DIR="${{ env.CCACHE_DIR }}"
-          # 限制缓存大小，防止占用过多空间
-          ccache -M 2G 
-          
-          make ARCH=arm64 mrproper 2>/dev/null || true
+          make mrproper
           rm -rf ${{ env.OUTPUT_DIR }}
           
-          make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
+          # 生成配置
+          make -j$(nproc) O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
           
-          # --- KernelSU 配置修正 ---
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --disable KSU_MANUAL_HOOK
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KPROBES
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable HAVE_KPROBES
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KPROBE_EVENTS
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU_SELINUX
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU_ZYGISK
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KALLSYMS
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KALLSYMS_ALL
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU_SUSFS
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU_SUSFS_KSTAT
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU_SUSFS_SPOOF_UNAME
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable KSU_SUSFS_SUS_MOUNT
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable MODULES
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable MODULE_UNLOAD
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --enable OVERLAY_FS
+          # 启用 KernelSU 和相关功能
+          scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
+            --enable KSU \
+            --disable KSU_MANUAL_HOOK \
+            --enable KPROBES \
+            --enable HAVE_KPROBES \
+            --enable KPROBE_EVENTS \
+            --enable KSU_SELINUX \
+            --enable KSU_ZYGISK \
+            --enable KALLSYMS \
+            --enable KALLSYMS_ALL \
+            --enable KSU_SUSFS \
+            --enable KSU_SUSFS_KSTAT \
+            --enable KSU_SUSFS_SPOOF_UNAME \
+            --enable KSU_SUSFS_SUS_MOUNT \
+            --enable MODULES \
+            --enable MODULE_UNLOAD \
+            --enable OVERLAY_FS
           
-          make ARCH=arm64 olddefconfig O=${{ env.OUTPUT_DIR }}
-          
-          # 再次确认
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --set-val OVERLAY_FS y
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --set-val MODULE_UNLOAD y
+          make olddefconfig O=${{ env.OUTPUT_DIR }}
           
           # 开始编译
-          make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 O=${{ env.OUTPUT_DIR }} \
-          KCFLAGS="-Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-array-parameter -Wno-void-pointer-to-int-cast -Wno-sometimes-uninitialized -Wno-compare-distinct-pointer-types -Wno-pointer-to-int-cast -Wno-uninitialized -Wno-frame-larger-than"
+          make -j$(nproc) O=${{ env.OUTPUT_DIR }} \
+            KCFLAGS="-Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function"
           
-          IMG=${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image
-          if [ ! -f "${IMG}" ]; then
-            echo "ERROR: Image not found"
+          # 检查输出
+          if [ ! -f "${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image" ]; then
+            echo "ERROR: Kernel Image not found!"
             exit 1
           fi
 
-      - name: Clone AnyKernel3 & Package
+      # 7. 打包 AnyKernel3
+      - name: Package AnyKernel3
+        id: package
         run: |
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel3
-          cp kernel/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image anykernel3/
+          set -e
+          echo "📦 开始打包..."
+          TIME=$(date +"%Y.%m.%d")
+          AK3_DIR="AnyKernel3"
+          IMG_PATH="${{ env.KERNEL_DIR }}/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image"
           
-          # --- 新增步骤：写入自定义的 anykernel.sh ---
-          cat > anykernel3/anykernel.sh << 'EOF'
-          ### AnyKernel3 Ramdisk Mod Script
-          ## osm0sis @ xda-developers
-          ## LAHAINA (SM8350 5.4, Non-GKI) — venus/star/odin/haydn/mona
+          # 克隆 AnyKernel3
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git $AK3_DIR
           
-          ### AnyKernel setup
-          # global properties
-          properties() { '
-          kernel.string=MiYume HyperOSKernel Backport BPF Kernel5.10
-          do.devicecheck=0
-          do.modules=0
-          do.systemless=0
-          do.cleanup=1
-          do.cleanuponabort=0
-          device.name1=star
-          device.name2=
-          device.name3=
-          device.name4=
-          device.name5=
-          supported.versions=
-          supported.patchlevels=
-          supported.vendorpatchlevels=
-          '; } # end properties
+          # 复制内核镜像
+          cp -f "$IMG_PATH" "$AK3_DIR/Image"
           
-          ### AnyKernel install
-          ## boot shell variables
-          block=boot
-          is_slot_device=auto
-          ramdisk_compression=auto
-          patch_vbmeta_flag=auto
-          no_magisk_check=1
+          # 修改 anykernel.sh 适配机型
+          sed -i "s/do.devicecheck=1/do.devicecheck=0/g" "$AK3_DIR/anykernel.sh"
+          sed -i "s/block=\/dev\/block\/platform.*/block=boot/g" "$AK3_DIR/anykernel.sh"
+          sed -i "s/is_slot_device=0/is_slot_device=1/g" "$AK3_DIR/anykernel.sh"
+          sed -i "s/ramdisk_compression=auto/ramdisk_compression=auto/g" "$AK3_DIR/anykernel.sh"
+          curl -L https://raw.githubusercontent.com/zttlove/NonGKI_Kernel_Build_2nd/mainline/Patches/anykernel.sh -o Anykernel3/anykernel.sh
+          chmod +x Anykernel3/anykernel.sh
           
-          # import functions/variables and setup patching - see for reference (DO NOT REMOVE)
-          . tools/ak3-core.sh
-          
-          AKHOME="${AKHOME:-$(pwd)}"
-          # LAHAINA devices are boot image v3 (separate vendor_boot), no init_boot
-          # partition. All supported devices (venus/star/odin/haydn/mona) are SM8350
-          # MIUI/HyperOS. Single-variant Image in the zip root.
-          if [ ! -f "$AKHOME/Image" ]; then
-            abort " -> No kernel Image found in this zip! Aborting."
+          # 打包模块 (如果开启)
+          if [ "${{ env.PACK_KMODULES }}" == "true" ]; then
+            MOD_DIR="${AK3_DIR}/modules"
+            mkdir -p "$MOD_DIR"
+            find "${{ env.KERNEL_DIR }}/${{ env.OUTPUT_DIR }}" -name "*.ko" -exec cp {} "$MOD_DIR" \;
+            echo "📦 已打包 $(ls $MOD_DIR | wc -l) 个内核模块"
           fi
           
-          # boot install
-          dump_boot
-          write_boot
-          ## end boot install
+          # 创建 ZIP
+          cd $AK3_DIR
+          zip -r9 "../${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-${TIME}.zip" ./*
+          cd ..
           
-          ## install bundled Phantom userspace/module payload
-          ## platform-phantom-addon-install: begin
-          AKHOME="${AKHOME:-$(pwd)}"
-          PHANTOM_ADDON_SOURCE_ZIP="$AKHOME/patch/magisk.zip"
-          PHANTOM_ADDON_ZIP="$PHANTOM_ADDON_SOURCE_ZIP"
-          PHANTOM_ADDON_STAGE_DIR="${PHANTOM_ADDON_STAGE_DIR:-}"
-          PHANTOM_STAGED_ADDON_ZIP=""
-          PHANTOM_INSTALL_LOG="$AKHOME/patch/.phantom-module-install.log"
-          
-          phantom_first_number() {
-            sed -n 's/[^0-9]*\([0-9][0-9][0-9][0-9]*\).*/\1/p' | head -n 1
-          }
-          
-          phantom_print_install_log() {
-            [ -s "$PHANTOM_INSTALL_LOG" ] || return 0
-            grep -v "^$" "$PHANTOM_INSTALL_LOG" || true
-          }
-          
-          phantom_install_succeeded() {
-            rc="$1"
-            [ "$rc" -eq 0 ] || return 1
-            if grep -qiE "Failed to install module|unsupported kernel|No module system found|not a Magisk module|invalid zip|cannot install|error:" "$PHANTOM_INSTALL_LOG" 2>/dev/null; then
-              return 1
-            fi
-            return 0
-          }
-          
-          phantom_require_min_vercode() {
-            actual="$1"
-            minimum="$2"
-            label="$3"
-            case "$actual" in
-              ""|*[!0-9]*) ui_print "$label version code unavailable; continuing" return 0 ;;
-            esac
-            if [ "$actual" -lt "$minimum" ]; then
-              ui_print "WARNING: $label version too low for bundled Phantom module"
-              return 1
-            fi
-            return 0
-          }
-          
-          phantom_note_install_failure() {
-            ui_print "WARNING: bundled Phantom module install failed via $1"
-            ui_print "WARNING: kernel flash will continue; install patch/magisk.zip manually if needed"
-          }
-          
-          phantom_stage_candidates() {
-            [ -n "${PHANTOM_ADDON_STAGE_DIR:-}" ] && printf '%s\n' "$PHANTOM_ADDON_STAGE_DIR"
-            if [ -n "${POSTINSTALL:-}" ]; then
-              case "$POSTINSTALL" in
-                */files) printf '%s\n' "${POSTINSTALL%/files}/cache" ;;
-              esac
-              printf '%s\n' "$POSTINSTALL/tmp"
-            fi
-            case "$AKHOME" in
-              */files/tmp/anykernel) printf '%s\n' "${AKHOME%/files/tmp/anykernel}/cache" ;;
-            esac
-            printf '%s\n' "/data/local/tmp/phantom-install"
-            printf '%s\n' "/data/adb/phantom-install"
-          }
-          
-          phantom_try_stage_addon_zip() {
-            src="$1"
-            stage_dir="$2"
-            dst="$stage_dir/phantom-addon-$$.zip"
-            owner=""
-            [ -n "$stage_dir" ] || return 1
-            mkdir -p "$stage_dir" 2>/dev/null || return 1
-            chmod 0700 "$stage_dir" 2>/dev/null || true
-            rm -f "$dst" 2>/dev/null || true
-            cp -f "$src" "$dst" 2>/dev/null || cat "$src" >"$dst" 2>/dev/null || return 1
-            owner="$(ls -ld "$stage_dir" 2>/dev/null | awk '{print $3 ":" $4}' | head -n 1)"
-            [ -n "$owner" ] && chown "$owner" "$dst" 2>/dev/null || true
-            chmod 0644 "$dst" 2>/dev/null || true
-            if command -v chcon >/dev/null 2>&1; then
-              chcon u:object_r:adb_data_file:s0 "$dst" 2>/dev/null || true
-            fi
-            [ -s "$dst" ] || return 1
-            PHANTOM_STAGED_ADDON_ZIP="$dst"
-            PHANTOM_ADDON_ZIP="$dst"
-            return 0
-          }
-          
-          phantom_stage_addon_zip() {
-            src="$1"
-            stage_dir=""
-            [ -f "$src" ] || return 1
-            for stage_dir in $(phantom_stage_candidates); do
-              if phantom_try_stage_addon_zip "$src" "$stage_dir"; then
-                ui_print "Staged Phantom module: $PHANTOM_ADDON_ZIP"
-                return 0
-              fi
-            done
-            return 1
-          }
-          
-          phantom_cleanup_staged_addon() {
-            [ -n "$PHANTOM_STAGED_ADDON_ZIP" ] || return 0
-            rm -f "$PHANTOM_STAGED_ADDON_ZIP" 2>/dev/null || true
-          }
-          
-          phantom_candidate_is_exec() {
-            [ -n "$1" ] && [ -f "$1" ] && [ -x "$1" ]
-          }
-          
-          phantom_find_app_ksud() {
-            for pkg in com.resukisu.resukisu me.weishu.kernelsu; do
-              apk_path="$(pm path "$pkg" 2>/dev/null | sed -n 's/^package://p' | head -n 1)"
-              [ -n "$apk_path" ] || continue
-              app_dir="$(dirname "$apk_path" 2>/dev/null || true)"
-              for candidate in "$app_dir"/lib/*/libksud.so "$app_dir"/lib/libksud.so; do
-                phantom_candidate_is_exec "$candidate" || continue
-                printf '%s\n' "$candidate"
-                return 0
-              done
-            done
-            for candidate in \
-              /data/app/*/com.resukisu.resukisu*/lib/*/libksud.so \
-              /data/app/*/*com.resukisu.resukisu*/lib/*/libksud.so \
-              /data/app/*/me.weishu.kernelsu*/lib/*/libksud.so \
-              /data/app/*/*me.weishu.kernelsu*/lib/*/libksud.so; do
-              phantom_candidate_is_exec "$candidate" || continue
-              printf '%s\n' "$candidate"
-              return 0
-            done
-            return 1
-          }
-          
-          phantom_find_ksud() {
-            if phantom_candidate_is_exec "${PHANTOM_KSUD:-}"; then
-              printf '%s\n' "$PHANTOM_KSUD"
-              return 0
-            fi
-            for name in ksud libksud.so; do
-              candidate="$(command -v "$name" 2>/dev/null || which "$name" 2>/dev/null || true)"
-              phantom_candidate_is_exec "$candidate" || continue
-              printf '%s\n' "$candidate"
-              return 0
-            done
-            phantom_find_app_ksud && return 0
-            for candidate in /data/adb/ksud /data/adb/ksu/bin/ksud; do
-              phantom_candidate_is_exec "$candidate" || continue
-              printf '%s\n' "$candidate"
-              return 0
-            done
-            return 1
-          }
-          
-          phantom_install_with_ksu() {
-            info="$("$PHANTOM_KSUD_BIN" debug version 2>/dev/null || "$PHANTOM_KSUD_BIN" -V 2>/dev/null || true)"
-            ver="$(printf '%s\n' "$info" | phantom_first_number)"
-            phantom_require_min_vercode "$ver" 12081 "KernelSU" || return 1
-            ui_print "KernelSU: $("$PHANTOM_KSUD_BIN" -V 2>/dev/null || echo unknown)${ver:+($ver)}"
-            "$PHANTOM_KSUD_BIN" module install "$PHANTOM_ADDON_ZIP" >"$PHANTOM_INSTALL_LOG" 2>&1
-            rc=$?
-            phantom_print_install_log
-            phantom_install_succeeded "$rc" && return 0
-            phantom_note_install_failure "KernelSU"
-            return 1
-          }
-          
-          phantom_install_with_apatch() {
-            info="$(/data/adb/apd -V 2>/dev/null || true)"
-            ver="$(printf '%s\n' "$info" | phantom_first_number)"
-            phantom_require_min_vercode "$ver" 11039 "APatch" || return 1
-            ui_print "APatch: ${info:-unknown}${ver:+($ver)}"
-            /data/adb/apd module install "$PHANTOM_ADDON_ZIP" >"$PHANTOM_INSTALL_LOG" 2>&1
-            rc=$?
-            phantom_print_install_log
-            phantom_install_succeeded "$rc" || { phantom_note_install_failure "APatch" return 1 }
-            ui_print "After flash, you should reinstall APatch manually" && sleep 3
-            return 0
-          }
-          
-          phantom_install_with_magisk() {
-            magisk_bin="$(command -v magisk 2>/dev/null || which magisk 2>/dev/null || true)"
-            [ -n "$magisk_bin" ] || return 1
-            magisk_ver="$(magisk -v 2>/dev/null || echo unknown)"
-            magisk_vercode="$(magisk -V 2>/dev/null || true)"
-            phantom_require_min_vercode "$magisk_vercode" 24000 "Magisk" || return 1
-            ui_print "Magisk: $magisk_ver${magisk_vercode:+($magisk_vercode)}"
-            magisk --install-module "$PHANTOM_ADDON_ZIP" >"$PHANTOM_INSTALL_LOG" 2>&1
-            rc=$?
-            phantom_print_install_log
-            phantom_install_succeeded "$rc" && return 0
-            phantom_note_install_failure "Magisk"
-            return 1
-          }
-          
-          if [ -f "$PHANTOM_ADDON_SOURCE_ZIP" ]; then
-            ui_print "Installing Phantom userspace and kernel modules"
-            rm -f "$PHANTOM_INSTALL_LOG" 2>/dev/null || true
-            if ! phantom_stage_addon_zip "$PHANTOM_ADDON_SOURCE_ZIP"; then
-              PHANTOM_ADDON_ZIP="$PHANTOM_ADDON_SOURCE_ZIP"
-              ui_print "WARNING: unable to stage Phantom module under $PHANTOM_ADDON_STAGE_DIR"
-            fi
-            PHANTOM_KSUD_BIN="$(phantom_find_ksud 2>/dev/null || true)"
-            if [ -n "$PHANTOM_KSUD_BIN" ]; then
-              ui_print "KernelSU daemon: $PHANTOM_KSUD_BIN"
-              phantom_install_with_ksu || true
-            elif [ -x "/data/adb/apd" ] || [ -f "/data/adb/apd" ]; then
-              phantom_install_with_apatch || true
-            elif command -v magisk >/dev/null 2>&1 || which magisk >/dev/null 2>&1; then
-              phantom_install_with_magisk || true
-            else
-              ui_print "WARNING: no supported module manager found for bundled Phantom module"
-              ui_print "WARNING: kernel flash will continue; install patch/magisk.zip manually if needed"
-            fi
-            phantom_cleanup_staged_addon
-          else
-            ui_print "No bundled Phantom module payload"
-          fi
-          ## platform-phantom-addon-install: end
-          EOF
-          # --- 新增步骤结束 ---
-          
-          # 打包 ZIP
-          cd anykernel3
-          TIME=$(TZ=Asia/Shanghai date +"%Y-%m-%d")
-          FINAL_ZIP="${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-${TIME}-Ak3.zip"
-          # 打包所有文件
-          zip -r9 "$FINAL_ZIP" . -x "*.git*"
-          echo "PACK_NAME=$(pwd)/$FINAL_ZIP" >> $GITHUB_ENV
+          # 输出文件名
+          ZIP_NAME="${{ env.DEVICE_CODENAME }}-${{ env.ROM_TEXT }}-${TIME}.zip"
+          echo "zip_name=$ZIP_NAME" >> $GITHUB_OUTPUT
+          echo "✅ 打包完成: $ZIP_NAME"
 
-      - name: 🚀 Auto Upload To Github Release
-        if: env.PACK_METHOD == 'Anykernel3'
-        uses: softprops/action-gh-release@v3
+      # 8. 上传 Release
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: Star-${{ env.ROM_TEXT }}-Kernel-${{ github.run_number }}
-          name: Xiaomi 11 Ultra Star ${{ env.ROM_TEXT }} NonGKI Kernel
+          tag_name: ${{ env.ROM_TEXT }}-${{ github.run_number }}
+          name: ${{ env.DEVICE_CODENAME }} Kernel ${{ env.ROM_TEXT }}
           body: |
-            ## Xiaomi 11 Ultra Star ${{ env.ROM_TEXT }} 内核刷机包
-            - 适配 HyperOS ${{ env.ROM_TEXT }} 全版本
-            - SukiSU ResukiSU Root 完整适配
-            - SUSFS 隐藏文件系统免补丁
+            ## Xiaomi 11 Ultra Star HyperOS A17 内核刷机包
+            - 适配 HyperOS A17 全版本
             - NonGKI 通用免解boot补丁
             - Osm0sis Anykernel3 官方卡刷格式
-            - Clang 18 最新编译
-          files: ${{ env.PACK_NAME }}
-          draft: false
-          prerelease: false
-          overwrite_files: true
-          make_latest: true
+            - Clang 18.18 最新编译
+          files: ${{ steps.package.outputs.zip_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
