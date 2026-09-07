@@ -181,8 +181,7 @@ jobs:
           sed -i "s/block=\/dev\/block\/platform.*/block=boot/g" "$AK3_DIR/anykernel.sh"
           sed -i "s/is_slot_device=0/is_slot_device=1/g" "$AK3_DIR/anykernel.sh"
           sed -i "s/ramdisk_compression=auto/ramdisk_compression=auto/g" "$AK3_DIR/anykernel.sh"
-          curl -L https://raw.githubusercontent.com/zttlove/NonGKI_Kernel_Build_2nd/mainline/Patches/anykernel.sh -o Anykernel3/anykernel.sh
-          chmod +x Anykernel3/anykernel.sh
+          
           
           # 打包模块 (如果开启)
           if [ "${{ env.PACK_KMODULES }}" == "true" ]; then
