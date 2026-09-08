@@ -155,7 +155,8 @@ jobs:
           --disable KSU_SUSFS_SUS_MAP \
           --disable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
           --enable KSU_SUSFS_ENABLE_LOG \
-          --disable KSU_SUSFS_SUS_SU
+          --disable KSU_SUSFS_SUS_SU \
+          --set-val CONFIG_FRAME_WARN 3072
           make olddefconfig O=${{ env.OUTPUT_DIR }}
 
           
