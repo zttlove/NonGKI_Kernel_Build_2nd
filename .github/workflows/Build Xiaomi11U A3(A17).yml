@@ -129,8 +129,36 @@ jobs:
           make -j$(nproc) O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
           
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
-          --enable KSU 
+          --enable KSU \
+          --enable INIT_ON_ALLOC_DEFAULT_ON \
+          --enable KSU_HOOK_INLINE \
+          --disable KSU_HOOK_TRACEPOINT \
+          --disable KSU_HOOK_MANUAL \
+          --enable KSU_SELINUX \
+          --enable KSU_ZYGISK \
+          --disable KPROBES \
+          --disable HAVE_KPROBES \
+          --disable KPROBE_EVENTS \
+          --enable KALLSYMS \
+          --enable KALLSYMS_ALL \
+          --enable MODULES \
+          --enable MODULE_UNLOAD \
+          --enable OVERLAY_FS \
+          --enable EXT4_FS \
+          --enable NAMESPACES \
+          --disable KSU_DEBUG \
+          --enable KSU_SUSFS \
+          --enable KSU_SUSFS_SUS_PATH \
+          --disable KSU_SUSFS_KSTAT \
+          --disable KSU_SUSFS_SPOOF_UNAME \
+          --disable KSU_SUSFS_SUS_MOUNT \
+          --disable KSU_SUSFS_OPEN_REDIRECT \
+          --disable KSU_SUSFS_SUS_MAP \
+          --disable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+          --enable KSU_SUSFS_ENABLE_LOG \
+          --disable KSU_SUSFS_SUS_SU
           make olddefconfig O=${{ env.OUTPUT_DIR }}
+
           
           # 开始编译
           make -j$(nproc) O=${{ env.OUTPUT_DIR }} \
