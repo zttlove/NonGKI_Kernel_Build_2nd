@@ -112,7 +112,7 @@ jobs:
           export PATH="${{ env.CLANG_DIR }}/bin:$PATH"
           export CCACHE_EXEC=$(which ccache)
           export CCACHE_DIR="${{ env.CCACHE_DIR }}"
-          ccache -M 2G
+          ccache -M 6G
           
           # 环境变量
           export LLVM=1
