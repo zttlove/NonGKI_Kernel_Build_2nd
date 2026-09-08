@@ -107,50 +107,7 @@ jobs:
           echo "source \"drivers/kernelsu/Kconfig\"" >> drivers/Kconfig
           echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
           
-      - name: Clean SUSFS remnants
-        working-directory: kernel
-        run: |
-          # 删除已存在的 SUSFS 文件
-          rm -f fs/susfs.c
-          rm -f include/linux/susfs.h
-          rm -f include/linux/susfs_def.h
-          # 回退所有已被补丁修改过的文件（使用 git）
-          git checkout -- fs/Makefile fs/namei.c fs/namespace.c fs/notify/fdinfo.c \
-          fs/proc/base.c fs/proc/fd.c fs/proc/task_mmu.c fs/proc_namespace.c \
-          fs/readdir.c fs/stat.c kernel/kallsyms.c kernel/sys.c mm/memory.c \
-          security/selinux/avc.c
-          # 删除可能存在的 .rej 和 .orig 文件
-          find . -name "*.rej" -delete
-          find . -name "*.orig" -delete
-    
-      - name: Apply SUSFS v2.2 patch
-        working-directory: kernel
-        run: |
-          # 克隆当前仓库（包含补丁文件）
-          cd ${{ github.workspace }}
-          git clone https://github.com/${{ github.repository }}.git workflow_repo --depth=1
-    
-          # 应用补丁（注意：相对路径需要 ../，因为当前在 kernel/ 下）
-          cd kernel
-          if [ -f ../workflow_repo/Patches/Patch/susfs_patch_to_5.4.patch ]; then
-          patch -p1 -N --batch --no-backup-if-mismatch < ../workflow_repo/Patches/Patch/susfs_patch_to_5.4.patch || true
       
-          # 检查是否有 .rej 文件（只警告，不退出）
-          if [ $(find . -name "*.rej" | wc -l) -ne 0 ]; then
-          echo "⚠️ 部分补丁失败（存在 .rej 文件），但将继续编译"
-          find . -name "*.rej" -exec echo "{}" \;
-          else
-          echo "✅ SUSFS v2.2 补丁全部成功应用"
-          fi
-          else
-          echo "❌ 补丁文件不存在，跳过应用"
-          ls -la ../workflow_repo/Patches/Patch/
-          exit 1
-          fi
-    
-          # 清理临时仓库
-          cd ${{ github.workspace }}
-          rm -rf workflow_repo
           
           # 6. 编译内核
       - name: Build Kernel
