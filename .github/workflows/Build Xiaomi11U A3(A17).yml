@@ -16,16 +16,15 @@ env:
   PACK_METHOD: "Anykernel3"
   PACK_KMODULES: "true"
   ROM_TEXT: "HyperA17"
-  # 定义缓存路径变量
   CCACHE_DIR: "${{ github.workspace }}/.ccache"
   CLANG_DIR: "${{ github.workspace }}/clang"
-  KERNEL_DIR: "${{ github.workspace }}/kernel" # 统一工作目录变量
+  KERNEL_DIR: "${{ github.workspace }}/kernel"
 
 jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      # 1. 检出内核源码
+
       - name: Checkout Kernel Source
         uses: actions/checkout@v4
         with:
@@ -34,7 +33,7 @@ jobs:
           path: kernel
           fetch-depth: 1
 
-      # 2. 缓存 Clang 编译器
+
       - name: Cache Clang
         id: cache-clang
         uses: actions/cache@v4
@@ -42,7 +41,7 @@ jobs:
           path: ${{ env.CLANG_DIR }}
           key: clang-18.1.8-ubuntu-18.04
 
-      # 3. 安装依赖 (将此步骤提前)
+
       - name: Install Dependencies
         run: |
           sudo apt update
@@ -65,7 +64,7 @@ jobs:
             echo "✅ libtinfo.so.5 修复成功！"
           fi
 
-      # 4. 下载 Clang (确保此步骤在安装依赖之后)
+         
       - name: Download Clang
         if: steps.cache-clang.outputs.cache-hit != 'true'
         run: |
@@ -76,7 +75,7 @@ jobs:
           rm clang.tar.xz
           ${{ env.CLANG_DIR }}/bin/clang --version
 
-      # 5. 缓存 KernelSU
+       
       - name: Cache KernelSU
         id: cache-kernelsu
         uses: actions/cache@v4
@@ -84,7 +83,7 @@ jobs:
           path: ${{ env.KERNEL_DIR }}/drivers/kernelsu
           key: kernelsu-${{ env.KERNELSU_BRANCH }}
 
-      # 5. 集成 KernelSU
+   
       - name: Setup KernelSU
         if: steps.cache-kernelsu.outputs.cache-hit != 'true'
         working-directory: kernel
@@ -104,7 +103,7 @@ jobs:
           echo "source \"drivers/kernelsu/Kconfig\"" >> drivers/Kconfig
           echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
 
-      # 6. 编译内核
+          # 6. 编译内核
       - name: Build Kernel
         working-directory: kernel
         run: |
@@ -170,7 +169,7 @@ jobs:
             exit 1
           fi
 
-      # 7. 打包 AnyKernel3
+         
       - name: Package AnyKernel3
         id: package
         run: |
@@ -187,10 +186,10 @@ jobs:
           cp -f "$IMG_PATH" "$AK3_DIR/Image"
           
           # 修改 anykernel.sh 适配机型
-          sed -i "s/do.devicecheck=1/do.devicecheck=0/g" "$AK3_DIR/anykernel.sh"
-          sed -i "s/block=\/dev\/block\/platform.*/block=boot/g" "$AK3_DIR/anykernel.sh"
-          sed -i "s/is_slot_device=0/is_slot_device=1/g" "$AK3_DIR/anykernel.sh"
-          sed -i "s/ramdisk_compression=auto/ramdisk_compression=auto/g" "$AK3_DIR/anykernel.sh"
+          sed -i 's/^do.devicecheck=1/do.devicecheck=0/' "$AK3_DIR/anykernel.sh"
+          sed -i 's/^BLOCK=.*/BLOCK=boot/' "$AK3_DIR/anykernel.sh"
+          sed -i 's/^IS_SLOT_DEVICE=0/IS_SLOT_DEVICE=1/' "$AK3_DIR/anykernel.sh"
+          sed -i 's/^device.name1=.*/device.name1=star/' "$AK3_DIR/anykernel.sh"
           
           
           # 打包模块 (如果开启)
@@ -211,7 +210,7 @@ jobs:
           echo "zip_name=$ZIP_NAME" >> $GITHUB_OUTPUT
           echo "✅ 打包完成: $ZIP_NAME"
 
-      # 8. 上传 Release
+          
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
