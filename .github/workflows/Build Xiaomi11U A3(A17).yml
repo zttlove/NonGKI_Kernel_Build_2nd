@@ -131,7 +131,9 @@ jobs:
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
           --enable KSU \
           --enable INIT_ON_ALLOC_DEFAULT_ON \
-          --disable KSU_MANUAL_HOOK \
+          --enable KSU_HOOK_INLINE \
+          --disable KSU_HOOK_TRACEPOINT \
+          --disable KSU_HOOK_MANUAL \
           --enable KSU_SELINUX \
           --enable KSU_ZYGISK \
           --disable KPROBES \
@@ -145,15 +147,15 @@ jobs:
           --enable EXT4_FS \
           --enable NAMESPACES \
           --disable KSU_DEBUG \
-          --disable KSU_SUSFS \
-          --disable KSU_SUSFS_KSTAT \
+          --enable KSU_SUSFS \
+          --enable KSU_SUSFS_SUS_PATH \
+          --disable KSU_SUSFS_KSTAT \       # 可选，为了稳定性暂时禁用
           --disable KSU_SUSFS_SPOOF_UNAME \
           --disable KSU_SUSFS_SUS_MOUNT \
-          --disable KSU_SUSFS_SUS_PATH \
           --disable KSU_SUSFS_OPEN_REDIRECT \
           --disable KSU_SUSFS_SUS_MAP \
           --disable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
-          --disable KSU_SUSFS_ENABLE_LOG \
+          --enable KSU_SUSFS_ENABLE_LOG \
           --disable KSU_SUSFS_SUS_SU
           make olddefconfig O=${{ env.OUTPUT_DIR }}
           
