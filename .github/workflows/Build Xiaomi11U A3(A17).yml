@@ -107,6 +107,17 @@ jobs:
           echo "source \"drivers/kernelsu/Kconfig\"" >> drivers/Kconfig
           echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
 
+      - name: Apply SUSFS v2.2 patch
+        working-directory: kernel
+        run: |
+          patch -p1 < ${{ github.workspace }}/Patches/Patch/susfs_patch_to_5.4.patch
+          # 检查冲突
+          if [ $(find . -name "*.rej" | wc -l) -ne 0 ]; then
+          echo "❌ 补丁冲突，请检查 .rej 文件"
+          exit 1
+          fi
+          echo "✅ SUSFS v2.2 补丁应用成功"
+          
           # 6. 编译内核
       - name: Build Kernel
         working-directory: kernel
