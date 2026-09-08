@@ -128,7 +128,6 @@ jobs:
           # 生成配置
           make -j$(nproc) O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
           
-          # 启用 KernelSU 和相关功能
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
           --enable KSU \
           --enable INIT_ON_ALLOC_DEFAULT_ON \
@@ -145,6 +144,7 @@ jobs:
           --enable OVERLAY_FS \
           --enable EXT4_FS \
           --enable NAMESPACES \
+          --disable KSU_DEBUG \
           --disable KSU_SUSFS \
           --disable KSU_SUSFS_KSTAT \
           --disable KSU_SUSFS_SPOOF_UNAME \
@@ -154,9 +154,7 @@ jobs:
           --disable KSU_SUSFS_SUS_MAP \
           --disable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
           --disable KSU_SUSFS_ENABLE_LOG \
-          --disable KSU_DEBUG \
-          --enable KSU_SUSFS_ENABLE_LOG \
-          --enable KSU_SUSFS_SUS_SU \
+          --disable KSU_SUSFS_SUS_SU
           make olddefconfig O=${{ env.OUTPUT_DIR }}
           
           # 开始编译
