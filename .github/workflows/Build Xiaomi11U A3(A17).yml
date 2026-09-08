@@ -136,12 +136,11 @@ jobs:
           cd ${{ github.workspace }}
           rm -rf workflow_repo
 
-      - name: Revert task_mmu.c changes (SUS_MAP disabled)
+      - name: Fix return errors in task_mmu.c
         working-directory: kernel
         run: |
-          # 回退 fs/proc/task_mmu.c 的修改
-          git checkout -- fs/proc/task_mmu.c
-          echo "✅ 已回退 task_mmu.c，因为 SUS_MAP 已禁用"
+          # 只修复 show_smap 函数中的 return; 错误（将 return; 改为 return 0;）
+          sed -i '/^[[:space:]]*return;[[:space:]]*$/s/return;/return 0;/' fs/proc/task_mmu.c
           
           # 6. 编译内核
       - name: Build Kernel
