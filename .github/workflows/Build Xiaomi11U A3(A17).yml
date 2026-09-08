@@ -115,7 +115,7 @@ jobs:
           git clone https://github.com/${{ github.repository }}.git workflow_repo --depth=1
     
           # 应用补丁
-          patch -p1 < workflow_repo/Patches/Patch/susfs_patch_to_5.4.patch
+          patch -p1 -N --batch --no-backup-if-mismatch < ../workflow_repo/Patches/Patch/susfs_patch_to_5.4.patch || true
     
           # 检查冲突
           if [ $(find . -name "*.rej" | wc -l) -ne 0 ]; then
