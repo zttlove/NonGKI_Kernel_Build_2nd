@@ -149,7 +149,7 @@ jobs:
           --disable KSU_DEBUG \
           --enable KSU_SUSFS \
           --enable KSU_SUSFS_SUS_PATH \
-          --disable KSU_SUSFS_KSTAT \       # 可选，为了稳定性暂时禁用
+          --disable KSU_SUSFS_KSTAT \
           --disable KSU_SUSFS_SPOOF_UNAME \
           --disable KSU_SUSFS_SUS_MOUNT \
           --disable KSU_SUSFS_OPEN_REDIRECT \
