@@ -110,20 +110,22 @@ jobs:
       - name: Apply SUSFS v2.2 patch
         working-directory: kernel
         run: |
-          # 使用相对路径
-          if [ -f ../Patches/Patch/susfs_patch_to_5.4.patch ]; then
-          patch -p1 < ../Patches/Patch/susfs_patch_to_5.4.patch
-          echo "✅ SUSFS v2.2 补丁应用成功"
-          else
-          echo "❌ 补丁文件不存在"
-          ls -la ../Patches/Patch/
-          exit 1
-          fi
+          # 克隆当前仓库（包含补丁文件）
+          cd ${{ github.workspace }}
+          git clone https://github.com/${{ github.repository }}.git workflow_repo --depth=1
+    
+          # 应用补丁
+          patch -p1 < workflow_repo/Patches/Patch/susfs_patch_to_5.4.patch
+    
           # 检查冲突
           if [ $(find . -name "*.rej" | wc -l) -ne 0 ]; then
           echo "❌ 补丁冲突，请检查 .rej 文件"
           exit 1
           fi
+          echo "✅ SUSFS v2.2 补丁应用成功"
+    
+          # 清理临时仓库
+          rm -rf workflow_repo
 
           
           # 6. 编译内核
