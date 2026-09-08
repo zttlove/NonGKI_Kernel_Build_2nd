@@ -136,7 +136,14 @@ jobs:
           cd ${{ github.workspace }}
           rm -rf workflow_repo
 
-          
+      - name: Fix show_smap return error
+        working-directory: kernel
+        run: |
+          # 将所有的 return; 替换为 return 0;（安全操作）
+          sed -i 's/^[[:space:]]*return;[[:space:]]*$/    return 0;/g' fs/proc/task_mmu.c
+          # 再检查一次，确保没有遗漏
+          sed -i 's/return;$/    return 0;/g' fs/proc/task_mmu.c
+    
           # 6. 编译内核
       - name: Build Kernel
         working-directory: kernel
