@@ -91,7 +91,10 @@ jobs:
           set -e
           echo "Cloning KernelSU..."
           rm -rf drivers/kernelsu
-          git clone https://github.com/cctv18/ReSukiSU_CI.git -b v34890 drivers/kernelsu
+          git clone https://github.com/ReSukiSU/ReSukiSU.git drivers/kernelsu
+          cd drivers/kernelsu
+          git checkout b0b73be~1
+          cd ../..
           
           
           # 创建包装文件
