@@ -160,6 +160,8 @@ jobs:
           --enable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
           --enable KSU_SUSFS_ENABLE_LOG \
           --enable KSU_SUSFS_SUS_SU \
+          --enable SELINUX_DEVELOP \
+          --enable SELINUX_ENFORCING \
           --set-val CONFIG_FRAME_WARN 3072
           make olddefconfig O=${{ env.OUTPUT_DIR }}
 
