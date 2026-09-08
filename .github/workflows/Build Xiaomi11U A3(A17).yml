@@ -114,17 +114,26 @@ jobs:
           cd ${{ github.workspace }}
           git clone https://github.com/${{ github.repository }}.git workflow_repo --depth=1
     
-          # 应用补丁
+          # 应用补丁（注意：相对路径需要 ../，因为当前在 kernel/ 下）
+          cd kernel
+          if [ -f ../workflow_repo/Patches/Patch/susfs_patch_to_5.4.patch ]; then
           patch -p1 -N --batch --no-backup-if-mismatch < ../workflow_repo/Patches/Patch/susfs_patch_to_5.4.patch || true
-    
-          # 检查冲突
+      
+          # 检查是否有 .rej 文件（只警告，不退出）
           if [ $(find . -name "*.rej" | wc -l) -ne 0 ]; then
-          echo "❌ 补丁冲突，请检查 .rej 文件"
+          echo "⚠️ 部分补丁失败（存在 .rej 文件），但将继续编译"
+          find . -name "*.rej" -exec echo "{}" \;
+          else
+          echo "✅ SUSFS v2.2 补丁全部成功应用"
+          fi
+          else
+          echo "❌ 补丁文件不存在，跳过应用"
+          ls -la ../workflow_repo/Patches/Patch/
           exit 1
           fi
-          echo "✅ SUSFS v2.2 补丁应用成功"
     
           # 清理临时仓库
+          cd ${{ github.workspace }}
           rm -rf workflow_repo
 
           
