@@ -91,10 +91,8 @@ jobs:
           set -e
           echo "Cloning KernelSU..."
           rm -rf drivers/kernelsu
-          git clone https://github.com/ReSukiSU/ReSukiSU.git drivers/kernelsu
-          cd drivers/kernelsu
-          # 获取 v35030 的父提交（即 10868c1^）
-          git checkout 10868c1^
+          git clone https://github.com/cctv18/ReSukiSU_CI.git -b v34890 drivers/kernelsu
+          
           
           # 创建包装文件
           echo "source \"drivers/kernelsu/kernel/Kconfig\"" > drivers/kernelsu/Kconfig
