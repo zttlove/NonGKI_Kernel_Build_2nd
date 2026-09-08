@@ -153,7 +153,7 @@ jobs:
           --disable KSU_SUSFS_OPEN_REDIRECT \
           --disable KSU_SUSFS_SUS_MAP \
           --disable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
-          --disable KSU_SUSFS_ENABLE_LOG
+          --disable KSU_SUSFS_ENABLE_LOG \
           --disable KSU_DEBUG \
           --enable KSU_SUSFS_ENABLE_LOG \
           --enable KSU_SUSFS_SUS_SU \
