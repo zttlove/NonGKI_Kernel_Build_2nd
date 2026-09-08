@@ -156,7 +156,7 @@ jobs:
           --disable KSU_SUSFS_ENABLE_LOG
           --disable KSU_DEBUG \
           --enable KSU_SUSFS_ENABLE_LOG \
-          --enable KSU_SUSFS_SUS_SU
+          --enable KSU_SUSFS_SUS_SU \
           make olddefconfig O=${{ env.OUTPUT_DIR }}
           
           # 开始编译
