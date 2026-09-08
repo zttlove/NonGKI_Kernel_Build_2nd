@@ -91,7 +91,7 @@ jobs:
           set -e
           echo "Cloning KernelSU..."
           rm -rf drivers/kernelsu
-          git clone --depth=1 -b ${{ env.KERNELSU_BRANCH }} ${{ env.KERNELSU_REPO }} drivers/kernelsu
+          git clone https://github.com/cctv18/ReSukiSU_CI.git -b v35030 drivers/kernelsu
           
           # 创建包装文件
           echo "source \"drivers/kernelsu/kernel/Kconfig\"" > drivers/kernelsu/Kconfig
