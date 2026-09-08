@@ -145,17 +145,15 @@ jobs:
           --enable OVERLAY_FS \
           --enable EXT4_FS \
           --enable NAMESPACES \
-          --enable KSU_SUSFS \
-          --enable KSU_SUSFS_KSTAT \
-          --enable KSU_SUSFS_SPOOF_UNAME \
-          --enable KSU_SUSFS_SUS_MOUNT \
-          --enable KSU_SUSFS_SUS_PATH \
-          --enable KSU_SUSFS_TRY_UMOUNT \
-          --enable KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
-          --enable KSU_SUSFS_OPEN_REDIRECT \
-          --enable KSU_SUSFS_SUS_MAP \
-          --enable KSU_SUSFS_HAS_MAGIC_MOUNT \
-          --enable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+          --disable KSU_SUSFS \
+          --disable KSU_SUSFS_KSTAT \
+          --disable KSU_SUSFS_SPOOF_UNAME \
+          --disable KSU_SUSFS_SUS_MOUNT \
+          --disable KSU_SUSFS_SUS_PATH \
+          --disable KSU_SUSFS_OPEN_REDIRECT \
+          --disable KSU_SUSFS_SUS_MAP \
+          --disable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+          --disable KSU_SUSFS_ENABLE_LOG
           --disable KSU_DEBUG \
           --enable KSU_SUSFS_ENABLE_LOG \
           --enable KSU_SUSFS_SUS_SU
