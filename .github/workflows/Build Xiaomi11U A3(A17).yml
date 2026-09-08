@@ -161,7 +161,7 @@ jobs:
           
           # 开始编译
           make -j$(nproc) O=${{ env.OUTPUT_DIR }} \
-            KCFLAGS="-Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-array-parameter"
+            KCFLAGS="-Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-array-parameter -Wno-declaration-after-statement"
           
           # 检查输出
           if [ ! -f "${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image" ]; then
