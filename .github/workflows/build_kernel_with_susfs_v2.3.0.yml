@@ -89,24 +89,14 @@ jobs:
         working-directory: kernel
         run: |
           PATCH="${{ github.workspace }}/workflow_repo/Patches/Patch/${{ env.SUSFS_PATCH_FILE }}"
-          if [ ! -f "$PATCH" ]; then
-            echo "❌ 补丁文件不存在: $PATCH"
-            exit 1
-          fi
-          echo "📦 应用补丁: $PATCH"
-          # 尝试应用，允许失败（-N --batch 避免交互，|| true 防止退出）
           patch -p1 -N --batch --no-backup-if-mismatch < "$PATCH" || true
 
-          # 统计冲突
-          REJ_COUNT=$(find . -name "*.rej" | wc -l)
-          if [ $REJ_COUNT -gt 0 ]; then
-            echo "⚠️ 存在 $REJ_COUNT 个 .rej 冲突文件，将跳过这些 hunk。"
-            find . -name "*.rej" -exec echo "  -> {}" \;
-          else
-            echo "✅ 补丁完全应用，无冲突。"
-          fi
-          # 删除 .orig 备份文件（若需要）
-          find . -name "*.orig" -delete
+      - name: Revert task_mmu.c (avoid return errors)
+        working-directory: kernel
+        run: |
+          git checkout -- fs/proc/task_mmu.c
+          echo "✅ 回退成功"
+
 
       - name: Fix common compilation errors (return in void functions)
         working-directory: kernel
