@@ -94,17 +94,24 @@ jobs:
       - name: Restore fs/proc/task_mmu.c to original
         working-directory: kernel
         run: |
-          # 1. 丢弃对该文件的所有修改，恢复原始版本
-          git checkout -- fs/proc/task_mmu.c 2>/dev/null || true
-          # 2. 如果上述失败（例如文件未跟踪），从 Git 历史中提取
+          # 彻底丢弃该文件的所有修改，恢复原始版本
+          git checkout HEAD -- fs/proc/task_mmu.c 2>/dev/null || true
+          # 如果上面失败（例如文件未跟踪），直接从内核源码仓库的最新提交中获取
           if [ ! -f fs/proc/task_mmu.c ]; then
-          git show HEAD:fs/proc/task_mmu.c > fs/proc/task_mmu.c
+          git show origin/${{ env.KERNEL_BRANCH }}:fs/proc/task_mmu.c > fs/proc/task_mmu.c
           fi
-          # 3. 保险措施：将残余的单独 return; 替换为 return 0;（确保编译通过）
-          sed -i 's/^[[:space:]]*return;[[:space:]]*$/    return 0;/g' fs/proc/task_mmu.c
-          echo "✅ fs/proc/task_mmu.c 已恢复"
-
-      
+          # 验证是否恢复了正确的文件（检查是否存在第159行附近的 return 0;）
+          if grep -n "^[[:space:]]*return 0;[[:space:]]*$" fs/proc/task_mmu.c | head -1; then
+          # 如果还有 return 0; 说明没有完全还原，使用更强制的方法
+          echo "⚠️ 文件仍有残留，尝试从官方 Linux 5.4 仓库获取"
+          wget -O fs/proc/task_mmu.c https://raw.githubusercontent.com/torvalds/linux/v5.4/fs/proc/task_mmu.c
+          else
+          echo "✅ fs/proc/task_mmu.c 已恢复原始版本"
+          fi
+          # 最后检查是否有独立的 return; （非 void 函数中的）
+          if grep -n "^[[:space:]]*return;[[:space:]]*$" fs/proc/task_mmu.c | head -1; then
+          echo "⚠️ 文件中仍有 return; 但那是原始文件可能本身就有的，无需处理"
+          fi      
 
       - name: Configure Kernel
         working-directory: kernel
