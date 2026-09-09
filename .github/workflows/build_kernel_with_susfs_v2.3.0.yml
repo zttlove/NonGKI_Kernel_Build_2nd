@@ -100,6 +100,13 @@ jobs:
          git show origin/${{ env.KERNEL_BRANCH }}:fs/proc/task_mmu.c > fs/proc/task_mmu.c
          echo "✅ 已从 origin/${{ env.KERNEL_BRANCH }} 恢复原始文件"
 
+      - name: Revert proc_namespace.c and disable SUS_MOUNT
+        working-directory: kernel
+        run: |
+          # 恢复原始文件
+          git checkout -- fs/proc_namespace.c
+          echo "✅ fs/proc_namespace.c 已回退"
+     
       - name: Configure Kernel
         working-directory: kernel
         run: |
@@ -136,7 +143,7 @@ jobs:
             --disable KSU_DEBUG \
             --enable KSU_SUSFS \
             --enable KSU_SUSFS_SUS_PATH \
-            --enable KSU_SUSFS_SUS_MOUNT \
+            --disable KSU_SUSFS_SUS_MOUNT \
             --enable KSU_SUSFS_SUS_KSTAT \
             --enable KSU_SUSFS_SPOOF_UNAME \
             --enable KSU_SUSFS_OPEN_REDIRECT \
