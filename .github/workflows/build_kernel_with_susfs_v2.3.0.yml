@@ -72,7 +72,7 @@ jobs:
           set -e
           echo "Cloning ReSukiSU v35119..."
           rm -rf drivers/kernelsu
-          git clone -b v35072 https://github.com/cctv18/ReSukiSU_CI.git drivers/kernelsu
+          git clone -b v35089 https://github.com/cctv18/ReSukiSU_CI.git drivers/kernelsu
           cd drivers/kernelsu
           cd ../..
           
