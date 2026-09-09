@@ -1,0 +1,104 @@
+name: Clean Kernel Source and Apply SUSFS v2.2
+
+on:
+  workflow_dispatch:
+    inputs:
+      patch_path:
+        description: 'SUSFS v2.2 patch file path (relative to workflow repo root)'
+        required: true
+        default: 'Patches/Patch/susfs_patch_to_5.4.patch'
+
+env:
+  KERNEL_DIR: "${{ github.workspace }}/kernel"
+
+jobs:
+  clean_and_patch:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+        with:
+          repository: "zttlove/android_kernel_xiaomi_sm8350_miyume"
+          ref: "main"
+          path: kernel
+          fetch-depth: 1
+
+      - name: Checkout Workflow Repository (for patch file)
+        uses: actions/checkout@v4
+        with:
+          path: workflow_repo
+          fetch-depth: 1
+
+      - name: Clean all SUSFS related code
+        working-directory: kernel
+        run: |
+          echo "=== Removing known SUSFS added files ==="
+          rm -f fs/susfs.c
+          rm -f include/linux/susfs.h
+          rm -f include/linux/susfs_def.h
+
+          echo "=== Reverting modified files to HEAD (using git) ==="
+          # 列出可能被修改的文件，回退到原始状态
+          git checkout -- fs/Makefile fs/namei.c fs/namespace.c fs/notify/fdinfo.c \
+            fs/proc/base.c fs/proc/fd.c fs/proc/task_mmu.c fs/proc_namespace.c \
+            fs/readdir.c fs/stat.c fs/statfs.c kernel/kallsyms.c kernel/sys.c \
+            mm/memory.c security/selinux/avc.c drivers/input/input.c \
+            security/security.c security/selinux/hooks.c security/selinux/ss/services.c \
+            kernel/reboot.c || true
+
+          # 删除所有 .rej .orig 文件
+          find . -name "*.rej" -delete
+          find . -name "*.orig" -delete
+
+          echo "=== Current git status (should be clean) ==="
+          git status --short
+
+      - name: Apply SUSFS v2.2 patch
+        working-directory: kernel
+        id: apply_v22
+        run: |
+          PATCH_FILE="${{ github.workspace }}/workflow_repo/${{ github.event.inputs.patch_path }}"
+          if [ ! -f "$PATCH_FILE" ]; then
+            echo "ERROR: Patch file not found: $PATCH_FILE"
+            exit 1
+          fi
+
+          echo "Applying patch: $PATCH_FILE"
+          set +e  # 允许 patch 失败，继续记录
+          patch -p1 < "$PATCH_FILE"
+          PATCH_EXIT=$?
+          set -e
+
+          echo "Patch exit code: $PATCH_EXIT"
+
+          # 记录 .rej 文件
+          REJ_COUNT=$(find . -name "*.rej" | wc -l)
+          if [ $REJ_COUNT -gt 0 ]; then
+            echo "::warning::There are $REJ_COUNT .rej files. Patch applied partially."
+            find . -name "*.rej" > rej_list.txt
+            # 生成详细报告
+            echo "=== .rej files list ==="
+            cat rej_list.txt
+            # 打印每个 .rej 内容（前20行）供参考
+            for rej in $(find . -name "*.rej"); do
+              echo "=== Content of $rej ==="
+              head -20 "$rej"
+              echo "=== end of $rej ==="
+            done
+            echo "PATCH_FAILED=true" >> $GITHUB_OUTPUT
+          else
+            echo "PATCH_FAILED=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload .rej files as artifact (if any)
+        if: steps.apply_v22.outputs.PATCH_FAILED == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: patch-rejects
+          path: kernel/**/*.rej
+
+      - name: Final status
+        if: steps.apply_v22.outputs.PATCH_FAILED == 'true'
+        run: |
+          echo "❌ Patch has conflicts. Please check the uploaded .rej files."
+          exit 1
