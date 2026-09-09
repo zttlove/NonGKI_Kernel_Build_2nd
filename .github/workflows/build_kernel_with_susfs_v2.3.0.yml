@@ -72,10 +72,10 @@ jobs:
           set -e
           echo "Cloning ReSukiSU v35030..."
           rm -rf drivers/kernelsu
-             git clone https://github.com/ReSukiSU/ReSukiSU.git drivers/kernelsu
-             cd drivers/kernelsu
-             git checkout 10868c1~1
-             cd ../..
+          git clone https://github.com/ReSukiSU/ReSukiSU.git drivers/kernelsu
+          cd drivers/kernelsu
+          git checkout faccf4c
+          cd ../..
           
           # 创建包装文件
           echo "source \"drivers/kernelsu/kernel/Kconfig\"" > drivers/kernelsu/Kconfig
