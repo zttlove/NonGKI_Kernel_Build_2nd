@@ -106,6 +106,13 @@ jobs:
           # 恢复原始文件
           git checkout -- fs/proc_namespace.c
           echo "✅ fs/proc_namespace.c 已回退"
+          
+      - name: Create dummy seccomp_types.h to suppress grep warning
+        working-directory: kernel
+        run: |
+          mkdir -p include/linux
+          touch include/linux/seccomp_types.h
+          echo "✅ 已创建占位文件，消除 grep 警告"
      
       - name: Configure Kernel
         working-directory: kernel
