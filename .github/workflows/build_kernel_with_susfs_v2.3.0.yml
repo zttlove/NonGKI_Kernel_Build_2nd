@@ -74,7 +74,7 @@ jobs:
           rm -rf drivers/kernelsu
           git clone https://github.com/ReSukiSU/ReSukiSU.git drivers/kernelsu
           cd drivers/kernelsu
-          git checkout 71fb420
+          git checkout 03b60f2
           cd ../..
           
           # 创建包装文件
