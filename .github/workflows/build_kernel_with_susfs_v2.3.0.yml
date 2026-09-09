@@ -91,27 +91,14 @@ jobs:
           PATCH="${{ github.workspace }}/workflow_repo/Patches/Patch/${{ env.SUSFS_PATCH_FILE }}"
           patch -p1 -N --batch --no-backup-if-mismatch < "$PATCH" || true
 
-      - name: Restore fs/proc/task_mmu.c to original
+      - name: Force restore fs/proc/task_mmu.c from origin/main
         working-directory: kernel
         run: |
-          # 彻底丢弃该文件的所有修改，恢复原始版本
-          git checkout HEAD -- fs/proc/task_mmu.c 2>/dev/null || true
-          # 如果上面失败（例如文件未跟踪），直接从内核源码仓库的最新提交中获取
-          if [ ! -f fs/proc/task_mmu.c ]; then
-          git show origin/${{ env.KERNEL_BRANCH }}:fs/proc/task_mmu.c > fs/proc/task_mmu.c
-          fi
-          # 验证是否恢复了正确的文件（检查是否存在第159行附近的 return 0;）
-          if grep -n "^[[:space:]]*return 0;[[:space:]]*$" fs/proc/task_mmu.c | head -1; then
-          # 如果还有 return 0; 说明没有完全还原，使用更强制的方法
-          echo "⚠️ 文件仍有残留，尝试从官方 Linux 5.4 仓库获取"
-          wget -O fs/proc/task_mmu.c https://raw.githubusercontent.com/torvalds/linux/v5.4/fs/proc/task_mmu.c
-          else
-          echo "✅ fs/proc/task_mmu.c 已恢复原始版本"
-          fi
-          # 最后检查是否有独立的 return; （非 void 函数中的）
-          if grep -n "^[[:space:]]*return;[[:space:]]*$" fs/proc/task_mmu.c | head -1; then
-          echo "⚠️ 文件中仍有 return; 但那是原始文件可能本身就有的，无需处理"
-          fi      
+         # 确保获取最新的远程分支信息
+         git fetch origin ${{ env.KERNEL_BRANCH }}
+         # 从远程分支强制覆盖该文件（丢弃所有补丁修改）
+         git show origin/${{ env.KERNEL_BRANCH }}:fs/proc/task_mmu.c > fs/proc/task_mmu.c
+         echo "✅ 已从 origin/${{ env.KERNEL_BRANCH }} 恢复原始文件"
 
       - name: Configure Kernel
         working-directory: kernel
