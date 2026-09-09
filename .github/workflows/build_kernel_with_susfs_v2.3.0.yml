@@ -136,14 +136,14 @@ jobs:
             --disable KSU_DEBUG \
             --enable KSU_SUSFS \
             --enable KSU_SUSFS_SUS_PATH \
-            --disable KSU_SUSFS_SUS_MOUNT \
-            --disable KSU_SUSFS_SUS_KSTAT \
-            --disable KSU_SUSFS_SPOOF_UNAME \
-            --disable KSU_SUSFS_OPEN_REDIRECT \
-            --disable KSU_SUSFS_SUS_MAP \
-            --disable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+            --enable KSU_SUSFS_SUS_MOUNT \
+            --enable KSU_SUSFS_SUS_KSTAT \
+            --enable KSU_SUSFS_SPOOF_UNAME \
+            --enable KSU_SUSFS_OPEN_REDIRECT \
+            --enable KSU_SUSFS_SUS_MAP \
+            --enable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
             --enable KSU_SUSFS_ENABLE_LOG \
-            --disable KSU_SUSFS_SUS_SU \
+            --enable KSU_SUSFS_SUS_SU \
             --set-val CONFIG_FRAME_WARN 3072
 
           make olddefconfig O=${{ env.OUTPUT_DIR }}
