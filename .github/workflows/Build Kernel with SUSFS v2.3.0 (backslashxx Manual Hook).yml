@@ -85,24 +85,12 @@ jobs:
           python3 - << 'EOF'
           import re
           path = 'kernel/kallsyms.c'
-          with open(path, 'r') as f:
-           content = f.read()
+          with open(path, 'r') as f:content = f.read()
           # 移除 #ifdef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS ... #endif 块
-          content = re.sub(
-           r'#ifdef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS.*?#endif',
-           '',
-           content,
-           flags=re.DOTALL
-            )
-            # 移除 #ifndef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS ... #else ... #endif 结构
-            content = re.sub(
-            r'#ifndef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS.*?#endif',
-            '',
-            content,
-            flags=re.DOTALL
-            )
-            with open(path, 'w') as f:
-            f.write(content)
+          content = re.sub(r'#ifdef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS.*?#endif','',content,flags=re.DOTALL)
+          # 移除 #ifndef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS ... #else ... #endif 结构
+          content = re.sub(r'#ifndef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS.*?#endif','',content,flags=re.DOTALL)
+          with open(path, 'w') as f:f.write(content)
             print("✅ kallsyms.c 中的 SUSFS 代码已移除")
             EOF
 
