@@ -91,6 +91,37 @@ jobs:
           PATCH="${{ github.workspace }}/workflow_repo/Patches/Patch/${{ env.SUSFS_PATCH_FILE }}"
           patch -p1 -N --batch --no-backup-if-mismatch < "$PATCH" || true
 
+      - name: Enable KSU_SUSFS_SUS_MOUNT (fix missing symbols)
+        working-directory: kernel
+        run: |
+          set -e
+          echo "=== 修补源码以启用 SUS_MOUNT ==="
+          # 1. 在 fs/proc_namespace.c 中添加外部声明（如果尚未存在）
+          if ! grep -q "susfs_is_hide_sus_mnts_for_non_su_procs_enabled" fs/proc_namespace.c; then
+          echo "添加外部声明到 fs/proc_namespace.c..."
+          sed -i '/^#include "internal.h"/a\
+          #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\
+          extern struct static_key_false susfs_is_hide_sus_mnts_for_non_su_procs_enabled;\
+          extern bool susfs_is_current_ksu_domain(void);\
+          #endif' fs/proc_namespace.c
+          else
+          echo "fs/proc_namespace.c 已包含声明，跳过。"
+          fi
+
+          # 2. 在 fs/susfs.c 中定义 static_key（如果尚未定义）
+          if ! grep -q "DEFINE_STATIC_KEY_FALSE(susfs_is_hide_sus_mnts_for_non_su_procs_enabled)" fs/susfs.c; then
+          echo "添加变量定义到 fs/susfs.c..."
+          # 在第一个 DEFINE_STATIC_KEY_FALSE 后面插入
+          sed -i '/DEFINE_STATIC_KEY_FALSE(/a DEFINE_STATIC_KEY_FALSE(susfs_is_hide_sus_mnts_for_non_su_procs_enabled);' fs/susfs.c
+          else
+          echo "fs/susfs.c 已包含定义，跳过。"
+          fi
+
+          # 3. 确保相关代码被条件编译包裹（可选检查）
+          # 补丁应该已经做了，此处仅做提醒
+          echo "✅ 源码修补完成，后续将启用 KSU_SUSFS_SUS_MOUNT"
+    
+
       - name: Force restore fs/proc/task_mmu.c from origin/main
         working-directory: kernel
         run: |
@@ -150,7 +181,7 @@ jobs:
             --disable KSU_DEBUG \
             --enable KSU_SUSFS \
             --enable KSU_SUSFS_SUS_PATH \
-            --disable KSU_SUSFS_SUS_MOUNT \
+            --able KSU_SUSFS_SUS_MOUNT \
             --enable KSU_SUSFS_SUS_KSTAT \
             --enable KSU_SUSFS_SPOOF_UNAME \
             --enable KSU_SUSFS_OPEN_REDIRECT \
