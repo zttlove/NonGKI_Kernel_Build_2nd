@@ -72,7 +72,7 @@ jobs:
           rm -rf drivers/kernelsu
           git clone https://github.com/ReSukiSU/ReSukiSU.git drivers/kernelsu
           cd drivers/kernelsu
-          
+           git checkout b2ac2fc
           cd ../..
 
           # 创建包装文件
