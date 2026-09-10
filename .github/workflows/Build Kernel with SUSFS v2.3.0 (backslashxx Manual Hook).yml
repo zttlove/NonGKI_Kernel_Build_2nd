@@ -190,6 +190,22 @@ jobs:
           EOF
           python3 fix_task_mmu.py
 
+      - name: Fix fs/stat.c legacy API names
+        working-directory: kernel
+        run: |
+         set -e
+         STAT_C="fs/stat.c"
+         # 1. 替换旧的任务状态判断为新的 API 调用
+         sed -i 's/if (likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC) &&/if (likely(susfs_is_current_proc_umounted_app()) \&\&/' "$STAT_C"
+         # 2. 替换旧的 inode 状态宏
+         sed -i 's/INODE_STATE_SUS_KSTAT/AS_FLAGS_SUS_KSTAT/g' "$STAT_C"
+         # 3. 替换旧的函数名
+         sed -i 's/susfs_sus_ino_for_generic_fillattr/susfs_sus_kstat_spoof_generic_fillattr/g' "$STAT_C"
+         # 4. 如果还有 current->susfs_task_state 残留，统一替换
+         sed -i 's/current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC/susfs_is_current_proc_umounted_app()/g' "$STAT_C"
+         echo "✅ fs/stat.c 旧 API 名称修复完成"
+         grep -n "TASK_STRUCT_NON_ROOT\|INODE_STATE_SUS_KSTAT\|susfs_sus_ino_for" "$STAT_C" || echo "✅ 已无旧名称残留"
+    
       - name: Fix missing symbols in proc_namespace.c and susfs.c
         working-directory: kernel
         run: |
