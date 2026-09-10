@@ -97,36 +97,36 @@ jobs:
           cat > fix_task_mmu.py << 'EOF'
           import re
           # 需要将 return; 改为 return 0; 的非 void 函数
-    non_void_funcs = [
-        'proc_maps_open', 'show_map', 'smaps_pte_hole', 'smaps_pte_range',
-        'show_smap', 'smaps_rollup_open', 'clear_refs_pte_range',
-        'clear_refs_test_walk', 'add_to_pagemap', 'pagemap_open',
-        'pagemap_release', 'reclaim_pte_range'
-    ]
-    # 需要将 return 0; 改为 return; 的 void 函数
-    void_funcs = [
-        'seq_print_vma_name', 'smaps_account', 'smaps_pte_entry', 'smap_gather_stats'
-    ]
+          non_void_funcs = [
+          'proc_maps_open', 'show_map', 'smaps_pte_hole', 'smaps_pte_range',
+          'show_smap', 'smaps_rollup_open', 'clear_refs_pte_range',
+          'clear_refs_test_walk', 'add_to_pagemap', 'pagemap_open',
+          'pagemap_release', 'reclaim_pte_range'
+          ]
+          # 需要将 return 0; 改为 return; 的 void 函数
+          void_funcs = [
+          'seq_print_vma_name', 'smaps_account', 'smaps_pte_entry', 'smap_gather_stats'
+          ]
 
-    with open('fs/proc/task_mmu.c', 'r') as f:
-        lines = f.readlines()
+          with open('fs/proc/task_mmu.c', 'r') as f:
+          lines = f.readlines()
 
-    def find_body(lines, func):
-        pattern = re.compile(r'\b' + func + r'\s*\(')
-        start = None
-        for i, line in enumerate(lines):
+          def find_body(lines, func):
+          pattern = re.compile(r'\b' + func + r'\s*\(')
+          start = None
+          for i, line in enumerate(lines):
             if pattern.search(line) and not line.strip().startswith('//'):
                 if '{' in line or (i+1 < len(lines) and '{' in lines[i+1]):
                     start = i
                     break
         if start is None:
-            return None, None
-        brace = 0
-        body_start = None
+           return None, None
+           brace = 0
+           body_start = None
         for i in range(start, len(lines)):
             for ch in lines[i]:
                 if ch == '{':
-                    brace += 1
+                brace += 1
                     if body_start is None:
                         body_start = i
                 elif ch == '}':
