@@ -190,6 +190,22 @@ jobs:
           EOF
           python3 fix_task_mmu.py
           
+      - name: Fix fs/dcache.c legacy API names
+        working-directory: kernel
+        run: |
+          set -e
+          DCACHE_C="fs/dcache.c"
+
+          sed -i 's/INODE_STATE_SUS_PATH/AS_FLAGS_SUS_PATH/g' "$DCACHE_C"
+          sed -i 's/current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC/susfs_is_current_proc_umounted_app()/g' "$DCACHE_C"
+
+          if ! grep -q "linux/susfs_def.h" "$DCACHE_C"; then
+          sed -i '0,/#include/{s|#include|#ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs_def.h>\n#endif\n#include|}' "$DCACHE_C"
+          fi
+
+          echo "✅ fs/dcache.c 修复完成"
+    
+          
       - name: Fix fs/readdir.c legacy API names
         working-directory: kernel
         run: |
@@ -212,6 +228,12 @@ jobs:
           echo "✅ fs/readdir.c 修复完成"
           grep -n "TASK_STRUCT_NON_ROOT\|susfs_sus_ino_for" "$READDIR_C" || echo "✅ 无残留旧名称"
 
+      - name: Fix fs/readdir.c uninitialized warning
+        working-directory: kernel
+        run: |
+         sed -i 's/^\(\s*\)struct inode \*inode;$/\1struct inode *inode = NULL;/' fs/readdir.c
+         echo "✅ fs/readdir.c 警告修复"
+    
       - name: Fix fs/stat.c legacy API names
         working-directory: kernel
         run: |
