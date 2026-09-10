@@ -74,74 +74,72 @@ jobs:
           echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
 
       - name: Clean pre-existing KSU/SUSFS hooks (minimal)
-  working-directory: kernel
-  run: |
-    echo "=== 最小化清理：仅删除 SUSFS 引用 ==="
+        working-directory: kernel
+        run: |
+          echo "=== 最小化清理：仅删除 SUSFS 引用 ==="
 
-    # 1. 恢复 kallsyms.c 到仓库原始版本（丢弃我们的误删）
-    git checkout -- kernel/kallsyms.c 2>/dev/null || true
+          # 1. 恢复 kallsyms.c 到仓库原始版本
+          git checkout -- kernel/kallsyms.c 2>/dev/null || true
 
-    # 2. 只删 kallsyms.c 里的 susfs_def.h include，其他不动
-    sed -i '/#include <linux\/susfs_def.h>/d' kernel/kallsyms.c
+          # 2. 只删 kallsyms.c 里的 susfs_def.h include
+          sed -i '/#include <linux\/susfs_def.h>/d' kernel/kallsyms.c
 
-    # 3. 处理 kallsyms.c 中的 SUSFS 条件编译块
-    #    注意：这里只匹配最内层的 #ifdef ... #endif 对，且只保留 kallsyms 自身的代码
-    python3 - << 'EOF'
-    import re
-    path = 'kernel/kallsyms.c'
-    with open(path, 'r') as f:
-        content = f.read()
+          # 3. 处理 kallsyms.c 中的 SUSFS 条件编译块
+          python3 - << 'EOF'
+          import re
+          path = 'kernel/kallsyms.c'
+          with open(path, 'r') as f:
+              content = f.read()
 
-    # 只删除 SUSFS 相关的 #ifdef 块，且匹配范围最小化
-    # 模式1: 一个 #ifdef CONFIG_KSU_SUSFS ... #endif，其中不含嵌套的 #if
-    pattern1 = re.compile(
-        r'#ifdef\s+CONFIG_KSU_SUSFS[A-Z_]*\s*\n'
-        r'((?!\s*#if).)*?'
-        r'#endif',
-        re.DOTALL
-    )
-    content = pattern1.sub('', content)
+          # 模式1: #ifdef CONFIG_KSU_SUSFS ... #endif（不含嵌套 #if）
+          pattern1 = re.compile(
+              r'#ifdef\s+CONFIG_KSU_SUSFS[A-Z_]*\s*\n'
+              r'((?!\s*#if).)*?'
+              r'#endif',
+              re.DOTALL
+          )
+          content = pattern1.sub('', content)
 
-    # 模式2: #ifndef CONFIG_KSU_SUSFS ... #else ... #endif
-    pattern2 = re.compile(
-        r'#ifndef\s+CONFIG_KSU_SUSFS[A-Z_]*\s*\n'
-        r'((?!\s*#if).)*?'
-        r'#else\s*\n'
-        r'((?!\s*#if).)*?'
-        r'#endif',
-        re.DOTALL
-    )
-    content = pattern2.sub('', content)
+          # 模式2: #ifndef CONFIG_KSU_SUSFS ... #else ... #endif
+          pattern2 = re.compile(
+              r'#ifndef\s+CONFIG_KSU_SUSFS[A-Z_]*\s*\n'
+              r'((?!\s*#if).)*?'
+              r'#else\s*\n'
+              r'((?!\s*#if).)*?'
+              r'#endif',
+              re.DOTALL
+          )
+          content = pattern2.sub('', content)
 
-    with open(path, 'w') as f:
-        f.write(content)
-    print("✅ kallsyms.c 清理完成")
-    EOF
+          with open(path, 'w') as f:
+              f.write(content)
+          print("✅ kallsyms.c 清理完成")
+          EOF
 
-    # 4. 验证 kallsyms.c 关键符号是否还在
-    echo "=== 验证 kallsyms.c ==="
-    for sym in kallsyms_num_syms kallsyms_expand_symbol kallsyms_sym_address; do
-      if grep -q "$sym" kernel/kallsyms.c; then
-        echo "✅ $sym 存在"
-      else
-        echo "❌ $sym 缺失！"
-        exit 1
-      fi
-    done
+          # 4. 验证关键符号是否还在
+          echo "=== 验证 kallsyms.c ==="
+          for sym in kallsyms_num_syms kallsyms_expand_symbol kallsyms_sym_address; do
+            if grep -q "$sym" kernel/kallsyms.c; then
+              echo "✅ $sym 存在"
+            else
+              echo "❌ $sym 缺失！"
+              exit 1
+            fi
+          done
 
-    # 5. 删除 SUSFS 文件
-    rm -f fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h
+          # 5. 删除 SUSFS 文件
+          rm -f fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h
 
-    echo "✅ 最小化清理完成"
+          echo "✅ 最小化清理完成"
+
       - name: Apply Manual Hook (backslashxx)
         working-directory: kernel
         run: |
           set -e
           echo "=== 应用 Manual Hook ==="
 
-          # backslashxx/KernelSU 通常提供一个 setup 脚本来应用钩子
           if [ -f "drivers/kernelsu/kernel/setup.sh" ]; then
-            echo "找到 setup.sh，正在执行..."
+            echo "找到 setup.sh (kernel 目录)，正在执行..."
             chmod +x drivers/kernelsu/kernel/setup.sh
             bash drivers/kernelsu/kernel/setup.sh || echo "⚠️ setup.sh 执行完毕（可能有非致命警告）"
           elif [ -f "drivers/kernelsu/setup.sh" ]; then
