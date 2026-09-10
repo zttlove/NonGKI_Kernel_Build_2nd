@@ -181,7 +181,7 @@ jobs:
             --disable KSU_DEBUG \
             --enable KSU_SUSFS \
             --enable KSU_SUSFS_SUS_PATH \
-            --able KSU_SUSFS_SUS_MOUNT \
+            --enable KSU_SUSFS_SUS_MOUNT \
             --enable KSU_SUSFS_SUS_KSTAT \
             --enable KSU_SUSFS_SPOOF_UNAME \
             --enable KSU_SUSFS_OPEN_REDIRECT \
