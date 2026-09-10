@@ -193,18 +193,29 @@ jobs:
       - name: Fix fs/stat.c legacy API names
         working-directory: kernel
         run: |
-         set -e
-         STAT_C="fs/stat.c"
-         # 1. 替换旧的任务状态判断为新的 API 调用
-         sed -i 's/if (likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC) &&/if (likely(susfs_is_current_proc_umounted_app()) \&\&/' "$STAT_C"
-         # 2. 替换旧的 inode 状态宏
-         sed -i 's/INODE_STATE_SUS_KSTAT/AS_FLAGS_SUS_KSTAT/g' "$STAT_C"
-         # 3. 替换旧的函数名
-         sed -i 's/susfs_sus_ino_for_generic_fillattr/susfs_sus_kstat_spoof_generic_fillattr/g' "$STAT_C"
-         # 4. 如果还有 current->susfs_task_state 残留，统一替换
-         sed -i 's/current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC/susfs_is_current_proc_umounted_app()/g' "$STAT_C"
-         echo "✅ fs/stat.c 旧 API 名称修复完成"
-         grep -n "TASK_STRUCT_NON_ROOT\|INODE_STATE_SUS_KSTAT\|susfs_sus_ino_for" "$STAT_C" || echo "✅ 已无旧名称残留"
+          set -e
+           STAT_C="fs/stat.c"
+           # 1. 替换旧的任务状态判断为新的 API 调用
+          sed -i 's/current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC/susfs_is_current_proc_umounted_app()/g' "$STAT_C"
+
+           # 2. 替换旧的 inode 状态宏
+           sed -i 's/INODE_STATE_SUS_KSTAT/AS_FLAGS_SUS_KSTAT/g' "$STAT_C"
+
+           # 3. 替换旧的函数名为新函数名，并修正第一个参数从 ino 为 inode
+           sed -i 's/susfs_sus_ino_for_generic_fillattr(inode->i_ino, stat)/susfs_sus_kstat_spoof_generic_fillattr(inode, stat)/g' "$STAT_C"
+
+           # 4. 确保 fs/stat.c 包含 susfs_def.h（否则 susfs_is_current_proc_umounted_app 和 AS_FLAGS_SUS_KSTAT 不可见）
+           if ! grep -q "linux/susfs_def.h" "$STAT_C"; then
+           # 尝试插入到合适位置
+           if grep -q '#include <linux/stat.h>' "$STAT_C"; then
+           sed -i '/#include <linux\/stat.h>/a #ifdef CONFIG_KSU_SUSFS\n#include <linux\/susfs_def.h>\n#endif' "$STAT_C"
+           else
+           sed -i '0,/#include/{s|#include|#ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs_def.h>\n#endif\n#include|}' "$STAT_C"
+           fi
+           fi
+
+    echo "✅ fs/stat.c 修复完成"
+    grep -n "susfs_is_current_proc\|AS_FLAGS_SUS_KSTAT\|susfs_sus_kstat_spoof" "$STAT_C"
     
       - name: Fix missing symbols in proc_namespace.c and susfs.c
         working-directory: kernel
