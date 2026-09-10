@@ -76,26 +76,46 @@ jobs:
       - name: Clean pre-existing KSU/SUSFS hooks
         working-directory: kernel
         run: |
-          echo "=== 清理内核源码中预打的 KSU/SUSFS 钩子 ==="
-          # 1. 先尝试回退到工作区未修改状态
-          git checkout -- fs/exec.c fs/read_write.c fs/stat.c fs/namespace.c \
-                    kernel/sys.c drivers/input/input.c security/selinux/avc.c \
-                    fs/namei.c fs/open.c kernel/reboot.c 2>/dev/null || true
-           # 2. 检查是否仍有 ksu_/susfs_ 引用残留
-           echo "检查残留引用..."
-           RESIDUAL=$(grep -rl "ksu_handle\|susfs_is_current\|ksu_is_init_rc" \
-               fs/ kernel/ drivers/input/ security/ 2>/dev/null | grep -v "drivers/kernelsu" || true)
+          echo "=== 清理内核源码中预打的 SUSFS 钩子 ==="
 
-           if [ -n "$RESIDUAL" ]; then
-           echo "⚠️ 以下文件仍包含 KSU/SUSFS 钩子："
-           echo "$RESIDUAL"
-           echo "这些可能是已提交的修改，需要手动处理。"
-           else
-           echo "✅ 未发现残留 KSU/SUSFS 钩子"
-           fi
-           # 3. 删除内核仓库可能自带的 SUSFS 文件
-           rm -f fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h
-           echo "✅ 清理步骤完成"
+          # 一次性回退所有可能被 SUSFS 补丁修改过的文件
+          git checkout -- \
+          fs/exec.c \
+          fs/read_write.c \
+          fs/open.c \
+          fs/stat.c \
+          fs/statfs.c \
+          fs/namei.c \
+          fs/namespace.c \
+          fs/readdir.c \
+          fs/dcache.c \
+          fs/notify/fdinfo.c \
+          fs/proc/base.c \
+          fs/proc/fd.c \
+          fs/proc/task_mmu.c \
+          fs/proc_namespace.c \
+          fs/proc/cmdline.c \
+          kernel/kallsyms.c \
+          kernel/sys.c \
+          kernel/reboot.c \
+          mm/memory.c \
+          drivers/input/input.c \
+          security/selinux/avc.c 2>/dev/null || true
+
+          # 删除 SUSFS 相关文件
+          rm -f fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h
+
+          # 检查残留
+          echo "=== 检查残留 ==="
+          RESIDUAL=$(grep -rl "susfs_def.h\|susfs_is_current\|ksu_handle\|ksu_is_init_rc" \
+               fs/ kernel/ drivers/input/ security/ mm/ 2>/dev/null | \
+               grep -v "drivers/kernelsu" || true)
+          if [ -n "$RESIDUAL" ]; then
+          echo "⚠️ 仍有残留："
+          echo "$RESIDUAL"
+          else
+           echo "✅ 干净了"
+          fi
 
       - name: Apply Manual Hook (backslashxx)
         working-directory: kernel
