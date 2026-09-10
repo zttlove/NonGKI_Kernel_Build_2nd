@@ -76,46 +76,58 @@ jobs:
       - name: Clean pre-existing KSU/SUSFS hooks
         working-directory: kernel
         run: |
-          echo "=== 清理内核源码中预打的 SUSFS 钩子 ==="
+          echo "=== 强制清理内核源码中的 SUSFS 引用 ==="
 
-          # 一次性回退所有可能被 SUSFS 补丁修改过的文件
-          git checkout -- \
-          fs/exec.c \
-          fs/read_write.c \
-          fs/open.c \
-          fs/stat.c \
-          fs/statfs.c \
-          fs/namei.c \
-          fs/namespace.c \
-          fs/readdir.c \
-          fs/dcache.c \
-          fs/notify/fdinfo.c \
-          fs/proc/base.c \
-          fs/proc/fd.c \
-          fs/proc/task_mmu.c \
-          fs/proc_namespace.c \
-          fs/proc/cmdline.c \
-          kernel/kallsyms.c \
-          kernel/sys.c \
-          kernel/reboot.c \
-          mm/memory.c \
-          drivers/input/input.c \
-          security/selinux/avc.c 2>/dev/null || true
+          # 1. 删除 kallsyms.c 中的 susfs_def.h 包含
+          sed -i '/#include <linux\/susfs_def.h>/d' kernel/kallsyms.c
 
-          # 删除 SUSFS 相关文件
-          rm -f fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h
+          # 2. 处理 kallsyms.c 中的 SUSFS 条件编译块（整段移除）
+          python3 - << 'EOF'
+          import re
+          path = 'kernel/kallsyms.c'
+          with open(path, 'r') as f:
+           content = f.read()
+          # 移除 #ifdef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS ... #endif 块
+          content = re.sub(
+           r'#ifdef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS.*?#endif',
+           '',
+           content,
+           flags=re.DOTALL
+            )
+            # 移除 #ifndef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS ... #else ... #endif 结构
+            content = re.sub(
+            r'#ifndef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS.*?#endif',
+            '',
+            content,
+            flags=re.DOTALL
+            )
+            with open(path, 'w') as f:
+            f.write(content)
+            print("✅ kallsyms.c 中的 SUSFS 代码已移除")
+            EOF
 
-          # 检查残留
-          echo "=== 检查残留 ==="
-          RESIDUAL=$(grep -rl "susfs_def.h\|susfs_is_current\|ksu_handle\|ksu_is_init_rc" \
+            # 3. 全局搜索所有 SUSFS 相关的 include 并删除
+           find fs/ kernel/ drivers/input/ security/ mm/ -name "*.c" -o -name "*.h" 2>/dev/null | while read f; do
+           if grep -q "#include <linux/susfs" "$f" 2>/dev/null; then
+            echo "清理 $f"
+            sed -i '/#include <linux\/susfs/d' "$f"
+            fi
+            done
+
+            # 4. 删除 SUSFS 文件（如果存在）
+            rm -f fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h
+
+            # 5. 检查残留
+            echo "=== 检查残留 ==="
+            RESIDUAL=$(grep -rl "susfs_def.h\|#include <linux/susfs" \
                fs/ kernel/ drivers/input/ security/ mm/ 2>/dev/null | \
                grep -v "drivers/kernelsu" || true)
-          if [ -n "$RESIDUAL" ]; then
-          echo "⚠️ 仍有残留："
-          echo "$RESIDUAL"
-          else
-           echo "✅ 干净了"
-          fi
+             if [ -n "$RESIDUAL" ]; then
+             echo "⚠️ 仍有残留："
+             echo "$RESIDUAL"
+             else
+             echo "✅ 干净了"
+             fi
 
       - name: Apply Manual Hook (backslashxx)
         working-directory: kernel
