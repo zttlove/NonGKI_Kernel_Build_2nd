@@ -189,6 +189,28 @@ jobs:
           print("✅ task_mmu.c 修复完成")
           EOF
           python3 fix_task_mmu.py
+          
+      - name: Fix fs/readdir.c legacy API names
+        working-directory: kernel
+        run: |
+          set -e
+          READDIR_C="fs/readdir.c"
+
+          # 替换旧的任务状态判断为新 API
+          sed -i 's/current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC/susfs_is_current_proc_umounted_app()/g' "$READDIR_C"
+
+          # 检查 susfs_sus_ino_for_filldir64 是否存在，如果新版已改名则替换
+          if grep -q "susfs_sus_ino_for_filldir64" "$READDIR_C"; then
+          # 新版中已经没有这个函数了，需要删除这些条件判断
+          # 因为它依赖旧版的任务状态判断逻辑，属于旧架构
+          sed -i 's/if (likely(susfs_is_current_proc_umounted_app()) && susfs_sus_ino_for_filldir64(ino)) {/if (susfs_is_inode_sus_path(inode)) {/g' "$READDIR_C"
+          fi
+
+          # 如果还有残留，用简单的路径判断替代
+          sed -i 's/susfs_sus_ino_for_filldir64(ino)/susfs_is_inode_sus_path(inode)/g' "$READDIR_C"
+
+          echo "✅ fs/readdir.c 修复完成"
+          grep -n "TASK_STRUCT_NON_ROOT\|susfs_sus_ino_for" "$READDIR_C" || echo "✅ 无残留旧名称"
 
       - name: Fix fs/stat.c legacy API names
         working-directory: kernel
