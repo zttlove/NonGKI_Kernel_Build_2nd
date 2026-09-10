@@ -97,17 +97,20 @@ jobs:
           set -e
           echo "=== 修补源码以启用 SUS_MOUNT ==="
 
-          # 1. 在 fs/proc_namespace.c 中添加正确的外部声明
-          if ! grep -q "susfs_is_hide_sus_mnts_for_non_su_procs_enabled" fs/proc_namespace.c; then
-          echo "添加外部声明到 fs/proc_namespace.c..."
-          # 在 #include "internal.h" 之后插入
+          # 1. 检查是否存在精确的 extern 声明，若不存在则添加
+          if ! grep -q "extern struct static_key_false susfs_is_hide_sus_mnts_for_non_su_procs_enabled" fs/proc_namespace.c; then
+          echo "添加精确 extern 声明到 fs/proc_namespace.c..."
+          # 先删除旧的 bool 声明（如果有）
+          sed -i '/^extern bool susfs_hide_sus_mnts_for_non_su_procs;$/d' fs/proc_namespace.c
+          # 在 #include "internal.h" 后面插入正确的声明
           sed -i '/^#include "internal.h"/a\
           #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\
           extern struct static_key_false susfs_is_hide_sus_mnts_for_non_su_procs_enabled;\
           extern bool susfs_is_current_ksu_domain(void);\
           #endif' fs/proc_namespace.c
+          else
+          echo "✅ fs/proc_namespace.c 已包含精确声明"
           fi
-
           # 如果文件里还有旧版的 bool 声明，也一并移除（避免冲突）
           sed -i '/^extern bool susfs_hide_sus_mnts_for_non_su_procs;$/d' fs/proc_namespace.c
 
