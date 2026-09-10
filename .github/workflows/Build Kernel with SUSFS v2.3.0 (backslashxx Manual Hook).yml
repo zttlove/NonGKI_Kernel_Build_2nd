@@ -132,6 +132,35 @@ jobs:
 
           echo "✅ 最小化清理完成"
 
+          # 6. 全局清理所有残留的 SUSFS include 和条件编译块
+          echo "=== 全局清理 SUSFS 引用 ==="
+          FILES=$(grep -rl "linux/susfs\|CONFIG_KSU_SUSFS" \
+                  fs/ kernel/ mm/ security/ drivers/input/ 2>/dev/null | \
+                  grep -v "drivers/kernelsu" || true)
+
+          if [ -z "$FILES" ]; then
+            echo "✅ 无残留引用"
+          else
+            for f in $FILES; do
+              echo "处理 $f"
+              # 删除 include 行
+              sed -i '/#include <linux\/susfs_def.h>/d' "$f"
+              sed -i '/#include <linux\/susfs.h>/d' "$f"
+              # 删除 susfs_def.h 相关的 #ifdef ... #endif 块（简单版）
+              python3 - "$f" << 'PYEOF'
+          import re, sys
+          path = sys.argv[1]
+          with open(path, 'r') as fp:
+              c = fp.read()
+          c = re.sub(r'#ifdef\s+CONFIG_KSU_SUSFS[A-Z_]*\s*\n((?!\s*#if).)*?#endif', '', c, flags=re.DOTALL)
+          c = re.sub(r'#ifndef\s+CONFIG_KSU_SUSFS[A-Z_]*\s*\n((?!\s*#if).)*?#else\s*\n((?!\s*#if).)*?#endif', '', c, flags=re.DOTALL)
+          with open(path, 'w') as fp:
+              fp.write(c)
+          PYEOF
+            done
+            echo "✅ 全局清理完成"
+          fi
+
       - name: Apply Manual Hook (backslashxx)
         working-directory: kernel
         run: |
