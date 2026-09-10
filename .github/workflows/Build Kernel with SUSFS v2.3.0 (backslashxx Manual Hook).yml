@@ -104,6 +104,26 @@ jobs:
           patch -p1 -N --batch --no-backup-if-mismatch < 50_add_susfs_in_kernel-5.4.patch || true
           echo "✅ SUSFS 内核补丁应用完成（如有 .rej 请检查）"
 
+      - name: Fix missing susfs_init declaration in ksu.c
+        working-directory: kernel
+        run: |
+          # 在 ksu.c 中添加 susfs.h 的包含
+          KSU_C="drivers/kernelsu/kernel/ksu.c"
+          if [ -f "$KSU_C" ]; then
+          if ! grep -q "linux/susfs.h" "$KSU_C"; then
+          echo "添加 #include <linux/susfs.h> 到 $KSU_C"
+          # 在文件开头附近的第一个 #include 后插入
+          sed -i '0,/#include/{s|#include|#ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs.h>\n#endif\n#include|}' "$KSU_C"
+          else
+          echo "✅ $KSU_C 已包含 susfs.h"
+          fi
+          else
+          echo "❌ 找不到 $KSU_C"
+          exit 1
+          fi
+          # 验证
+          grep -n "susfs.h\|susfs_init" "$KSU_C" | head -5
+
       - name: Fix task_mmu.c return errors (SUS_MAP/SUS_KSTAT)
         working-directory: kernel
         run: |
