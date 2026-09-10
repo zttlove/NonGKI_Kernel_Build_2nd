@@ -72,7 +72,7 @@ jobs:
           rm -rf drivers/kernelsu
           git clone https://github.com/ReSukiSU/ReSukiSU.git drivers/kernelsu
           cd drivers/kernelsu
-          
+          git log --oneline -1
           cd ../..
 
           # 创建包装文件
