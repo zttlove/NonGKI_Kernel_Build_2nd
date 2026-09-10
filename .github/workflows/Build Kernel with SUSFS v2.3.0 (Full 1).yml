@@ -1,0 +1,318 @@
+name: Build Kernel with SUSFS v2.3.0 (Full Features)
+
+on:
+  workflow_dispatch:
+
+env:
+  TZ: Asia/Shanghai
+  DEVICE_CODENAME: "star"
+  KERNEL_ARCH: "arm64"
+  KERNEL_REPO: "zttlove/android_kernel_xiaomi_sm8350_miyume"
+  KERNEL_BRANCH: "main"
+  DEFCONFIG_NAME: "star_defconfig"
+  OUTPUT_DIR: "out"
+  CLANG_DIR: "${{ github.workspace }}/clang"
+  CCACHE_DIR: "${{ github.workspace }}/.ccache"
+  KERNEL_DIR: "${{ github.workspace }}/kernel"
+  SUSFS_PATCH_FILE: "susfs_patch_to_5.4.patch"
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.KERNEL_REPO }}
+          ref: ${{ env.KERNEL_BRANCH }}
+          path: kernel
+          fetch-depth: 1
+
+      - name: Checkout Workflow Repo (Patches)
+        uses: actions/checkout@v4
+        with:
+          path: workflow_repo
+          fetch-depth: 1
+
+      - name: Install Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            bc bison flex libelf-dev libssl-dev libncurses-dev \
+            make python3 device-tree-compiler git curl xz-utils \
+            ccache zip unzip
+
+          echo "正在修复 libtinfo.so.5 依赖..."
+          if ! sudo apt install -y libtinfo5; then
+            echo "直接安装 libtinfo5 失败，尝试创建软链接..."
+            sudo ln -sf /lib/x86_64-linux-gnu/libtinfo.so.6 /lib/x86_64-linux-gnu/libtinfo.so.5
+          fi
+
+          if [ ! -f /lib/x86_64-linux-gnu/libtinfo.so.5 ]; then
+            echo "::error::修复失败！libtinfo.so.5 仍然不存在。"
+            exit 1
+          else
+            echo "✅ libtinfo.so.5 修复成功！"
+          fi
+
+      - name: Download Clang
+        run: |
+          mkdir -p ${{ env.CLANG_DIR }}
+          curl -L --retry 3 -o clang.tar.xz "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-18.04.tar.xz"
+          tar -xf clang.tar.xz -C ${{ env.CLANG_DIR }} --strip-components=1
+          rm clang.tar.xz
+          ${{ env.CLANG_DIR }}/bin/clang --version
+
+      - name: Setup ReSukiSU (v35089)
+        working-directory: kernel
+        run: |
+          set -e
+          echo "Cloning ReSukiSU v35089.."
+          rm -rf drivers/kernelsu
+          git clone https://github.com/ReSukiSU/ReSukiSU.git drivers/kernelsu
+          cd drivers/kernelsu
+          
+          cd ../..
+
+          # 创建包装文件
+          echo "source \"drivers/kernelsu/kernel/Kconfig\"" > drivers/kernelsu/Kconfig
+          echo "obj-y += kernel/" > drivers/kernelsu/Makefile
+          sed -i '/source "drivers\/kernelsu\/Kconfig"/d' drivers/Kconfig || true
+          sed -i '/obj-\$(CONFIG_KSU) += kernelsu\//d' drivers/Makefile || true
+          echo "source \"drivers/kernelsu/Kconfig\"" >> drivers/Kconfig
+          echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
+
+      - name: Apply SUSFS v2.3.0 Patch
+        working-directory: kernel
+        run: |
+          PATCH="${{ github.workspace }}/workflow_repo/Patches/Patch/${{ env.SUSFS_PATCH_FILE }}"
+          patch -p1 -N --batch --no-backup-if-mismatch < "$PATCH" || true
+
+      - name: Fix task_mmu.c return errors for SUS_MAP/SUS_KSTAT
+        working-directory: kernel
+        run: |
+          cat > fix_task_mmu.py << 'EOF'
+          import re
+
+          non_void_funcs = [
+              'proc_maps_open', 'show_map', 'smaps_pte_hole', 'smaps_pte_range',
+              'show_smap', 'smaps_rollup_open', 'clear_refs_pte_range',
+              'clear_refs_test_walk', 'add_to_pagemap', 'pagemap_open',
+              'pagemap_release', 'reclaim_pte_range'
+          ]
+          void_funcs = [
+              'seq_print_vma_name', 'smaps_account', 'smaps_pte_entry', 'smap_gather_stats'
+          ]
+
+          with open('fs/proc/task_mmu.c', 'r') as f:
+              lines = f.readlines()
+
+          def find_body(lines, func):
+              pattern = re.compile(r'\b' + func + r'\s*\(')
+              start = None
+              for i, line in enumerate(lines):
+                  if pattern.search(line) and not line.strip().startswith('//'):
+                      if '{' in line or (i+1 < len(lines) and '{' in lines[i+1]):
+                          start = i
+                          break
+              if start is None:
+                  return None, None
+              brace = 0
+              body_start = None
+              for i in range(start, len(lines)):
+                  for ch in lines[i]:
+                      if ch == '{':
+                          brace += 1
+                          if body_start is None:
+                              body_start = i
+                      elif ch == '}':
+                          brace -= 1
+                          if brace == 0 and body_start is not None:
+                              return body_start, i
+              return None, None
+
+          for func in non_void_funcs:
+              s, e = find_body(lines, func)
+              if s is not None:
+                  for i in range(s, e+1):
+                      if re.match(r'^\s*return;\s*$', lines[i]):
+                          lines[i] = re.sub(r'return;', 'return 0;', lines[i])
+
+          for func in void_funcs:
+              s, e = find_body(lines, func)
+              if s is not None:
+                  for i in range(s, e+1):
+                      if re.match(r'^\s*return 0;\s*$', lines[i]):
+                          lines[i] = re.sub(r'return 0;', 'return;', lines[i])
+
+          with open('fs/proc/task_mmu.c', 'w') as f:
+              f.writelines(lines)
+          print("✅ task_mmu.c 修复完成")
+          EOF
+          python3 fix_task_mmu.py
+
+      - name: Enable KSU_SUSFS_SUS_MOUNT (fix missing symbols)
+        working-directory: kernel
+        run: |
+          set -e
+          echo "=== 修补源码以启用 SUS_MOUNT ==="
+
+          # 1. 添加精确 extern 声明到 fs/proc_namespace.c
+          if ! grep -q "extern struct static_key_false susfs_is_hide_sus_mnts_for_non_su_procs_enabled" fs/proc_namespace.c; then
+            echo "添加精确 extern 声明到 fs/proc_namespace.c..."
+            sed -i '/^extern bool susfs_hide_sus_mnts_for_non_su_procs;$/d' fs/proc_namespace.c
+            sed -i '/^#include "internal.h"/a\
+            #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\
+            extern struct static_key_false susfs_is_hide_sus_mnts_for_non_su_procs_enabled;\
+            extern bool susfs_is_current_ksu_domain(void);\
+            #endif' fs/proc_namespace.c
+          else
+            echo "✅ fs/proc_namespace.c 已包含精确声明"
+          fi
+          sed -i '/^extern bool susfs_hide_sus_mnts_for_non_su_procs;$/d' fs/proc_namespace.c
+
+          # 2. 清理 fs/susfs.c 重复定义并重新插入一次
+          echo "清理 fs/susfs.c 中的重复定义..."
+          sed -i '/DEFINE_STATIC_KEY_FALSE(susfs_is_hide_sus_mnts_for_non_su_procs_enabled);/d' fs/susfs.c
+
+          LINE=$(grep -n '^DEFINE_STATIC_KEY_FALSE(' fs/susfs.c | head -1 | cut -d: -f1)
+          if [ -n "$LINE" ]; then
+            sed -i "${LINE}a DEFINE_STATIC_KEY_FALSE(susfs_is_hide_sus_mnts_for_non_su_procs_enabled);" fs/susfs.c
+          else
+            sed -i '1i DEFINE_STATIC_KEY_FALSE(susfs_is_hide_sus_mnts_for_non_su_procs_enabled);' fs/susfs.c
+          fi
+
+          COUNT=$(grep -c "DEFINE_STATIC_KEY_FALSE(susfs_is_hide_sus_mnts_for_non_su_procs_enabled)" fs/susfs.c)
+          if [ "$COUNT" -ne 1 ]; then
+            echo "❌ 定义数量不为 1，实际为 $COUNT"
+            exit 1
+          fi
+          echo "✅ susfs_is_hide_sus_mnts_for_non_su_procs_enabled 已唯一定义"
+
+          if ! grep -q "extern struct static_key_false susfs_is_hide_sus_mnts_for_non_su_procs_enabled" fs/proc_namespace.c; then
+            echo "❌ fs/proc_namespace.c 中未找到正确的 extern 声明"
+            exit 1
+          fi
+          echo "✅ fs/proc_namespace.c 中声明正确"
+
+      - name: Fix legacy variable name in proc_namespace.c
+        working-directory: kernel
+        run: |
+          sed -i 's/READ_ONCE(susfs_hide_sus_mnts_for_non_su_procs)/static_branch_unlikely(\&susfs_is_hide_sus_mnts_for_non_su_procs_enabled)/g' fs/proc_namespace.c
+          echo "✅ 已替换旧变量用法"
+          grep -n "susfs_hide_sus_mnts_for_non_su_procs\|susfs_is_hide_sus_mnts_for_non_su_procs_enabled" fs/proc_namespace.c
+
+      - name: Create dummy seccomp_types.h to suppress grep warning
+        working-directory: kernel
+        run: |
+          mkdir -p include/linux
+          touch include/linux/seccomp_types.h
+          echo "✅ 已创建占位文件，消除 grep 警告"
+
+      - name: Configure Kernel
+        working-directory: kernel
+        run: |
+          export ARCH=${{ env.KERNEL_ARCH }}
+          export PATH="${{ env.CLANG_DIR }}/bin:$PATH"
+          export CCACHE_EXEC=$(which ccache)
+          export CCACHE_DIR="${{ env.CCACHE_DIR }}"
+          ccache -M 6G
+          export LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- \
+                 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+
+          make mrproper || true
+          make -j$(nproc) O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
+
+          scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
+            --enable KSU \
+            --enable INIT_ON_ALLOC_DEFAULT_ON \
+            --enable KSU_HOOK_INLINE \
+            --disable KSU_HOOK_TRACEPOINT \
+            --disable KSU_HOOK_MANUAL \
+            --enable KSU_SELINUX \
+            --enable KSU_ZYGISK \
+            --disable KPROBES \
+            --disable HAVE_KPROBES \
+            --disable KPROBE_EVENTS \
+            --enable KALLSYMS \
+            --enable KALLSYMS_ALL \
+            --enable MODULES \
+            --enable MODULE_UNLOAD \
+            --enable OVERLAY_FS \
+            --enable EXT4_FS \
+            --enable NAMESPACES \
+            --disable KSU_DEBUG \
+            --enable KSU_SUSFS \
+            --enable KSU_SUSFS_SUS_PATH \
+            --enable KSU_SUSFS_SUS_MOUNT \
+            --enable KSU_SUSFS_SUS_KSTAT \
+            --enable KSU_SUSFS_SPOOF_UNAME \
+            --enable KSU_SUSFS_OPEN_REDIRECT \
+            --enable KSU_SUSFS_SUS_MAP \
+            --enable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+            --enable KSU_SUSFS_ENABLE_LOG \
+            --enable KSU_SUSFS_SUS_SU \
+            --set-val CONFIG_FRAME_WARN 3072
+
+          make olddefconfig O=${{ env.OUTPUT_DIR }}
+
+      - name: Build Kernel
+        working-directory: kernel
+        run: |
+          set -e
+          export ARCH=${{ env.KERNEL_ARCH }}
+          export PATH="${{ env.CLANG_DIR }}/bin:$PATH"
+          export CCACHE_EXEC=$(which ccache)
+          export CCACHE_DIR="${{ env.CCACHE_DIR }}"
+          ccache -M 6G
+          export LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- \
+                 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+
+          make -j$(nproc) O=${{ env.OUTPUT_DIR }} \
+            KCFLAGS="-Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-array-parameter -Wno-declaration-after-statement"
+
+          if [ ! -f "${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image" ]; then
+            echo "ERROR: Kernel Image not found!"
+            exit 1
+          fi
+
+      - name: Package AnyKernel3
+        id: package
+        run: |
+          TIME=$(date +"%Y.%m.%d")
+          AK3_DIR="AnyKernel3"
+          IMG_PATH="${{ env.KERNEL_DIR }}/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image"
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git $AK3_DIR
+          cp -f "$IMG_PATH" "$AK3_DIR/Image"
+
+          sed -i 's/^do.devicecheck=1/do.devicecheck=0/' "$AK3_DIR/anykernel.sh"
+          sed -i 's/^BLOCK=.*/BLOCK=boot/' "$AK3_DIR/anykernel.sh"
+          sed -i 's/^IS_SLOT_DEVICE=0/IS_SLOT_DEVICE=1/' "$AK3_DIR/anykernel.sh"
+          sed -i 's/^device.name1=.*/device.name1=star/' "$AK3_DIR/anykernel.sh"
+
+          cd $AK3_DIR
+          zip -r9 "../${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-${TIME}.zip" ./*
+          cd ..
+          echo "zip_name=${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-${TIME}.zip" >> $GITHUB_OUTPUT
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel_with_susfs_v2.3.0
+          path: ${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-*.zip
+
+      - name: Optional Release (if needed)
+        if: github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: susfs_v2.3.0_${{ github.run_number }}
+          name: "SUSFS v2.3.0 Full Features Build"
+          body: |
+            ## 测试内核 - 包含 SUSFS v2.3.0 全功能
+            - ReSukiSU v35089
+            - 已启用 SUS_PATH、SUS_MOUNT、SUS_KSTAT、SPOOF_UNAME、OPEN_REDIRECT、SUS_MAP、ENABLE_LOG 等功能
+            - 刷机有风险，请备份原内核
+          files: ${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
