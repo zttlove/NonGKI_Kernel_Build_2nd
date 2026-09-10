@@ -91,8 +91,8 @@ jobs:
           # 移除 #ifndef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS ... #else ... #endif 结构
           content = re.sub(r'#ifndef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS.*?#endif','',content,flags=re.DOTALL)
           with open(path, 'w') as f:f.write(content)
-            print("✅ kallsyms.c 中的 SUSFS 代码已移除")
-            EOF
+          print("✅ kallsyms.c 中的 SUSFS 代码已移除")
+          EOF
 
             # 3. 全局搜索所有 SUSFS 相关的 include 并删除
            find fs/ kernel/ drivers/input/ security/ mm/ -name "*.c" -o -name "*.h" 2>/dev/null | while read f; do
