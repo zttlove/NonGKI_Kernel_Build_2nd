@@ -141,7 +141,15 @@ jobs:
           fi
           echo "✅ fs/proc_namespace.c 中声明正确"
     
-
+      - name: Fix legacy variable name in proc_namespace.c
+        working-directory: kernel
+        run: |
+          # 将旧的 READ_ONCE(susfs_hide_sus_mnts_for_non_su_procs) 替换为 static_key 形式
+          sed -i 's/READ_ONCE(susfs_hide_sus_mnts_for_non_su_procs)/static_branch_unlikely(\&susfs_is_hide_sus_mnts_for_non_su_procs_enabled)/g' fs/proc_namespace.c
+          echo "✅ 已替换旧变量用法"
+          # 确认替换结果
+          grep -n "susfs_hide_sus_mnts_for_non_su_procs\|susfs_is_hide_sus_mnts_for_non_su_procs_enabled" fs/proc_namespace.c
+          
       - name: Force restore fs/proc/task_mmu.c from origin/main
         working-directory: kernel
         run: |
