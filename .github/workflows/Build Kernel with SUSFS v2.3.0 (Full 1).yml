@@ -1,4 +1,4 @@
-name: Build Kernel with SUSFS v2.3.0 (Full Features)
+name: Build Kernel with SUSFS v2.3.0 (Full Features)**
 
 on:
   workflow_dispatch:
