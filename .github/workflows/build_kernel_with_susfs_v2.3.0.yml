@@ -66,15 +66,15 @@ jobs:
           rm clang.tar.xz
           ${{ env.CLANG_DIR }}/bin/clang --version
 
-      - name: Setup ReSukiSU (v35085)
+      - name: Setup ReSukiSU (v35089)
         working-directory: kernel
         run: |
           set -e
-          echo "Cloning ReSukiSU v35085.."
+          echo "Cloning ReSukiSU v35089.."
           rm -rf drivers/kernelsu
           git clone https://github.com/ReSukiSU/ReSukiSU.git drivers/kernelsu
           cd drivers/kernelsu
-          git checkout 03b60f2
+          git checkout b2ac2fc
           cd ../..
           
           # 创建包装文件
