@@ -1,4 +1,4 @@
-name: Build Kernel with SUSFS (backslashxx + simonpunk 5.4)
+name: Build Kernel with backslashxx/KernelSU (No SUSFS)
 
 on:
   workflow_dispatch:
@@ -26,12 +26,6 @@ jobs:
           repository: ${{ env.KERNEL_REPO }}
           ref: ${{ env.KERNEL_BRANCH }}
           path: kernel
-          fetch-depth: 1
-
-      - name: Checkout Workflow Repo (Patches)
-        uses: actions/checkout@v4
-        with:
-          path: workflow_repo
           fetch-depth: 1
 
       - name: Install Dependencies
@@ -79,237 +73,27 @@ jobs:
           echo "source \"drivers/kernelsu/Kconfig\"" >> drivers/Kconfig
           echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
 
-      - name: Download SUSFS patches (5.4)
+      - name: Apply Manual Hook (backslashxx)
         working-directory: kernel
         run: |
           set -e
-          echo "下载 SUSFS 内核补丁..."
-          wget -O 50_add_susfs_in_kernel-5.4.patch \
-            "https://gitlab.com/simonpunk/susfs4ksu/-/raw/kernel-5.4/kernel_patches/50_add_susfs_in_kernel-5.4.patch"
-          echo "下载 KernelSU 补丁..."
-          wget -O 10_enable_susfs_for_ksu.patch \
-            "https://gitlab.com/simonpunk/susfs4ksu/-/raw/kernel-5.4/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
+          echo "=== 应用 Manual Hook ==="
 
-      - name: Apply KernelSU patch (SUSFS)
-        working-directory: kernel/drivers/kernelsu
-        run: |
-          set -e
-          patch -p1 -N --batch --no-backup-if-mismatch < ../../10_enable_susfs_for_ksu.patch || true
-          echo "✅ KernelSU 补丁应用完成（如有 .rej 请检查）"
-
-      - name: Apply SUSFS kernel patch
-        working-directory: kernel
-        run: |
-          set -e
-          patch -p1 -N --batch --no-backup-if-mismatch < 50_add_susfs_in_kernel-5.4.patch || true
-          echo "✅ SUSFS 内核补丁应用完成（如有 .rej 请检查）"
-
-      - name: Fix missing susfs_init declaration in ksu.c
-        working-directory: kernel
-        run: |
-          KSU_C="drivers/kernelsu/kernel/ksu.c"
-          if [ ! -f "$KSU_C" ]; then
-          echo "❌ 找不到 $KSU_C"
-          exit 1
-          fi
-          # 移除之前可能误插入的 susfs.h include
-          sed -i '/#include <linux\/susfs.h>/d' "$KSU_C"
-          # 如果没有 extern 声明，就在文件开头插入
-          if ! grep -q "extern void susfs_init" "$KSU_C"; then
-          echo "在 $KSU_C 开头插入 extern void susfs_init(void);"
-          sed -i '1i\
-          #ifdef CONFIG_KSU_SUSFS\
-          extern void susfs_init(void);\
-          #endif' "$KSU_C"
+          # backslashxx/KernelSU 通常提供一个 setup 脚本来应用钩子
+          if [ -f "drivers/kernelsu/kernel/setup.sh" ]; then
+            echo "找到 setup.sh，正在执行..."
+            chmod +x drivers/kernelsu/kernel/setup.sh
+            bash drivers/kernelsu/kernel/setup.sh || echo "⚠️ setup.sh 执行完毕（可能有非致命警告）"
+          elif [ -f "drivers/kernelsu/setup.sh" ]; then
+            echo "找到 setup.sh (根目录)，正在执行..."
+            chmod +x drivers/kernelsu/setup.sh
+            bash drivers/kernelsu/setup.sh || echo "⚠️ setup.sh 执行完毕"
           else
-          echo "✅ $KSU_C 已包含 susfs_init 声明"
-          fi
-          # 验证
-          grep -n "susfs_init" "$KSU_C" | head -5
-
-      - name: Fix task_mmu.c return errors (SUS_MAP/SUS_KSTAT)
-        working-directory: kernel
-        run: |
-          cat > fix_task_mmu.py << 'EOF'
-          import re
-
-          non_void_funcs = [
-              'proc_maps_open', 'show_map', 'smaps_pte_hole', 'smaps_pte_range',
-              'show_smap', 'smaps_rollup_open', 'clear_refs_pte_range',
-              'clear_refs_test_walk', 'add_to_pagemap', 'pagemap_open',
-              'pagemap_release', 'reclaim_pte_range'
-          ]
-          void_funcs = [
-              'seq_print_vma_name', 'smaps_account', 'smaps_pte_entry', 'smap_gather_stats'
-          ]
-
-          with open('fs/proc/task_mmu.c', 'r') as f:
-              lines = f.readlines()
-
-          def find_body(lines, func):
-              pattern = re.compile(r'\b' + func + r'\s*\(')
-              start = None
-              for i, line in enumerate(lines):
-                  if pattern.search(line) and not line.strip().startswith('//'):
-                      if '{' in line or (i+1 < len(lines) and '{' in lines[i+1]):
-                          start = i
-                          break
-              if start is None:
-                  return None, None
-              brace = 0
-              body_start = None
-              for i in range(start, len(lines)):
-                  for ch in lines[i]:
-                      if ch == '{':
-                          brace += 1
-                          if body_start is None:
-                              body_start = i
-                      elif ch == '}':
-                          brace -= 1
-                          if brace == 0 and body_start is not None:
-                              return body_start, i
-              return None, None
-
-          for func in non_void_funcs:
-              s, e = find_body(lines, func)
-              if s is not None:
-                  for i in range(s, e+1):
-                      if re.match(r'^\s*return;\s*$', lines[i]):
-                          lines[i] = re.sub(r'return;', 'return 0;', lines[i])
-
-          for func in void_funcs:
-              s, e = find_body(lines, func)
-              if s is not None:
-                  for i in range(s, e+1):
-                      if re.match(r'^\s*return 0;\s*$', lines[i]):
-                          lines[i] = re.sub(r'return 0;', 'return;', lines[i])
-
-          with open('fs/proc/task_mmu.c', 'w') as f:
-              f.writelines(lines)
-          print("✅ task_mmu.c 修复完成")
-          EOF
-          python3 fix_task_mmu.py
-          
-      - name: Fix fs/dcache.c legacy API names
-        working-directory: kernel
-        run: |
-          set -e
-          DCACHE_C="fs/dcache.c"
-
-          sed -i 's/INODE_STATE_SUS_PATH/AS_FLAGS_SUS_PATH/g' "$DCACHE_C"
-          sed -i 's/current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC/susfs_is_current_proc_umounted_app()/g' "$DCACHE_C"
-
-          if ! grep -q "linux/susfs_def.h" "$DCACHE_C"; then
-          sed -i '0,/#include/{s|#include|#ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs_def.h>\n#endif\n#include|}' "$DCACHE_C"
+            echo "未找到 setup.sh，请手动确认 Manual Hook 是否已就位"
+            ls -la drivers/kernelsu/
           fi
 
-          echo "✅ fs/dcache.c 修复完成"
-    
-          
-      - name: Fix fs/readdir.c legacy API names
-        working-directory: kernel
-        run: |
-          set -e
-          READDIR_C="fs/readdir.c"
-
-          # 替换旧的任务状态判断为新 API
-          sed -i 's/current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC/susfs_is_current_proc_umounted_app()/g' "$READDIR_C"
-
-          # 检查 susfs_sus_ino_for_filldir64 是否存在，如果新版已改名则替换
-          if grep -q "susfs_sus_ino_for_filldir64" "$READDIR_C"; then
-          # 新版中已经没有这个函数了，需要删除这些条件判断
-          # 因为它依赖旧版的任务状态判断逻辑，属于旧架构
-          sed -i 's/if (likely(susfs_is_current_proc_umounted_app()) && susfs_sus_ino_for_filldir64(ino)) {/if (susfs_is_inode_sus_path(inode)) {/g' "$READDIR_C"
-          fi
-
-          # 如果还有残留，用简单的路径判断替代
-          sed -i 's/susfs_sus_ino_for_filldir64(ino)/susfs_is_inode_sus_path(inode)/g' "$READDIR_C"
-
-          echo "✅ fs/readdir.c 修复完成"
-          grep -n "TASK_STRUCT_NON_ROOT\|susfs_sus_ino_for" "$READDIR_C" || echo "✅ 无残留旧名称"
-
-      - name: Fix fs/readdir.c uninitialized warning
-        working-directory: kernel
-        run: |
-         sed -i 's/^\(\s*\)struct inode \*inode;$/\1struct inode *inode = NULL;/' fs/readdir.c
-         echo "✅ fs/readdir.c 警告修复"
-    
-      - name: Fix fs/stat.c legacy API names
-        working-directory: kernel
-        run: |
-          set -e
-           STAT_C="fs/stat.c"
-           # 1. 替换旧的任务状态判断为新的 API 调用
-          sed -i 's/current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC/susfs_is_current_proc_umounted_app()/g' "$STAT_C"
-
-           # 2. 替换旧的 inode 状态宏
-           sed -i 's/INODE_STATE_SUS_KSTAT/AS_FLAGS_SUS_KSTAT/g' "$STAT_C"
-
-           # 3. 替换旧的函数名为新函数名，并修正第一个参数从 ino 为 inode
-           sed -i 's/susfs_sus_ino_for_generic_fillattr(inode->i_ino, stat)/susfs_sus_kstat_spoof_generic_fillattr(inode, stat)/g' "$STAT_C"
-
-           # 4. 确保 fs/stat.c 包含 susfs_def.h（否则 susfs_is_current_proc_umounted_app 和 AS_FLAGS_SUS_KSTAT 不可见）
-           if ! grep -q "linux/susfs_def.h" "$STAT_C"; then
-           # 尝试插入到合适位置
-           if grep -q '#include <linux/stat.h>' "$STAT_C"; then
-           sed -i '/#include <linux\/stat.h>/a #ifdef CONFIG_KSU_SUSFS\n#include <linux\/susfs_def.h>\n#endif' "$STAT_C"
-           else
-           sed -i '0,/#include/{s|#include|#ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs_def.h>\n#endif\n#include|}' "$STAT_C"
-           fi
-           fi
-           echo "✅ fs/stat.c 修复完成"
-           grep -n "susfs_is_current_proc\|AS_FLAGS_SUS_KSTAT\|susfs_sus_kstat_spoof" "$STAT_C"
-    
-      - name: Fix missing symbols in proc_namespace.c and susfs.c
-        working-directory: kernel
-        run: |
-          set -e
-          echo "=== 修补 SUS_MOUNT 缺失符号 ==="
-
-          if ! grep -q "extern struct static_key_false susfs_is_hide_sus_mnts_for_non_su_procs_enabled" fs/proc_namespace.c; then
-            echo "添加 extern 声明到 fs/proc_namespace.c"
-            sed -i '/^extern bool susfs_hide_sus_mnts_for_non_su_procs;$/d' fs/proc_namespace.c
-            sed -i '/^#include "internal.h"/a\
-            #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\
-            extern struct static_key_false susfs_is_hide_sus_mnts_for_non_su_procs_enabled;\
-            extern bool susfs_is_current_ksu_domain(void);\
-            #endif' fs/proc_namespace.c
-            fi
-            sed -i '/^extern bool susfs_hide_sus_mnts_for_non_su_procs;$/d' fs/proc_namespace.c
-
-          # 清理重复定义
-          sed -i '/DEFINE_STATIC_KEY_FALSE(susfs_is_hide_sus_mnts_for_non_su_procs_enabled);/d' fs/susfs.c
-          LINE=$(grep -n '^DEFINE_STATIC_KEY_FALSE(' fs/susfs.c | head -1 | cut -d: -f1)
-          if [ -n "$LINE" ]; then
-            sed -i "${LINE}a DEFINE_STATIC_KEY_FALSE(susfs_is_hide_sus_mnts_for_non_su_procs_enabled);" fs/susfs.c
-          else
-            sed -i '1i DEFINE_STATIC_KEY_FALSE(susfs_is_hide_sus_mnts_for_non_su_procs_enabled);' fs/susfs.c
-          fi
-
-          COUNT=$(grep -c "DEFINE_STATIC_KEY_FALSE(susfs_is_hide_sus_mnts_for_non_su_procs_enabled)" fs/susfs.c)
-          if [ "$COUNT" -ne 1 ]; then
-            echo "❌ 定义数量不为 1"
-            exit 1
-          fi
-          echo "✅ susfs_is_hide_sus_mnts_for_non_su_procs_enabled 唯一定义"
-
-          # 替换旧变量名
-          sed -i 's/READ_ONCE(susfs_hide_sus_mnts_for_non_su_procs)/static_branch_unlikely(\&susfs_is_hide_sus_mnts_for_non_su_procs_enabled)/g' fs/proc_namespace.c
-          echo "✅ 变量名替换完成"
-
-          # 添加缺失的 AVC 变量
-          if ! grep -q "u32 susfs_ksu_sid" fs/susfs.c; then
-            sed -i '/^#include "mount.h"/a\
-            u32 susfs_ksu_sid = 0;\
-            u32 susfs_priv_app_sid = 0;' fs/susfs.c
-          fi
-
-      - name: Create dummy seccomp_types.h
-        working-directory: kernel
-        run: |
-          mkdir -p include/linux
-          touch include/linux/seccomp_types.h
-          echo "✅ 已创建占位文件"
+          echo "✅ Manual Hook 应用完成"
 
       - name: Configure Kernel
         working-directory: kernel
@@ -344,16 +128,6 @@ jobs:
             --enable EXT4_FS \
             --enable NAMESPACES \
             --disable KSU_DEBUG \
-            --enable KSU_SUSFS \
-            --enable KSU_SUSFS_SUS_PATH \
-            --enable KSU_SUSFS_SUS_MOUNT \
-            --enable KSU_SUSFS_SUS_KSTAT \
-            --enable KSU_SUSFS_SPOOF_UNAME \
-            --enable KSU_SUSFS_OPEN_REDIRECT \
-            --enable KSU_SUSFS_SUS_MAP \
-            --enable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
-            --enable KSU_SUSFS_ENABLE_LOG \
-            --disable KSU_SUSFS_SUS_SU \
             --set-val CONFIG_FRAME_WARN 3072
 
           make olddefconfig O=${{ env.OUTPUT_DIR }}
@@ -393,28 +167,27 @@ jobs:
           sed -i 's/^device.name1=.*/device.name1=star/' "$AK3_DIR/anykernel.sh"
 
           cd $AK3_DIR
-          zip -r9 "../${{ env.DEVICE_CODENAME }}-SUSFS-5.4-${TIME}.zip" ./*
+          zip -r9 "../${{ env.DEVICE_CODENAME }}-backslashxx-${TIME}.zip" ./*
           cd ..
-          echo "zip_name=${{ env.DEVICE_CODENAME }}-SUSFS-5.4-${TIME}.zip" >> $GITHUB_OUTPUT
+          echo "zip_name=${{ env.DEVICE_CODENAME }}-backslashxx-${TIME}.zip" >> $GITHUB_OUTPUT
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kernel_with_susfs_5.4
-          path: ${{ env.DEVICE_CODENAME }}-SUSFS-5.4-*.zip
+          name: kernel_backslashxx
+          path: ${{ env.DEVICE_CODENAME }}-backslashxx-*.zip
 
       - name: Optional Release
         if: github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: susfs_5.4_${{ github.run_number }}
-          name: "SUSFS 5.4 Build (backslashxx + simonpunk)"
+          tag_name: backslashxx_${{ github.run_number }}
+          name: "KernelSU backslashxx Build"
           body: |
-            ## 测试内核 - backslashxx/KernelSU + SUSFS 官方 5.4 补丁
-            - 使用 Manual Hook
-            - 启用 SUS_PATH、SUS_MOUNT、SUS_KSTAT、SPOOF_UNAME、OPEN_REDIRECT、SUS_MAP、ENABLE_LOG
-            - 禁用 SUS_SU
+            ## 测试内核 - backslashxx/KernelSU
+            - 无 SUSFS 功能（已放弃）
+            - Manual Hook 模式
             - 刷机有风险，请备份原内核
-          files: ${{ env.DEVICE_CODENAME }}-SUSFS-5.4-*.zip
+          files: ${{ env.DEVICE_CODENAME }}-backslashxx-*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
