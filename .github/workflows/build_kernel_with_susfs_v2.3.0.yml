@@ -96,32 +96,47 @@ jobs:
         run: |
           set -e
           echo "=== 修补源码以启用 SUS_MOUNT ==="
-          # 1. 在 fs/proc_namespace.c 中添加外部声明（如果尚未存在）
+
+          # 1. 在 fs/proc_namespace.c 中添加正确的外部声明
           if ! grep -q "susfs_is_hide_sus_mnts_for_non_su_procs_enabled" fs/proc_namespace.c; then
-             echo "添加外部声明到 fs/proc_namespace.c..."
+          echo "添加外部声明到 fs/proc_namespace.c..."
+          # 在 #include "internal.h" 之后插入
           sed -i '/^#include "internal.h"/a\
           #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\
-           extern struct static_key_false susfs_is_hide_sus_mnts_for_non_su_procs_enabled;\
-           extern bool susfs_is_current_ksu_domain(void);\
+          extern struct static_key_false susfs_is_hide_sus_mnts_for_non_su_procs_enabled;\
+          extern bool susfs_is_current_ksu_domain(void);\
           #endif' fs/proc_namespace.c
           fi
+
+          # 如果文件里还有旧版的 bool 声明，也一并移除（避免冲突）
+          sed -i '/^extern bool susfs_hide_sus_mnts_for_non_su_procs;$/d' fs/proc_namespace.c
+
           # 2. 清理 fs/susfs.c 中所有重复定义
           echo "清理 fs/susfs.c 中的重复定义..."
           sed -i '/DEFINE_STATIC_KEY_FALSE(susfs_is_hide_sus_mnts_for_non_su_procs_enabled);/d' fs/susfs.c
-          # 3. 找到第一个 DEFINE_STATIC_KEY_FALSE 的行号，在其后插入
+
+          # 3. 在第一个 DEFINE_STATIC_KEY_FALSE 后插入一次
           LINE=$(grep -n '^DEFINE_STATIC_KEY_FALSE(' fs/susfs.c | head -1 | cut -d: -f1)
           if [ -n "$LINE" ]; then
-            sed -i "${LINE}a DEFINE_STATIC_KEY_FALSE(susfs_is_hide_sus_mnts_for_non_su_procs_enabled);" fs/susfs.c
+          sed -i "${LINE}a DEFINE_STATIC_KEY_FALSE(susfs_is_hide_sus_mnts_for_non_su_procs_enabled);" fs/susfs.c
           else
-            sed -i '1i DEFINE_STATIC_KEY_FALSE(susfs_is_hide_sus_mnts_for_non_su_procs_enabled);' fs/susfs.c
+          sed -i '1i DEFINE_STATIC_KEY_FALSE(susfs_is_hide_sus_mnts_for_non_su_procs_enabled);' fs/susfs.c
           fi
+
           # 4. 确认只有一次
           COUNT=$(grep -c "DEFINE_STATIC_KEY_FALSE(susfs_is_hide_sus_mnts_for_non_su_procs_enabled)" fs/susfs.c)
           if [ "$COUNT" -ne 1 ]; then
-             echo "❌ 定义数量不为 1，实际为 $COUNT"
-             exit 1
+          echo "❌ 定义数量不为 1，实际为 $COUNT"
+          exit 1
           fi
           echo "✅ susfs_is_hide_sus_mnts_for_non_su_procs_enabled 已唯一定义"
+
+          # 5. 确认 fs/proc_namespace.c 中有正确的 extern 声明
+          if ! grep -q "extern struct static_key_false susfs_is_hide_sus_mnts_for_non_su_procs_enabled" fs/proc_namespace.c; then
+          echo "❌ fs/proc_namespace.c 中未找到正确的 extern 声明"
+          exit 1
+          fi
+          echo "✅ fs/proc_namespace.c 中声明正确"
     
 
       - name: Force restore fs/proc/task_mmu.c from origin/main
