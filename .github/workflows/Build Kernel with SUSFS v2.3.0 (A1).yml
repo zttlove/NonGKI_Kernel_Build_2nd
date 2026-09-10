@@ -202,7 +202,15 @@ jobs:
           sed -i 's/READ_ONCE(susfs_hide_sus_mnts_for_non_su_procs)/static_branch_unlikely(\&susfs_is_hide_sus_mnts_for_non_su_procs_enabled)/g' fs/proc_namespace.c
           echo "✅ 已替换旧变量用法"
           grep -n "susfs_hide_sus_mnts_for_non_su_procs\|susfs_is_hide_sus_mnts_for_non_su_procs_enabled" fs/proc_namespace.c
-
+     
+      - name: Remove legacy susfs_kstat declaration
+        working-directory: kernel
+        run: |
+          # 删除旧的 2 参数声明，只保留新的 3 参数版本
+          sed -i '/extern void susfs_sus_kstat_spoof_generic_fillattr(struct inode \*inode, struct kstat \*stat);/d' fs/stat.c
+          echo "✅ 已移除旧声明"
+          grep -n "susfs_sus_kstat_spoof_generic_fillattr" fs/stat.c
+    
       - name: Create dummy seccomp_types.h to suppress grep warning
         working-directory: kernel
         run: |
