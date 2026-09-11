@@ -122,7 +122,61 @@ jobs:
 
       - name: 🔧 Patch Hide Stuff
         uses: ./.github/workflows/patch-hide-stuff
-      
+
+      - name: Fix namei.c missing found_sus_path and retry label
+        working-directory: kernel
+        run: |
+          N="fs/namei.c"
+
+          echo "=== 修复前检查 ==="
+          grep -n "found_sus_path\|retry:" "$N" || echo "  无相关引用"
+
+          echo "=== 1. 在 __lookup_hash 函数开头插入 found_sus_path 声明 ==="
+          if ! grep -q "bool found_sus_path = false;" "$N"; then
+            awk '
+              BEGIN { in_func = 0 }
+              /^static struct dentry \*__lookup_hash\(const struct qstr \*name,/ {
+                in_func = 1
+              }
+              in_func && /struct inode \*dir = base->d_inode;/ {
+                print
+                print "\tbool found_sus_path = false;"
+                in_func = 0
+                next
+              }
+              { print }
+            ' "$N" > "$N.tmp"
+            mv "$N.tmp" "$N"
+            echo "✅ 已插入 found_sus_path 声明"
+          else
+            echo "✅ found_sus_path 声明已存在"
+          fi
+
+          echo "=== 2. 在 dentry = d_alloc(base, name); 后插入 retry 标签 ==="
+          if ! grep -q "^retry:" "$N"; then
+            awk '
+              BEGIN { done = 0 }
+              /dentry = d_alloc\(base, name\);/ && !done {
+                print
+                print "#ifdef CONFIG_KSU_SUSFS_SUS_PATH"
+                print "retry:"
+                print "#endif"
+                done = 1
+                next
+              }
+              { print }
+            ' "$N" > "$N.tmp"
+            mv "$N.tmp" "$N"
+            echo "✅ 已插入 retry: 标签"
+          else
+            echo "✅ retry: 标签已存在"
+          fi
+
+          echo "=== 修复后检查 ==="
+          grep -n "found_sus_path\|retry:" "$N" | head -20
+
+          echo "=== 查看 __lookup_hash 函数上下文 ==="
+          grep -n -A 25 "^static struct dentry \*__lookup_hash(const struct qstr" "$N" | head -40
           
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
