@@ -64,18 +64,17 @@ jobs:
           rm clang.tar.xz
           ${{ env.CLANG_DIR }}/bin/clang --version
 
-      - name: Setup ReSukiSU (v35089)
+      - name: Setup ReSukiSU (main)
         working-directory: kernel
         run: |
           set -e
-          echo "Cloning ReSukiSU v35089.."
+          echo "Cloning ReSukiSU main.."
           rm -rf drivers/kernelsu
           git clone https://github.com/ReSukiSU/ReSukiSU.git drivers/kernelsu
           cd drivers/kernelsu
           git log --oneline -1
           cd ../..
 
-          # 创建包装文件
           echo "source \"drivers/kernelsu/kernel/Kconfig\"" > drivers/kernelsu/Kconfig
           echo "obj-y += kernel/" > drivers/kernelsu/Makefile
           sed -i '/source "drivers\/kernelsu\/Kconfig"/d' drivers/Kconfig || true
@@ -92,7 +91,7 @@ jobs:
       - name: Fix task_mmu.c return errors for SUS_MAP/SUS_KSTAT
         working-directory: kernel
         run: |
-          cat > fix_task_mmu.py << 'EOF'
+          cat > fix_task_mmu.py << 'PYEOF'
           import re
 
           non_void_funcs = [
@@ -149,7 +148,7 @@ jobs:
           with open('fs/proc/task_mmu.c', 'w') as f:
               f.writelines(lines)
           print("✅ task_mmu.c 修复完成")
-          EOF
+          PYEOF
           python3 fix_task_mmu.py
 
       - name: Enable KSU_SUSFS_SUS_MOUNT (fix missing symbols)
@@ -158,21 +157,19 @@ jobs:
           set -e
           echo "=== 修补源码以启用 SUS_MOUNT ==="
 
-          # 1. 添加精确 extern 声明到 fs/proc_namespace.c
           if ! grep -q "extern struct static_key_false susfs_is_hide_sus_mnts_for_non_su_procs_enabled" fs/proc_namespace.c; then
             echo "添加精确 extern 声明到 fs/proc_namespace.c..."
             sed -i '/^extern bool susfs_hide_sus_mnts_for_non_su_procs;$/d' fs/proc_namespace.c
             sed -i '/^#include "internal.h"/a\
-            #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\
-            extern struct static_key_false susfs_is_hide_sus_mnts_for_non_su_procs_enabled;\
-            extern bool susfs_is_current_ksu_domain(void);\
-            #endif' fs/proc_namespace.c
+          #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\
+          extern struct static_key_false susfs_is_hide_sus_mnts_for_non_su_procs_enabled;\
+          extern bool susfs_is_current_ksu_domain(void);\
+          #endif' fs/proc_namespace.c
           else
             echo "✅ fs/proc_namespace.c 已包含精确声明"
           fi
           sed -i '/^extern bool susfs_hide_sus_mnts_for_non_su_procs;$/d' fs/proc_namespace.c
 
-          # 2. 清理 fs/susfs.c 重复定义并重新插入一次
           echo "清理 fs/susfs.c 中的重复定义..."
           sed -i '/DEFINE_STATIC_KEY_FALSE(susfs_is_hide_sus_mnts_for_non_su_procs_enabled);/d' fs/susfs.c
 
@@ -202,19 +199,18 @@ jobs:
           sed -i 's/READ_ONCE(susfs_hide_sus_mnts_for_non_su_procs)/static_branch_unlikely(\&susfs_is_hide_sus_mnts_for_non_su_procs_enabled)/g' fs/proc_namespace.c
           echo "✅ 已替换旧变量用法"
           grep -n "susfs_hide_sus_mnts_for_non_su_procs\|susfs_is_hide_sus_mnts_for_non_su_procs_enabled" fs/proc_namespace.c
-     
-         
+
       - name: Create dummy seccomp_types.h to suppress grep warning
         working-directory: kernel
         run: |
           mkdir -p include/linux
           touch include/linux/seccomp_types.h
           echo "✅ 已创建占位文件，消除 grep 警告"
-          
+
       - name: Apply ReSukiSU SUSFS Inline Hooks to kernel
         working-directory: kernel
         run: |
-          set +e   # 脚本内部有大量可选分支，容忍局部失败
+          set +e
           echo "=== 开始注入 ReSukiSU SUSFS Inline Hooks ==="
 
           patch_files=(
@@ -252,7 +248,6 @@ jobs:
             case $i in
             fs/exec.c)
               echo "======================================"
-
               if grep -q "vmalloc.h" "fs/exec.c"; then
                 sed -i '/#include <linux\/vmalloc.h>/a\#ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs_def.h>\n#endif' fs/exec.c
               else
@@ -274,9 +269,9 @@ jobs:
               else
                 echo "[-] fs/exec.c patch failed for unknown reasons, please provide feedback in time."
               fi
-
               echo "======================================"
               ;;
+
             fs/open.c)
               sed -i '/#include <linux\/compat.h>/a #ifdef CONFIG_KSU_SUSFS\n#include <linux\/susfs_def.h>\n#endif' fs/open.c
 
@@ -307,9 +302,9 @@ jobs:
               else
                 echo "[-] fs/open.c patch failed for unknown reasons, please provide feedback in time."
               fi
-
               echo "======================================"
               ;;
+
             fs/read_write.c)
               sed -i '/SYSCALL_DEFINE3(read,/i #ifdef CONFIG_KSU\nextern struct static_key_true ksu_is_init_rc_hook_enabled;\nextern __attribute__((cold)) int ksu_handle_sys_read(unsigned int fd);\n#endif' fs/read_write.c
               if grep -q "ksys_read" "fs/read_write.c" >/dev/null 2>&1; then
@@ -327,9 +322,9 @@ jobs:
               else
                 echo "[-] fs/read_write.c patch failed for unknown reasons, please provide feedback in time."
               fi
-
               echo "======================================"
               ;;
+
             fs/stat.c)
               if grep -q "unistd" "fs/stat.c"; then
                 sed -i '/#include <asm\/unistd.h>/a\#ifdef CONFIG_KSU_SUSFS\n#include <linux\/susfs_def.h>\n#include "mount.h"\n#endif\n#ifdef CONFIG_KSU_SUSFS\nextern struct static_key_true ksu_is_init_rc_hook_enabled;\nextern void ksu_handle_vfs_fstat(int fd, loff_t *kstat_size_ptr);\nextern struct static_key_true ksu_su_compat_enabled;\nextern bool __ksu_is_allow_uid_for_current(uid_t uid);\nextern int ksu_handle_stat(int *dfd, struct filename **filename, int *flags);\n#endif' fs/stat.c
@@ -358,9 +353,9 @@ jobs:
               else
                 echo "[-] fs/stat.c patch failed for unknown reasons, please provide feedback in time."
               fi
-
               echo "======================================"
               ;;
+
             fs/namei.c)
               if grep "static int filename_lookup" "fs/namei.c" ; then
                 sed -i 's/static int filename_lookup(int dfd, struct filename \*name, unsigned flags,/int filename_lookup(int dfd, struct filename *name, unsigned flags,/' fs/namei.c
@@ -374,51 +369,30 @@ jobs:
                 echo "[-] End of file."
               elif [ "$FIRST_VERSION" -lt 4 ] && [ "$SECOND_VERSION" -lt 19 ]; then
                 sed -i '/if (unlikely(err)) {/a \#ifdef CONFIG_KSU\n\t\tif (unlikely(strstr(current->comm, "throne_tracker"))) {\n\t\t\terr = -ENOENT;\n\t\t\tgoto out_err;\n\t\t}\n#endif' fs/namei.c
-
-                if grep -q "throne_tracker" "fs/namei.c"; then
-                  echo "[+] fs/namei.c Patched!"
-                  echo "[+] Count: $(grep -c "throne_tracker" "fs/namei.c")"
-                else
-                  echo "[-] fs/namei.c patch failed for unknown reasons, please provide feedback in time."
-                fi
               else
                 echo "[-] Kernel needn't throne_tracker, Skipped."
               fi
-
               echo "======================================"
               ;;
+
             drivers/input/input.c)
               sed -i '/^static void input_handle_event(struct input_dev \*dev,/i\#ifdef CONFIG_KSU\nextern struct static_key_true ksu_is_input_hook_enabled;\nextern int ksu_handle_input_handle_event(unsigned int *type, unsigned int *code, int *value);\n#endif\n' drivers/input/input.c
               sed -i '/input_get_disposition(dev, type, code, \&value);/a\#ifdef CONFIG_KSU_SUSFS\n\tif (static_branch_unlikely(\&ksu_is_input_hook_enabled))\n\t\tksu_handle_input_handle_event(\&type, \&code, \&value);\n#endif\n' drivers/input/input.c
-
-              if grep -q "ksu_handle_input_handle_event" "drivers/input/input.c"; then
-                echo "[+] drivers/input/input.c Patched!"
-                echo "[+] Count: $(grep -c "ksu_handle_input_handle_event" "drivers/input/input.c")"
-              else
-                echo "[-] drivers/input/input.c patch failed for unknown reasons, please provide feedback in time."
-              fi
-
               echo "======================================"
               ;;
+
             security/security.c)
               if [ "$FIRST_VERSION" -lt 4 ] && [ "$SECOND_VERSION" -lt 19 ]; then
                 sed -i '/int security_binder_set_context_mgr(struct task_struct/i \#ifdef CONFIG_KSU\n\extern int ksu_bprm_check(struct linux_binprm *bprm);\n\extern int ksu_handle_rename(struct dentry *old_dentry, struct dentry *new_dentry);\n\extern int ksu_handle_setuid(struct cred *new, const struct cred *old);\n\#endif' security/security.c
                 sed -i '/ret = security_ops->bprm_check_security(bprm);/i \#ifdef CONFIG_KSU\n\tksu_bprm_check(bprm);\n\#endif' security/security.c
                 sed -i '/if (unlikely(IS_PRIVATE(old_dentry->d_inode) ||/i \#ifdef CONFIG_KSU\n\tksu_handle_rename(old_dentry, new_dentry);\n\#endif' security/security.c
                 sed -i '/return security_ops->task_fix_setuid(new, old, flags);/i \#ifdef CONFIG_KSU\n\tksu_handle_setuid(new, old);\n\#endif' security/security.c
-
-                if grep -q "ksu_handle_setuid" "security/security.c"; then
-                  echo "[+] security/security.c Patched!"
-                  echo "[+] Count: $(grep -c "ksu_handle_setuid" "security/security.c")"
-                else
-                  echo "[-] security/security.c patch failed for unknown reasons, please provide feedback in time."
-                fi
               else
                 echo "[-] Kernel needn't setuid, Skipped."
               fi
-
               echo "======================================"
               ;;
+
             security/selinux/hooks.c)
               if grep "security_secid_to_secctx" "security/selinux/hooks.c"; then
                 echo "[-] Detected security_secid_to_secctx existed, security/selinux/hooks.c Patched!"
@@ -426,13 +400,6 @@ jobs:
                 sed -i '/int nnp = (bprm->unsafe & LSM_UNSAFE_NO_NEW_PRIVS);/i\#ifdef CONFIG_KSU\n    static u32 ksu_sid;\n    char *secdata;\n#endif' security/selinux/hooks.c
                 sed -i '/if (!nnp && !nosuid)/i\#ifdef CONFIG_KSU\n    int error;\n    u32 seclen;\n#endif' security/selinux/hooks.c
                 sed -i '/return 0; \/\* No change in credentials \*\//a\\n#ifdef CONFIG_KSU\n    if (!ksu_sid)\n        security_secctx_to_secid("u:r:su:s0", strlen("u:r:su:s0"), &ksu_sid);\n\n    error = security_secid_to_secctx(old_tsec->sid, &secdata, &seclen);\n    if (!error) {\n        rc = strcmp("u:r:init:s0", secdata);\n        security_release_secctx(secdata, seclen);\n        if (rc == 0 && new_tsec->sid == ksu_sid)\n            return 0;\n    }\n#endif' security/selinux/hooks.c
-              fi
-
-              if grep -q "security_secid_to_secctx" "security/selinux/hooks.c"; then
-                echo "[+] security/selinux/hooks.c Patched!"
-                echo "[+] Count: $(grep -c "security_secid_to_secctx" "security/selinux/hooks.c")"
-              else
-                echo "[-] security/selinux/hooks.c patch failed for unknown reasons, please provide feedback in time."
               fi
 
               if grep -rq --include="*.c" --include="*.h" "ksu_hide_setprocattr" "drivers/kernelsu/" >/dev/null 2>&1; then
@@ -451,35 +418,21 @@ jobs:
                 else
                   sed -i '0,/char \*str = value;/b; /char \*str = value;/a\#ifdef CONFIG_KSU\n    ksu_hide_setprocattr(name, value, size);\n#endif\n' security/selinux/hooks.c
                 fi
-
-                if grep -q "ksu_hide_setprocattr" "security/selinux/hooks.c"; then
-                  echo "[+] security/selinux/hooks.c Part II Patched!"
-                  echo "[+] Count: $(grep -c "ksu_hide_setprocattr" "security/selinux/hooks.c")"
-                else
-                  echo "[-] security/selinux/hooks.c patch failed for unknown reasons, please provide feedback in time."
-                fi
               else
                 echo "[-] KernelSU needn't ksu_hide_setprocattr, Skipped."
               fi
-
               echo "======================================"
               ;;
+
             security/selinux/ss/services.c)
               if grep -q "selinux_state" "security/selinux/include/security.h" >/dev/null 2>&1; then
                 echo "[-] Kernel needn't selinux_state fix, Skipped."
               elif [ "$FIRST_VERSION" -lt 5 ] && [ "$SECOND_VERSION" -lt 15 ]; then
                 sed -i 's/static DEFINE_RWLOCK(policy_rwlock);/DEFINE_RWLOCK(policy_rwlock);/' security/selinux/ss/services.c
-
-                if ! grep -q "static DEFINE_RWLOCK" "security/selinux/ss/services.c"; then
-                  echo "[+] security/selinux/hooks.c Patched!"
-                  echo "[+] Count: $(grep -c "static DEFINE_RWLOCK" "security/selinux/ss/services.c")"
-                else
-                  echo "[-] security/selinux/hooks.c patch failed for unknown reasons, please provide feedback in time."
-                fi
               fi
-
               echo "======================================"
               ;;
+
             kernel/reboot.c)
               sed -i '/SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,/i\
           #ifdef CONFIG_KSU_SUSFS\
@@ -493,16 +446,9 @@ jobs:
               }\
           #endif\
           ' kernel/reboot.c
-
-              if grep -q "ksu_handle_sys_reboot" "kernel/reboot.c"; then
-                echo "[+] kernel/reboot.c Patched!"
-                echo "[+] Count: $(grep -c "ksu_handle_sys_reboot" "kernel/reboot.c")"
-              else
-                echo "[-] kernel/reboot.c patch failed for unknown reasons, please provide feedback in time."
-              fi
-
               echo "======================================"
               ;;
+
             kernel/sys.c)
               if grep -rq --include="*.c" --include="*.h" "ksu_handle_setresuid" "drivers/kernelsu/" >/dev/null 2>&1; then
                 if grep -q "__sys_setresuid" "kernel/sys.c" >/dev/null 2>&1; then
@@ -512,40 +458,30 @@ jobs:
                   sed -i '/^SYSCALL_DEFINE3(setresuid, uid_t, ruid, uid_t, euid, uid_t, suid)/i\#ifdef CONFIG_KSU\nextern int ksu_handle_setresuid(uid_t ruid, uid_t euid, uid_t suid);\n#endif\n' kernel/sys.c
                   sed -i '0,/\tif ((ruid != (uid_t) -1) && !uid_valid(kruid))/b; /\tif ((ruid != (uid_t) -1) && !uid_valid(kruid))/i\#ifdef CONFIG_KSU_SUSFS\n\tif (ksu_handle_setresuid(ruid, euid, suid)) {\n\t\tpr_info("Something wrong with ksu_handle_setresuid()\\\\n");\n\t}\n#endif' kernel/sys.c
                 fi
-
-                if grep -q "ksu_handle_setresuid" "kernel/sys.c"; then
-                  echo "[+] kernel/sys.c Patched!"
-                  echo "[+] Count: $(grep -c "ksu_handle_setresuid" "kernel/sys.c")"
-                else
-                  echo "[-] kernel/sys.c patch failed for unknown reasons, please provide feedback in time."
-                fi
               else
                 echo "[-] KernelSU have no ksu_handle_setresuid, Skipped."
               fi
-
               echo "======================================"
               ;;
             esac
           done
 
           echo "=== ReSukiSU SUSFS Inline Hooks 注入完成 ==="
-          
+
       - name: Fix conflicting susfs_kstat declaration
         working-directory: kernel
         run: |
-          # 删除 v2.1 的 2 参数声明，只保留 v2.3 的 3 参数版本
           sed -i '/extern void susfs_sus_kstat_spoof_generic_fillattr(struct inode \*inode, struct kstat \*stat);/d' fs/stat.c
-          # 升级所有 2 参数调用点为 3 参数
           sed -i 's/susfs_sus_kstat_spoof_generic_fillattr(inode, stat);/susfs_sus_kstat_spoof_generic_fillattr(inode, stat, STATX_SUS_KSTAT);/g' fs/stat.c
           echo "✅ fs/stat.c 声明与调用点已修复"
           grep -n "susfs_sus_kstat_spoof_generic_fillattr" fs/stat.c
-          
+
       - name: Add STATX_SUS_KSTAT macros to susfs_def.h
         working-directory: kernel
         run: |
-          # 检查宏是否已存在，不存在则追加
           if ! grep -q "STATX_SUS_KSTAT" include/linux/susfs_def.h; then
-          cat >> include/linux/susfs_def.h << 'EOF'
+            cat >> include/linux/susfs_def.h << 'EOF'
+
           /* SUSFS v2.3 additions */
           #ifndef STATX_SUS_KSTAT
           #define STATX_SUS_KSTAT 0x10000000U
@@ -554,78 +490,63 @@ jobs:
           #define STATX_SUS_KSTAT_FUSE 0x20000000U
           #endif
           EOF
-          echo "✅ 已补充 STATX_SUS_KSTAT 宏"
+            echo "✅ 已补充 STATX_SUS_KSTAT 宏"
           else
-          echo "✅ 宏已存在"
+            echo "✅ 宏已存在"
           fi
           grep -n "STATX_SUS_KSTAT" include/linux/susfs_def.h
 
       - name: Fix STATX_SUS_KSTAT visibility
         working-directory: kernel
         run: |
-          # 1. 确认宏在 susfs_def.h 里
           grep -n "STATX_SUS_KSTAT" include/linux/susfs_def.h || echo "宏不存在"
-          # 2. 确认 fs/stat.c 是否 include susfs_def.h
           grep -n "susfs_def.h" fs/stat.c || echo "stat.c 未 include"
-          # 3. 如果没有 include，则加上
           if ! grep -q "susfs_def.h" fs/stat.c; then
-          sed -i '/#include <asm\/unistd.h>/a\#ifdef CONFIG_KSU_SUSFS\n#include <linux\/susfs_def.h>\n#endif' fs/stat.c
-          echo "✅ 已在 fs/stat.c 中添加 susfs_def.h include"
+            sed -i '/#include <asm\/unistd.h>/a\#ifdef CONFIG_KSU_SUSFS\n#include <linux\/susfs_def.h>\n#endif' fs/stat.c
+            echo "✅ 已在 fs/stat.c 中添加 susfs_def.h include"
           fi
 
       - name: Remove duplicate v2.3 susfs_alloc functions in namespace.c
         working-directory: kernel
         run: |
-          # 删除 v2.3 补丁新增的那一组（第 332 行以后的）
-          # 保留内核自带的 v2.1 版本（第 222 行那一组）
-          python3 - << 'EOF'
+          cat > fix_ns_dup.py << 'PYEOF'
           import re
+
           path = 'fs/namespace.c'
           with open(path) as f:
-          lines = f.readlines()
-          # 找出所有 susfs_alloc_unshare_ksu_vfsmnt 定义的起始行
-          def_starts = [i for i, l in enumerate(lines)
-          if re.match(r'^static struct mount \*susfs_alloc_unshare_ksu_vfsmnt\(', l)]
-          if len(def_starts) > 1:
-          # 保留第一个，删除第二个及其整个函数体（直到下一个顶层 }）
-          start = def_starts[1]
-          brace = 0
-          end = start
-          for i in range(start, len(lines)):
-            brace += lines[i].count('{') - lines[i].count('}')
-            if brace == 0 and i > start:
-                end = i
-                break
-           del lines[start:end+1]
-           print(f"✅ 删除重复的 susfs_alloc_unshare_ksu_vfsmnt: 行 {start+1}-{end+1}")
+              lines = f.readlines()
 
-           with open(path, 'w') as f:
-           f.writelines(lines)
-           EOF
-           # 同理处理 susfs_alloc_non_unshare_ksu_vfsmnt
-           python3 - << 'EOF'
-           import re
-           path = 'fs/namespace.c'
-           with open(path) as f:
-           lines = f.readlines()
-           def_starts = [i for i, l in enumerate(lines)
-           if re.match(r'^static struct mount \*susfs_alloc_non_unshare_ksu_vfsmnt\(', l)]
-           if len(def_starts) > 1:
-           start = def_starts[1]
-           brace = 0
-           end = start
-           for i in range(start, len(lines)):
-           brace += lines[i].count('{') - lines[i].count('}')
-           if brace == 0 and i > start:
-                end = i
-                break
-           del lines[start:end+1]
-           print(f"✅ 删除重复的 susfs_alloc_non_unshare_ksu_vfsmnt: 行 {start+1}-{end+1}")
-           with open(path, 'w') as f:
-           f.writelines(lines)
-           EOF
-           grep -c "susfs_alloc_unshare_ksu_vfsmnt" fs/namespace.c
-           grep -c "susfs_alloc_non_unshare_ksu_vfsmnt" fs/namespace.c
+          def remove_second_def(lines, func_pattern):
+              starts = [i for i, l in enumerate(lines) if re.match(func_pattern, l)]
+              if len(starts) > 1:
+                  start = starts[1]
+                  brace = 0
+                  end = start
+                  for i in range(start, len(lines)):
+                      brace += lines[i].count('{') - lines[i].count('}')
+                      if brace == 0 and i > start:
+                          end = i
+                          break
+                  del lines[start:end+1]
+                  return start, end
+              return None, None
+
+          s1, e1 = remove_second_def(lines, r'^static struct mount \*susfs_alloc_unshare_ksu_vfsmnt\(')
+          s2, e2 = remove_second_def(lines, r'^static struct mount \*susfs_alloc_non_unshare_ksu_vfsmnt\(')
+
+          with open(path, 'w') as f:
+              f.writelines(lines)
+
+          if s1 is not None:
+              print(f"✅ 删除重复 susfs_alloc_unshare_ksu_vfsmnt: {s1+1}-{e1+1}")
+          if s2 is not None:
+              print(f"✅ 删除重复 susfs_alloc_non_unshare_ksu_vfsmnt: {s2+1}-{e2+1}")
+          PYEOF
+          python3 fix_ns_dup.py
+
+          echo "--- 剩余定义数量 ---"
+          grep -c "^static struct mount \*susfs_alloc_unshare_ksu_vfsmnt(" fs/namespace.c || true
+          grep -c "^static struct mount \*susfs_alloc_non_unshare_ksu_vfsmnt(" fs/namespace.c || true
 
       - name: Configure Kernel
         working-directory: kernel
@@ -727,7 +648,7 @@ jobs:
           name: "SUSFS v2.3.0 Full Features Build"
           body: |
             ## 测试内核 - 包含 SUSFS v2.3.0 全功能
-            - ReSukiSU v35089
+            - ReSukiSU main
             - 已启用 SUS_PATH、SUS_MOUNT、SUS_KSTAT、SPOOF_UNAME、OPEN_REDIRECT、SUS_MAP、ENABLE_LOG 等功能
             - 刷机有风险，请备份原内核
           files: ${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-*.zip
