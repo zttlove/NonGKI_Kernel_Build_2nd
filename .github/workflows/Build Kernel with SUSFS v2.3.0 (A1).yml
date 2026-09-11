@@ -105,34 +105,24 @@ jobs:
           grep -n "pgsize_migration" fs/proc/task_mmu.c || echo "task_mmu.c: 无 pgsize_migration"
           grep -n "proc_ops\|proc_open\|proc_read" kernel/kallsyms.c || echo "kallsyms.c: 无 proc_ops"
           
-      - name: Fix version mismatch in clean files
+      - name: Fix task_mmu.c pad_vma calls
         working-directory: kernel
         run: |
-          echo "=== 修复 task_mmu.c ==="
-          sed -i '/#include <linux\/pgsize_migration.h>/d' fs/proc/task_mmu.c
-          echo "✅ 已删除 pgsize_migration.h include"
+          T="fs/proc/task_mmu.c"
+          echo "=== 修复 $T ==="
 
-          echo "=== 修复 kallsyms.c ==="
-          # 结构体名
-          sed -i 's/struct proc_ops/struct file_operations/g' kernel/kallsyms.c
-          # 字段名
-          sed -i 's/\.proc_open\b/.open/g'     kernel/kallsyms.c
-          sed -i 's/\.proc_read\b/.read/g'     kernel/kallsyms.c
-          sed -i 's/\.proc_lseek\b/.llseek/g'  kernel/kallsyms.c
-          sed -i 's/\.proc_release\b/.release/g' kernel/kallsyms.c
-          # 变量名（如果还叫 kallsyms_proc_ops，改成 kallsyms_operations）
-          sed -i 's/kallsyms_proc_ops/kallsyms_operations/g' kernel/kallsyms.c
-          echo "✅ 已修复 proc_ops → file_operations"
+          # 1. 替换 get_pad_vma / get_data_vma 调用为直接用 v
+          sed -i 's/struct vm_area_struct \*pad_vma = get_pad_vma(v);//' "$T"
+          sed -i 's/struct vm_area_struct \*vma = get_data_vma(v);/struct vm_area_struct *vma = v;/' "$T"
 
-          echo "=== 验证 ==="
-          grep -n "pgsize_migration" fs/proc/task_mmu.c || echo "task_mmu.c: 无 pgsize_migration"
-          grep -n "proc_ops\|proc_open\|proc_read" kernel/kallsyms.c || echo "kallsyms.c: 无 proc_ops"
-          echo "=== 验证残留 ==="
-          for f in fs/namei.c fs/stat.c fs/namespace.c \
-                   fs/proc/task_mmu.c fs/proc/proc_namespace.c kernel/kallsyms.c; do
-            cnt=$(grep -c "susfs" "$f" 2>/dev/null || true)
-            echo "$f: $cnt 处 susfs 引用"
-          done
+          # 2. 删除 show_map_pad_vma 调用（两处）
+          sed -i '/show_map_pad_vma(/d' "$T"
+
+          # 3. 删除可能残留的 pad_vma 引用
+          sed -i '/pad_vma/d' "$T"
+
+          echo "✅ 修复完成"
+          grep -n "get_pad_vma\|get_data_vma\|show_map_pad_vma\|pad_vma" "$T" || echo "无残留"
 
       - name: Setup ReSukiSU (main)
         working-directory: kernel
