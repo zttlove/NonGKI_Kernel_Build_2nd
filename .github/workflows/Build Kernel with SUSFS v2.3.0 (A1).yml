@@ -97,9 +97,9 @@ jobs:
                    fs/exec.c fs/open.c fs/read_write.c \
                    fs/proc/task_mmu.c fs/proc/proc_namespace.c \
                    kernel/kallsyms.c kernel/reboot.c kernel/sys.c; do
-            cnt=$(grep -c "susfs" "$f" 2>/dev/null || true)
-            kcnt=$(grep -c "ksu_handle" "$f" 2>/dev/null || true)
-            echo "$f: $cnt 处 susfs, $kcnt 处 ksu_handle"
+            cnt=$(grep -c "susfs" "$f" 2>/dev/null | head -1)
+            kcnt=$(grep -c "ksu_handle" "$f" 2>/dev/null | head -1)
+            echo "$f: ${cnt:-0} 处 susfs, ${kcnt:-0} 处 ksu_handle"
           done
 
       # ============================================================
@@ -181,7 +181,7 @@ jobs:
           grep -n "susfs_sus_kstat_spoof_generic_fillattr" fs/stat.c || echo "无残留"
 
       # ============================================================
-      # 6. 修复 susfs_def.h v2.3 宏 + stat.c include（带去重）
+      # 6. 修复 susfs_def.h v2.3 宏 + stat.c include（带回退去重）
       # ============================================================
       - name: Fix susfs_def.h v2.3 macros + stat.c include
         working-directory: kernel
@@ -192,69 +192,54 @@ jobs:
             exit 1
           fi
 
-          echo "=== 1. 去重：删除重复的 susfs_is_current_app_uid ==="
-          COUNT=$(grep -c "^static inline bool susfs_is_current_app_uid(void)" "$SUSFS_DEF" || echo 0)
+          echo "=== 1. 检查 susfs_is_current_app_uid 定义数量 ==="
+          COUNT=$(grep -c "^static inline bool susfs_is_current_app_uid(void)" "$SUSFS_DEF" 2>/dev/null | head -1)
+          COUNT=${COUNT:-0}
           echo "susfs_is_current_app_uid 定义数量: $COUNT"
-          if [ "$COUNT" -gt 1 ]; then
-            awk '
-              /^static inline bool susfs_is_current_app_uid\(void\)/ {
-                if (seen) {
-                  skip = 1
-                  brace = 0
-                } else {
-                  seen = 1
-                  brace = 0
-                }
-              }
-              {
-                if (skip) {
-                  brace += gsub(/\{/, "{")
-                  brace -= gsub(/\}/, "}")
-                  if (brace == 0 && /\}/) { skip = 0 }
-                  next
-                }
-                print
-              }
-            ' "$SUSFS_DEF" > "$SUSFS_DEF.tmp"
-            mv "$SUSFS_DEF.tmp" "$SUSFS_DEF"
-            echo "✅ 已去重"
-          fi
 
-          echo "=== 2. 补充缺失的 v2.3 宏（逐个检查） ==="
+          echo "=== 2. 若重复，用 python 去重 ==="
+          if [ "$COUNT" -gt 1 ]; then
+            python3 -c "
+            import re
+            path = '$SUSFS_DEF'
+            with open(path) as f:
+            content = f.read()
+            pattern = r'static inline bool susfs_is_current_app_uid\(void\) \{[^}]*\}'
+            matches = list(re.finditer(pattern, content, re.DOTALL))
+            if len(matches) > 1:
+            for m in reversed(matches[1:]):
+            content = content[:m.start()] + content[m.end():]
+            with open(path, 'w') as f:
+            f.write(content)
+            print('✅ 去重完成，剩余定义数:', len(matches) - (len(matches)-1))
+            else:
+            print('✅ 无需去重')
+            "
+            fi
+
+          echo "=== 3. 补充缺失的 v2.3 宏（逐项） ==="
           if ! grep -q "define STATX_SUS_KSTAT " "$SUSFS_DEF"; then
-            {
-              echo "#ifndef STATX_SUS_KSTAT"
-              echo "#define STATX_SUS_KSTAT 0x10000000U"
-              echo "#endif"
-            } >> "$SUSFS_DEF"
+            printf '\n#ifndef STATX_SUS_KSTAT\n#define STATX_SUS_KSTAT 0x10000000U\n#endif\n' >> "$SUSFS_DEF"
             echo "✅ 已补充 STATX_SUS_KSTAT"
           else
             echo "✅ STATX_SUS_KSTAT 已存在"
           fi
 
           if ! grep -q "define STATX_SUS_KSTAT_FUSE " "$SUSFS_DEF"; then
-            {
-              echo "#ifndef STATX_SUS_KSTAT_FUSE"
-              echo "#define STATX_SUS_KSTAT_FUSE 0x20000000U"
-              echo "#endif"
-            } >> "$SUSFS_DEF"
+            printf '\n#ifndef STATX_SUS_KSTAT_FUSE\n#define STATX_SUS_KSTAT_FUSE 0x20000000U\n#endif\n' >> "$SUSFS_DEF"
             echo "✅ 已补充 STATX_SUS_KSTAT_FUSE"
           else
             echo "✅ STATX_SUS_KSTAT_FUSE 已存在"
           fi
 
           if ! grep -q "^static inline bool susfs_is_current_app_uid(void)" "$SUSFS_DEF"; then
-            cat >> "$SUSFS_DEF" << 'EOF'
-            static inline bool susfs_is_current_app_uid(void) {
-            return ((current_uid().val % 100000) >= 10000);
-            }
-            EOF
+            printf '\nstatic inline bool susfs_is_current_app_uid(void) {\n    return ((current_uid().val %% 100000) >= 10000);\n}\n' >> "$SUSFS_DEF"
             echo "✅ 已补充 susfs_is_current_app_uid"
           else
             echo "✅ susfs_is_current_app_uid 已存在"
           fi
 
-          echo "=== 3. 确保 fs/stat.c include susfs_def.h ==="
+          echo "=== 4. 确保 fs/stat.c include susfs_def.h ==="
           if ! grep -q "linux/susfs_def.h" fs/stat.c; then
             sed -i '/#include <asm\/unistd.h>/a\#ifdef CONFIG_KSU_SUSFS\n#include <linux\/susfs_def.h>\n#endif' fs/stat.c
             echo "✅ 已添加 susfs_def.h include 到 fs/stat.c"
@@ -262,10 +247,11 @@ jobs:
             echo "✅ fs/stat.c 已有 susfs_def.h include"
           fi
 
-          echo "=== 4. 验证 ==="
-          grep -c "^static inline bool susfs_is_current_app_uid(void)" "$SUSFS_DEF" || echo "0"
-          grep -n "STATX_SUS_KSTAT" "$SUSFS_DEF" | head -4
-          grep -n "susfs_def.h" fs/stat.c
+          echo "=== 5. 最终验证 ==="
+          final_count=$(grep -c "^static inline bool susfs_is_current_app_uid(void)" "$SUSFS_DEF" 2>/dev/null | head -1)
+          echo "susfs_is_current_app_uid 最终数量: ${final_count:-0}"
+          grep -n "STATX_SUS_KSTAT" "$SUSFS_DEF" | head -4 || echo "  无 STATX_SUS_KSTAT"
+          grep -n "susfs_def.h" fs/stat.c || echo "  stat.c 无 include"
 
       # ============================================================
       # 7. 应用 simonpunk v2.2.00 inline hooks 脚本
@@ -285,8 +271,8 @@ jobs:
           for f in fs/exec.c fs/open.c fs/read_write.c fs/stat.c \
                    fs/namei.c drivers/input/input.c security/security.c \
                    security/selinux/hooks.c kernel/reboot.c kernel/sys.c; do
-            cnt=$(grep -c "ksu_handle" "$f" 2>/dev/null || true)
-            echo "$f: $cnt 处 ksu_handle"
+            cnt=$(grep -c "ksu_handle" "$f" 2>/dev/null | head -1)
+            echo "$f: ${cnt:-0} 处 ksu_handle"
           done
 
       # ============================================================
@@ -414,7 +400,7 @@ jobs:
             - ReSukiSU main
             - 覆盖 11 个干净文件
             - 修复版本不匹配（task_mmu / kallsyms / reboot / stat）
-            - 补充 SUSFS v2.3 宏（含去重逻辑）
+            - 补充 SUSFS v2.3 宏（python 去重 + printf 追加）
             - 应用 simonpunk/backslashxx v2.2.00 inline hooks 脚本
             - 刷机有风险，请备份原内核
           files: ${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-clean11-sp-*.zip
