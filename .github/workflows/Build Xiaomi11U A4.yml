@@ -112,13 +112,27 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          echo "================================"
+          echo "🔍 诊断：编译器到底读哪个 namei.c"
+          echo "================================"
+          echo "PWD = $(pwd)"
+          echo "--- 所有 fs/namei.c 的真实路径 ---"
+          find "${GITHUB_WORKSPACE}" -name namei.c -path "*/fs/namei.c" 2>/dev/null || true
+          echo "--- device_kernel 顶层内容 ---"
+          ls -la "${GITHUB_WORKSPACE}/device_kernel/" | head -40 || true
+          echo "--- device_kernel/fs/namei.c 是否存在 ---"
+          ls -la "${GITHUB_WORKSPACE}/device_kernel/fs/namei.c" 2>/dev/null || echo "不存在！"
+
           N="fs/namei.c"
           [[ -f "$N" ]] || { echo "::error::找不到 $N"; exit 1; }
 
-          echo "=== 修复前 ==="
-          grep -n "susfs_is_inode_sus_path\|found_sus_path\|^retry:" "$N" || true
+          echo "================================"
+          echo "🔍 修复前：namei.c 里 susfs/retry 相关行"
+          echo "================================"
+          grep -n "susfs_is_inode_sus_path\|found_sus_path\|^retry:\|goto retry" "$N" || true
 
-          # ---------- 1. 找到使用 susfs_is_inode_sus_path 的那一行 ----------
+          # ---------- 1. 定位使用 susfs_is_inode_sus_path 的行 ----------
           USE_LINE=$(grep -n "susfs_is_inode_sus_path" "$N" | head -1 | cut -d: -f1 || true)
           if [[ -z "${USE_LINE:-}" ]]; then
             echo "::error::文件里没有 susfs_is_inode_sus_path，SUSFS 补丁根本没打上，先解决补丁问题"
@@ -126,14 +140,14 @@ jobs:
           fi
           echo "susfs 使用行: $USE_LINE"
 
-          # ---------- 2. 向上找该函数起始行（第一个以 '{' 结尾且前面是函数定义的行） ----------
+          # ---------- 2. 向上找该函数起始行 ----------
           FUNC_START=$(awk -v u="$USE_LINE" '
             NR<=u && /^[a-zA-Z_].*\(/ && !/;/ { last=NR }
             END { print last }
           ' "$N")
           echo "所属函数起始行: $FUNC_START"
 
-          # ---------- 3. 在函数起始行后插入 bool found_sus_path = false; ----------
+          # ---------- 3. 插入 bool found_sus_path = false; ----------
           if ! grep -q "bool found_sus_path = false;" "$N"; then
             awk -v ins="$FUNC_START" '
               NR==ins { print; print "\tbool found_sus_path = false;"; next }
@@ -144,9 +158,8 @@ jobs:
             echo "✅ found_sus_path 声明已存在"
           fi
 
-          # ---------- 4. 在 goto retry 之前确保有 retry: 标签 ----------
+          # ---------- 4. 插入 retry: 标签 ----------
           if ! grep -qE '^[[:space:]]*retry:' "$N"; then
-            # 找到 "goto retry;" 所在行，在它上面插入标签
             GOTO_LINE=$(grep -n "goto retry;" "$N" | head -1 | cut -d: -f1 || true)
             if [[ -z "${GOTO_LINE:-}" ]]; then
               echo "::error::没有找到 goto retry; 说明补丁不完整"
@@ -161,17 +174,27 @@ jobs:
             echo "✅ retry: 标签已存在"
           fi
 
-          # ---------- 5. 最终校验 ----------
-          echo "=== 修复后 ==="
-          grep -n "bool found_sus_path\|^retry:\|goto retry;" "$N" | head -20
+          # ---------- 5. 强校验 ----------
+          echo "================================"
+          echo "🔍 修复后：namei.c 里 susfs/retry 相关行"
+          echo "================================"
+          grep -n "bool found_sus_path\|^retry:\|goto retry" "$N" || true
 
-          # 必须三样都在，否则直接失败，不要继续编译
           for pat in "bool found_sus_path = false;" "retry:" "goto retry;"; do
             grep -q "$pat" "$N" || { echo "::error::修复失败，缺少: $pat"; exit 1; }
           done
 
-          echo "=== git diff ==="
+          echo "--- 报错行附近 (1640-1690) ---"
+          sed -n '1640,1690p' "$N"
+
+          echo "--- git diff ---"
           git diff -- "$N" || true
+
+          # ---------- 6. 清 ccache，防止旧 namei.o 被复用 ----------
+          echo "--- 清理 ccache ---"
+          ccache -C 2>/dev/null || true
+          ccache -s 2>/dev/null || true
+          echo "✅ Fix step 完成"
           
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
