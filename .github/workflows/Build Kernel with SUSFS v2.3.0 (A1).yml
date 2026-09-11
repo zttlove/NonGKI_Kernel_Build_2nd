@@ -529,6 +529,16 @@ jobs:
           done
 
           echo "=== ReSukiSU SUSFS Inline Hooks 注入完成 ==="
+          
+      - name: Fix conflicting susfs_kstat declaration
+        working-directory: kernel
+        run: |
+          # 删除 v2.1 的 2 参数声明，只保留 v2.3 的 3 参数版本
+          sed -i '/extern void susfs_sus_kstat_spoof_generic_fillattr(struct inode \*inode, struct kstat \*stat);/d' fs/stat.c
+          # 升级所有 2 参数调用点为 3 参数
+          sed -i 's/susfs_sus_kstat_spoof_generic_fillattr(inode, stat);/susfs_sus_kstat_spoof_generic_fillattr(inode, stat, STATX_SUS_KSTAT);/g' fs/stat.c
+          echo "✅ fs/stat.c 声明与调用点已修复"
+          grep -n "susfs_sus_kstat_spoof_generic_fillattr" fs/stat.c
 
       - name: Configure Kernel
         working-directory: kernel
