@@ -11,7 +11,6 @@ env:
 
   CUSTOM_CMDS : "CLANG_TRIPLE=aarch64-linux-gnu-"
   EXTRA_CMDS : "LD=ld.lld LLVM=1 LLVM_IAS=1"
-    EXTRA_CMDS : "LD=ld.lld LLVM=1 LLVM_IAS=1"
   KCFLAGS_EXTRA : "-Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-array-parameter -Wno-declaration-after-statement"
 
   KERNEL_SOURCE : "https://github.com/zttlove/android_kernel_xiaomi_sm8350_miyume.git"
