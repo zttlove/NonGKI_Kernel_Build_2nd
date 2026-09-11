@@ -225,15 +225,12 @@ jobs:
 
           AK3_DIR="${KERNEL_DIR}/Anykernel3"
           if [[ -d "${AK3_DIR}" && -f "${AK3_DIR}/anykernel.sh" ]]; then
-            sed -i \
-              -e 's/^name=.*/name="Star-HyperA16-NonGKI-Kernel"/' \
-              -e 's/^do\.devicecheck=.*/do.devicecheck=0/' \
-              -e 's/^IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=1/' \
-              -e 's/^BLOCK=.*/BLOCK=boot/' \
-              "${AK3_DIR}/anykernel.sh"
-            curl -L https://raw.githubusercontent.com/zttlove/NonGKI_Kernel_Build_2nd/mainline/Patches/anykernel.sh -o Anykernel3/anykernel.sh
-            chmod +x Anykernel3/anykernel.sh
-          fi
+          
+          sed -i 's/^do.devicecheck=1/do.devicecheck=0/' "$AK3_DIR/anykernel.sh"
+          sed -i 's/^BLOCK=.*/BLOCK=boot/' "$AK3_DIR/anykernel.sh"
+          sed -i 's/^IS_SLOT_DEVICE=0/IS_SLOT_DEVICE=1/' "$AK3_DIR/anykernel.sh"
+          sed -i 's/^device.name1=.*/device.name1=star/' "$AK3_DIR/anykernel.sh"
+
 
           cp -v "${IMG_PATH}" "${TMP_DIR}/Image"
 
