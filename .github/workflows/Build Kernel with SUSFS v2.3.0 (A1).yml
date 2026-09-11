@@ -107,6 +107,17 @@ jobs:
             echo "$f: $cnt 处 susfs, $kcnt 处 ksu_handle"
           done
 
+      - name: Fix reboot.c kmsg_dump enum for 5.4
+        working-directory: kernel
+        run: |
+          # 5.4 内核里没有 KMSG_DUMP_RESTART/HALT/POWEROFF
+          # 最简单的办法是把这三行删掉
+          sed -i '/kmsg_dump(KMSG_DUMP_RESTART);/d'  kernel/reboot.c
+          sed -i '/kmsg_dump(KMSG_DUMP_HALT);/d'     kernel/reboot.c
+          sed -i '/kmsg_dump(KMSG_DUMP_POWEROFF);/d' kernel/reboot.c
+          echo "✅ 已删除 5.4 不支持的 kmsg_dump 调用"
+          grep -n "KMSG_DUMP_RESTART\|KMSG_DUMP_HALT\|KMSG_DUMP_POWEROFF" kernel/reboot.c || echo "无残留"
+          
       # ============================================================
       # 2. 修复干净文件的版本不匹配
       # ============================================================
