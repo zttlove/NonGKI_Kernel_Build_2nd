@@ -1,4 +1,4 @@
-name: Build Kernel with SUSFS v2.3.0 (Clean Files + Simonpunk Hooks)
+name: Build Kernel with SUSFS (Repo-native + Simonpunk Hooks)
 
 on:
   workflow_dispatch:
@@ -14,7 +14,6 @@ env:
   CLANG_DIR: "${{ github.workspace }}/clang"
   CCACHE_DIR: "${{ github.workspace }}/.ccache"
   KERNEL_DIR: "${{ github.workspace }}/kernel"
-  SUSFS_PATCH_FILE: "susfs_patch_to_5.4.patch"
   INLINE_HOOKS_SCRIPT: "inline_hooks_simonpunk.sh"
 
 jobs:
@@ -65,100 +64,33 @@ jobs:
           ${{ env.CLANG_DIR }}/bin/clang --version
 
       # ============================================================
-      # 1. 覆盖 10 个已清理干净的文件（方案 A：不再覆盖 fs/namespace.c）
+      # 1. 【检测】仓库自带 SUSFS 状态
       # ============================================================
-      - name: Restore clean files (no SUSFS v2.1) - 10 files, skip namespace.c
+      - name: Detect repo-native SUSFS status
         working-directory: kernel
         run: |
-          CLEAN_DIR="${{ github.workspace }}/workflow_repo/patches/clean"
-          ls -R "$CLEAN_DIR" || { echo "❌ clean 目录不存在"; exit 1; }
-
-          # 【方案 A】不再用可能版本不匹配的 namespace.c 覆盖，保持仓库原版
-          # cp "$CLEAN_DIR/fs/namespace.c"                   fs/namespace.c
-
-          cp "$CLEAN_DIR/fs/namei.c"                       fs/namei.c
-          cp "$CLEAN_DIR/fs/stat.c"                        fs/stat.c
-          cp "$CLEAN_DIR/fs/exec.c"                        fs/exec.c
-          cp "$CLEAN_DIR/fs/open.c"                        fs/open.c
-          cp "$CLEAN_DIR/fs/read_write.c"                  fs/read_write.c
-          cp "$CLEAN_DIR/fs/proc/task_mmu.c"               fs/proc/task_mmu.c
-          cp "$CLEAN_DIR/fs/proc/proc_namespace.c"         fs/proc/proc_namespace.c
-          cp "$CLEAN_DIR/kernel/kallsyms.c"                kernel/kallsyms.c
-          cp "$CLEAN_DIR/kernel/reboot.c"                  kernel/reboot.c
-          cp "$CLEAN_DIR/kernel/sys.c"                     kernel/sys.c
-          echo "✅ 10 个文件已覆盖（fs/namespace.c 已跳过，保持仓库原版）"
-
-      # ============================================================
-      # 1.5 【方案 A 新增】恢复并验证原始 fs/namespace.c
-      # ============================================================
-      - name: Restore & verify original fs/namespace.c (方案 A)
-        working-directory: kernel
-        run: |
-          echo "=== 从 git HEAD 恢复 fs/namespace.c 到原始版本 ==="
-          git checkout HEAD -- fs/namespace.c
-          echo ""
-
-          echo "=== 关键符号自检（方案 A 核心验证） ==="
-          echo "--- SYSCALL_DEFINE5(mount / ksys_mount ---"
-          grep -n "SYSCALL_DEFINE5(mount\|^int ksys_mount\|^SYSCALL_DEFINE5(mount" fs/namespace.c \
-            || echo "❌ 缺少 mount 系统调用定义！"
-
-          echo "--- ksys_umount / SYSCALL_DEFINE2(umount ---"
-          grep -n "ksys_umount\|SYSCALL_DEFINE2(umount" fs/namespace.c \
-            || echo "❌ 缺少 umount 定义！"
-
-          echo "--- mnt_init ---"
-          grep -n "void __init mnt_init" fs/namespace.c \
-            || echo "❌ 缺少 mnt_init！"
-
-          echo "--- fs_kobj ---"
-          grep -n "fs_kobj" fs/namespace.c | head -5 \
-            || echo "❌ 缺少 fs_kobj！"
-
-          echo "--- kern_mount / kern_unmount ---"
-          grep -n "kern_mount\b\|kern_unmount\b" fs/namespace.c | head -5 \
-            || echo "❌ 缺少 kern_mount/kern_unmount！"
-
-          echo "--- copy_mnt_ns / put_mnt_ns ---"
-          grep -n "copy_mnt_ns\|put_mnt_ns" fs/namespace.c | head -5 \
-            || echo "❌ 缺少 mnt_ns 相关符号！"
+          echo "=== 仓库自带 SUSFS 相关文件 ==="
+          ls -la fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h 2>/dev/null || echo "（部分文件不存在）"
 
           echo ""
-          echo "=== 文件基本信息 ==="
-          wc -l fs/namespace.c
+          echo "=== fs/susfs.c 是否存在 susfs_is_hide_sus_mnts_for_non_su_procs_enabled 定义 ==="
+          grep -n "DEFINE_STATIC_KEY_FALSE(susfs_is_hide_sus_mnts_for_non_su_procs_enabled)" fs/susfs.c \
+            || echo "（未找到）"
+
           echo ""
-          echo "=== 是否为真正原版（应该没有 susfs 痕迹） ==="
-          echo "susfs 出现次数: $(grep -c susfs fs/namespace.c || echo 0)"
+          echo "=== fs/namespace.c 里 SUSFS 函数分布 ==="
+          grep -n "susfs_alloc_unshare_ksu_vfsmnt\|susfs_alloc_non_unshare_ksu_vfsmnt" fs/namespace.c
+
           echo ""
-          echo "=== fs/Makefile 是否包含 namespace.o ==="
-          grep -n "namespace" fs/Makefile || echo "❌ fs/Makefile 里没有 namespace.o！"
+          echo "=== 当前 namespace.c 关键符号 ==="
+          grep -n "^int ksys_mount\|^int ksys_umount\|^void __init mnt_init\|^struct kobject \*fs_kobj" fs/namespace.c
+
+          echo ""
+          echo "=== fs/Makefile 里 namespace.o ==="
+          grep -n "namespace" fs/Makefile
 
       # ============================================================
-      # 2. 修复干净文件的版本不匹配
-      # ============================================================
-      - name: Fix version mismatch in clean files
-        working-directory: kernel
-        run: |
-          sed -i '/#include <linux\/pgsize_migration.h>/d' fs/proc/task_mmu.c
-          sed -i 's/struct vm_area_struct \*pad_vma = get_pad_vma(v);//' fs/proc/task_mmu.c
-          sed -i 's/struct vm_area_struct \*vma = get_data_vma(v);/struct vm_area_struct *vma = v;/' fs/proc/task_mmu.c
-          sed -i '/show_map_pad_vma(/d' fs/proc/task_mmu.c
-          sed -i '/pad_vma/d' fs/proc/task_mmu.c
-
-          sed -i 's/struct proc_ops/struct file_operations/g' kernel/kallsyms.c
-          sed -i 's/\.proc_open\b/.open/g'       kernel/kallsyms.c
-          sed -i 's/\.proc_read\b/.read/g'       kernel/kallsyms.c
-          sed -i 's/\.proc_lseek\b/.llseek/g'    kernel/kallsyms.c
-          sed -i 's/\.proc_release\b/.release/g' kernel/kallsyms.c
-          sed -i 's/kallsyms_proc_ops/kallsyms_operations/g' kernel/kallsyms.c
-
-          sed -i '/kmsg_dump(KMSG_DUMP_RESTART);/d'  kernel/reboot.c
-          sed -i '/kmsg_dump(KMSG_DUMP_HALT);/d'     kernel/reboot.c
-          sed -i '/kmsg_dump(KMSG_DUMP_POWEROFF);/d' kernel/reboot.c
-          echo "✅ 版本不匹配已修复"
-
-      # ============================================================
-      # 3. 安装 ReSukiSU（main 分支）
+      # 2. 安装 ReSukiSU（main 分支）
       # ============================================================
       - name: Setup ReSukiSU (main)
         working-directory: kernel
@@ -178,104 +110,7 @@ jobs:
           echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
 
       # ============================================================
-      # 4. 应用 SUSFS v2.3.0 补丁（方案 A：作用于原始 fs/namespace.c）
-      # ============================================================
-      - name: Apply SUSFS v2.3.0 Patch
-        working-directory: kernel
-        run: |
-          PATCH="${{ github.workspace }}/workflow_repo/Patches/Patch/${{ env.SUSFS_PATCH_FILE }}"
-          echo "=== 补丁文件: $PATCH ==="
-          ls -la "$PATCH" || { echo "❌ 补丁不存在"; exit 1; }
-
-          echo "=== 打补丁前 namespace.c 状态 ==="
-          wc -l fs/namespace.c
-          grep -c "susfs" fs/namespace.c || true
-
-          patch -p1 -N --batch --no-backup-if-mismatch < "$PATCH" || true
-
-          echo ""
-          echo "=== 残留 .rej 文件 ==="
-          find . -name "*.rej" | head -30
-          echo "=== .rej 数量 ==="
-          find . -name "*.rej" | wc -l
-
-          echo ""
-          echo "=== 打补丁后 namespace.c 状态 ==="
-          wc -l fs/namespace.c
-          echo "susfs 出现次数: $(grep -c susfs fs/namespace.c || echo 0)"
-          echo ""
-          echo "=== 再次确认关键符号仍存在 ==="
-          grep -n "SYSCALL_DEFINE5(mount\|ksys_mount" fs/namespace.c | head -3 || echo "⚠️  ksys_mount 丢失！"
-          grep -n "void __init mnt_init" fs/namespace.c || echo "⚠️  mnt_init 丢失！"
-
-      # ============================================================
-      # 5. 修复 stat.c 里 v2.1 残留的旧声明
-      # ============================================================
-      - name: Fix stat.c legacy declaration
-        working-directory: kernel
-        run: |
-          sed -i '/extern void susfs_sus_kstat_spoof_generic_fillattr(struct inode \*inode, struct kstat \*stat);/d' fs/stat.c
-          echo "✅ 已删除 stat.c 旧声明（如有）"
-
-      # ============================================================
-      # 6. 修复 proc_namespace.c 的 SUSFS_MOUNT 声明 + 旧变量名
-      # ============================================================
-      - name: Fix proc_namespace.c SUSFS_MOUNT declarations and legacy variable names
-        working-directory: kernel
-        run: |
-          PN="fs/proc_namespace.c"
-
-          echo "=== 1. 删除旧的 bool 声明 ==="
-          sed -i '/^extern bool susfs_hide_sus_mnts_for_non_su_procs;$/d' "$PN"
-
-          echo "=== 2. 添加 v2.3 的 static_key extern 声明 ==="
-          if ! grep -q "extern struct static_key_false susfs_is_hide_sus_mnts_for_non_su_procs_enabled" "$PN"; then
-            sed -i '/^#include "internal.h"/a\
-            #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\
-               extern struct static_key_false susfs_is_hide_sus_mnts_for_non_su_procs_enabled;\
-               extern bool susfs_is_current_ksu_domain(void);\
-           #endif' "$PN"
-            echo "✅ 已添加 extern 声明"
-          else
-            echo "✅ extern 声明已存在"
-          fi
-
-          echo "=== 3. 替换旧变量用法为 static_branch_likely ==="
-          sed -i 's/READ_ONCE(susfs_hide_sus_mnts_for_non_su_procs)/static_branch_likely(\&susfs_is_hide_sus_mnts_for_non_su_procs_enabled)/g' "$PN"
-
-          echo "=== 4. 验证 ==="
-          echo "--- 残留的旧变量 ---"
-          grep -n "susfs_hide_sus_mnts_for_non_su_procs\b" "$PN" | grep -v "susfs_is_hide_sus_mnts_for_non_su_procs_enabled" || echo "  无残留"
-          echo "--- 新的 static_branch 用法 ---"
-          grep -n "static_branch_likely.*susfs_is_hide_sus_mnts_for_non_su_procs_enabled" "$PN" || echo "  未找到"
-
-          echo "=== 5. 确认 susfs.c 里有对应定义 ==="
-          grep -n "DEFINE_STATIC_KEY_FALSE(susfs_is_hide_sus_mnts_for_non_su_procs_enabled)" fs/susfs.c || echo "  ❌ susfs.c 里没有对应定义！"
-
-      # ============================================================
-      # 7. 修复 susfs_def.h v2.3 宏（调用独立 Python 脚本）
-      # ============================================================
-      - name: Fix susfs_def.h v2.3 macros
-        working-directory: kernel
-        run: |
-          python3 "${{ github.workspace }}/workflow_repo/fix_susfs_def.py"
-
-          echo "=== 确保 fs/stat.c include susfs_def.h ==="
-          if ! grep -q "linux/susfs_def.h" fs/stat.c; then
-            sed -i '/#include <asm\/unistd.h>/a\#ifdef CONFIG_KSU_SUSFS\n#include <linux\/susfs_def.h>\n#endif' fs/stat.c
-            echo "✅ 已添加 susfs_def.h include 到 fs/stat.c"
-          else
-            echo "✅ fs/stat.c 已有 susfs_def.h include"
-          fi
-
-          echo "=== 最终验证 susfs_def.h 结构 ==="
-          echo "--- 开头 3 行 ---"
-          head -3 include/linux/susfs_def.h
-          echo "--- 结尾 15 行 ---"
-          tail -15 include/linux/susfs_def.h
-
-      # ============================================================
-      # 8. 应用 simonpunk v2.2.00 inline hooks 脚本
+      # 3. 应用 simonpunk v2.2.00 inline hooks 脚本
       # ============================================================
       - name: Apply ReSukiSU Inline Hooks (simonpunk v2.2.00)
         working-directory: kernel
@@ -288,6 +123,7 @@ jobs:
           chmod +x "$SCRIPT"
           bash "$SCRIPT" || true
 
+          echo ""
           echo "=== 验证钩子 ==="
           for f in fs/exec.c fs/open.c fs/read_write.c fs/stat.c \
                    fs/namei.c drivers/input/input.c security/security.c \
@@ -297,7 +133,7 @@ jobs:
           done
 
       # ============================================================
-      # 9. 创建占位文件
+      # 4. 创建占位文件
       # ============================================================
       - name: Create dummy seccomp_types.h
         working-directory: kernel
@@ -307,7 +143,7 @@ jobs:
           echo "✅ 已创建占位文件"
 
       # ============================================================
-      # 10. 配置内核
+      # 5. 配置内核
       # ============================================================
       - name: Configure Kernel
         working-directory: kernel
@@ -356,8 +192,12 @@ jobs:
 
           make olddefconfig O=${{ env.OUTPUT_DIR }}
 
+          echo ""
+          echo "=== 最终 .config 里 SUSFS 相关项 ==="
+          grep "KSU_SUSFS" ${{ env.OUTPUT_DIR }}/.config | sort
+
       # ============================================================
-      # 11. 编译（方案 A：同步输出 build.log 便于排查）
+      # 6. 编译（输出 build.log 便于排查）
       # ============================================================
       - name: Build Kernel
         working-directory: kernel
@@ -376,11 +216,16 @@ jobs:
             2>&1 | tee build.log
 
           echo ""
-          echo "=== 关键：namespace.o 是否编译成功 ==="
-          grep -E "CC\s+fs/namespace\.o" build.log && echo "✅ namespace.o 已编译" || echo "❌ namespace.o 未编译！"
+          echo "=== namespace.o 是否编译成功 ==="
+          grep -E "CC\s+fs/namespace\.o" build.log && echo "✅" || echo "❌ 未编译！"
+
           echo ""
-          echo "=== namespace.c 编译警告/错误 ==="
-          grep -iE "namespace\.c.*(error|warning)" build.log | head -20 || echo "（无）"
+          echo "=== namespace.c 的 error ==="
+          grep -iE "namespace\.c.*error" build.log | head -20 || echo "（无）"
+
+          echo ""
+          echo "=== 最终 undefined symbol ==="
+          grep -iE "undefined symbol" build.log | head -30 || echo "（无）"
 
           if [ ! -f "${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image" ]; then
             echo "ERROR: Kernel Image not found!"
@@ -388,7 +233,7 @@ jobs:
           fi
 
       # ============================================================
-      # 12. 打包 AnyKernel3
+      # 7. 打包 AnyKernel3
       # ============================================================
       - name: Package AnyKernel3
         id: package
@@ -405,18 +250,18 @@ jobs:
           sed -i 's/^device.name1=.*/device.name1=star/' "$AK3_DIR/anykernel.sh"
 
           cd $AK3_DIR
-          zip -r9 "../${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-clean10A-sp-${TIME}.zip" ./*
+          zip -r9 "../${{ env.DEVICE_CODENAME }}-SUSFS-reponative-sp-${TIME}.zip" ./*
           cd ..
-          echo "zip_name=${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-clean10A-sp-${TIME}.zip" >> $GITHUB_OUTPUT
+          echo "zip_name=${{ env.DEVICE_CODENAME }}-SUSFS-reponative-sp-${TIME}.zip" >> $GITHUB_OUTPUT
 
       # ============================================================
-      # 13. 上传
+      # 8. 上传
       # ============================================================
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kernel_susfs_v2.3.0_clean10_sp_planA
-          path: ${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-clean10A-sp-*.zip
+          name: kernel_susfs_reponative_sp
+          path: ${{ env.DEVICE_CODENAME }}-SUSFS-reponative-sp-*.zip
 
       - name: Upload build.log on failure
         if: failure()
@@ -430,17 +275,14 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: susfs_v2.3.0_clean10A_sp_${{ github.run_number }}
-          name: "SUSFS v2.3.0 (Plan A: Skip namespace.c + Simonpunk Hooks)"
+          tag_name: susfs_reponative_sp_${{ github.run_number }}
+          name: "SUSFS (Repo-native + Simonpunk Hooks)"
           body: |
-            ## 测试内核 - SUSFS v2.3.0（方案 A）
+            ## 测试内核 - 仓库自带 SUSFS
             - ReSukiSU main
-            - **方案 A**：不再用可能版本不匹配的 `fs/namespace.c` 覆盖，保持仓库原版并让 SUSFS 补丁直接应用
-            - 覆盖其余 10 个干净文件 + 修复版本不匹配
-            - 修复 proc_namespace.c 的 SUSFS_MOUNT 声明和旧变量名
-            - v2.3 宏通过独立 python 脚本处理
+            - 仓库自带 SUSFS（未打 v2.3 补丁，避免重复定义冲突）
             - 应用 simonpunk/backslashxx v2.2.00 inline hooks 脚本
             - 刷机有风险，请备份原内核
-          files: ${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-clean10A-sp-*.zip
+          files: ${{ env.DEVICE_CODENAME }}-SUSFS-reponative-sp-*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
