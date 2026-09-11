@@ -65,17 +65,19 @@ jobs:
           ${{ env.CLANG_DIR }}/bin/clang --version
 
       # ============================================================
-      # 1. 覆盖 11 个已清理干净的文件
+      # 1. 覆盖 10 个已清理干净的文件（方案 A：不再覆盖 fs/namespace.c）
       # ============================================================
-      - name: Restore clean files (no SUSFS v2.1)
+      - name: Restore clean files (no SUSFS v2.1) - 10 files, skip namespace.c
         working-directory: kernel
         run: |
           CLEAN_DIR="${{ github.workspace }}/workflow_repo/patches/clean"
           ls -R "$CLEAN_DIR" || { echo "❌ clean 目录不存在"; exit 1; }
 
+          # 【方案 A】不再用可能版本不匹配的 namespace.c 覆盖，保持仓库原版
+          # cp "$CLEAN_DIR/fs/namespace.c"                   fs/namespace.c
+
           cp "$CLEAN_DIR/fs/namei.c"                       fs/namei.c
           cp "$CLEAN_DIR/fs/stat.c"                        fs/stat.c
-          cp "$CLEAN_DIR/fs/namespace.c"                   fs/namespace.c
           cp "$CLEAN_DIR/fs/exec.c"                        fs/exec.c
           cp "$CLEAN_DIR/fs/open.c"                        fs/open.c
           cp "$CLEAN_DIR/fs/read_write.c"                  fs/read_write.c
@@ -84,7 +86,52 @@ jobs:
           cp "$CLEAN_DIR/kernel/kallsyms.c"                kernel/kallsyms.c
           cp "$CLEAN_DIR/kernel/reboot.c"                  kernel/reboot.c
           cp "$CLEAN_DIR/kernel/sys.c"                     kernel/sys.c
-          echo "✅ 11 个文件已覆盖"
+          echo "✅ 10 个文件已覆盖（fs/namespace.c 已跳过，保持仓库原版）"
+
+      # ============================================================
+      # 1.5 【方案 A 新增】恢复并验证原始 fs/namespace.c
+      # ============================================================
+      - name: Restore & verify original fs/namespace.c (方案 A)
+        working-directory: kernel
+        run: |
+          echo "=== 从 git HEAD 恢复 fs/namespace.c 到原始版本 ==="
+          git checkout HEAD -- fs/namespace.c
+          echo ""
+
+          echo "=== 关键符号自检（方案 A 核心验证） ==="
+          echo "--- SYSCALL_DEFINE5(mount / ksys_mount ---"
+          grep -n "SYSCALL_DEFINE5(mount\|^int ksys_mount\|^SYSCALL_DEFINE5(mount" fs/namespace.c \
+            || echo "❌ 缺少 mount 系统调用定义！"
+
+          echo "--- ksys_umount / SYSCALL_DEFINE2(umount ---"
+          grep -n "ksys_umount\|SYSCALL_DEFINE2(umount" fs/namespace.c \
+            || echo "❌ 缺少 umount 定义！"
+
+          echo "--- mnt_init ---"
+          grep -n "void __init mnt_init" fs/namespace.c \
+            || echo "❌ 缺少 mnt_init！"
+
+          echo "--- fs_kobj ---"
+          grep -n "fs_kobj" fs/namespace.c | head -5 \
+            || echo "❌ 缺少 fs_kobj！"
+
+          echo "--- kern_mount / kern_unmount ---"
+          grep -n "kern_mount\b\|kern_unmount\b" fs/namespace.c | head -5 \
+            || echo "❌ 缺少 kern_mount/kern_unmount！"
+
+          echo "--- copy_mnt_ns / put_mnt_ns ---"
+          grep -n "copy_mnt_ns\|put_mnt_ns" fs/namespace.c | head -5 \
+            || echo "❌ 缺少 mnt_ns 相关符号！"
+
+          echo ""
+          echo "=== 文件基本信息 ==="
+          wc -l fs/namespace.c
+          echo ""
+          echo "=== 是否为真正原版（应该没有 susfs 痕迹） ==="
+          echo "susfs 出现次数: $(grep -c susfs fs/namespace.c || echo 0)"
+          echo ""
+          echo "=== fs/Makefile 是否包含 namespace.o ==="
+          grep -n "namespace" fs/Makefile || echo "❌ fs/Makefile 里没有 namespace.o！"
 
       # ============================================================
       # 2. 修复干净文件的版本不匹配
@@ -131,16 +178,35 @@ jobs:
           echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
 
       # ============================================================
-      # 4. 应用 SUSFS v2.3.0 补丁
+      # 4. 应用 SUSFS v2.3.0 补丁（方案 A：作用于原始 fs/namespace.c）
       # ============================================================
       - name: Apply SUSFS v2.3.0 Patch
         working-directory: kernel
         run: |
           PATCH="${{ github.workspace }}/workflow_repo/Patches/Patch/${{ env.SUSFS_PATCH_FILE }}"
+          echo "=== 补丁文件: $PATCH ==="
+          ls -la "$PATCH" || { echo "❌ 补丁不存在"; exit 1; }
+
+          echo "=== 打补丁前 namespace.c 状态 ==="
+          wc -l fs/namespace.c
+          grep -c "susfs" fs/namespace.c || true
+
           patch -p1 -N --batch --no-backup-if-mismatch < "$PATCH" || true
+
+          echo ""
+          echo "=== 残留 .rej 文件 ==="
           find . -name "*.rej" | head -30
           echo "=== .rej 数量 ==="
           find . -name "*.rej" | wc -l
+
+          echo ""
+          echo "=== 打补丁后 namespace.c 状态 ==="
+          wc -l fs/namespace.c
+          echo "susfs 出现次数: $(grep -c susfs fs/namespace.c || echo 0)"
+          echo ""
+          echo "=== 再次确认关键符号仍存在 ==="
+          grep -n "SYSCALL_DEFINE5(mount\|ksys_mount" fs/namespace.c | head -3 || echo "⚠️  ksys_mount 丢失！"
+          grep -n "void __init mnt_init" fs/namespace.c || echo "⚠️  mnt_init 丢失！"
 
       # ============================================================
       # 5. 修复 stat.c 里 v2.1 残留的旧声明
@@ -175,7 +241,6 @@ jobs:
           fi
 
           echo "=== 3. 替换旧变量用法为 static_branch_likely ==="
-          # 把所有 READ_ONCE(susfs_hide_sus_mnts_for_non_su_procs) 替换为新形式
           sed -i 's/READ_ONCE(susfs_hide_sus_mnts_for_non_su_procs)/static_branch_likely(\&susfs_is_hide_sus_mnts_for_non_su_procs_enabled)/g' "$PN"
 
           echo "=== 4. 验证 ==="
@@ -292,7 +357,7 @@ jobs:
           make olddefconfig O=${{ env.OUTPUT_DIR }}
 
       # ============================================================
-      # 11. 编译
+      # 11. 编译（方案 A：同步输出 build.log 便于排查）
       # ============================================================
       - name: Build Kernel
         working-directory: kernel
@@ -307,7 +372,15 @@ jobs:
                  CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
           make -j$(nproc) O=${{ env.OUTPUT_DIR }} \
-            KCFLAGS="-Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-array-parameter -Wno-declaration-after-statement"
+            KCFLAGS="-Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-array-parameter -Wno-declaration-after-statement" \
+            2>&1 | tee build.log
+
+          echo ""
+          echo "=== 关键：namespace.o 是否编译成功 ==="
+          grep -E "CC\s+fs/namespace\.o" build.log && echo "✅ namespace.o 已编译" || echo "❌ namespace.o 未编译！"
+          echo ""
+          echo "=== namespace.c 编译警告/错误 ==="
+          grep -iE "namespace\.c.*(error|warning)" build.log | head -20 || echo "（无）"
 
           if [ ! -f "${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image" ]; then
             echo "ERROR: Kernel Image not found!"
@@ -332,9 +405,9 @@ jobs:
           sed -i 's/^device.name1=.*/device.name1=star/' "$AK3_DIR/anykernel.sh"
 
           cd $AK3_DIR
-          zip -r9 "../${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-clean11-sp-${TIME}.zip" ./*
+          zip -r9 "../${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-clean10A-sp-${TIME}.zip" ./*
           cd ..
-          echo "zip_name=${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-clean11-sp-${TIME}.zip" >> $GITHUB_OUTPUT
+          echo "zip_name=${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-clean10A-sp-${TIME}.zip" >> $GITHUB_OUTPUT
 
       # ============================================================
       # 13. 上传
@@ -342,23 +415,32 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kernel_susfs_v2.3.0_clean11_sp
-          path: ${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-clean11-sp-*.zip
+          name: kernel_susfs_v2.3.0_clean10_sp_planA
+          path: ${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-clean10A-sp-*.zip
+
+      - name: Upload build.log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build_log
+          path: kernel/build.log
+          if-no-files-found: ignore
 
       - name: Optional Release
         if: github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: susfs_v2.3.0_clean11_sp_${{ github.run_number }}
-          name: "SUSFS v2.3.0 (11 Clean Files + Simonpunk Hooks)"
+          tag_name: susfs_v2.3.0_clean10A_sp_${{ github.run_number }}
+          name: "SUSFS v2.3.0 (Plan A: Skip namespace.c + Simonpunk Hooks)"
           body: |
-            ## 测试内核 - SUSFS v2.3.0
+            ## 测试内核 - SUSFS v2.3.0（方案 A）
             - ReSukiSU main
-            - 覆盖 11 个干净文件 + 修复版本不匹配
+            - **方案 A**：不再用可能版本不匹配的 `fs/namespace.c` 覆盖，保持仓库原版并让 SUSFS 补丁直接应用
+            - 覆盖其余 10 个干净文件 + 修复版本不匹配
             - 修复 proc_namespace.c 的 SUSFS_MOUNT 声明和旧变量名
             - v2.3 宏通过独立 python 脚本处理
             - 应用 simonpunk/backslashxx v2.2.00 inline hooks 脚本
             - 刷机有风险，请备份原内核
-          files: ${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-clean11-sp-*.zip
+          files: ${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-clean10A-sp-*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
