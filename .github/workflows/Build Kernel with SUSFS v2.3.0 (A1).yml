@@ -539,6 +539,26 @@ jobs:
           sed -i 's/susfs_sus_kstat_spoof_generic_fillattr(inode, stat);/susfs_sus_kstat_spoof_generic_fillattr(inode, stat, STATX_SUS_KSTAT);/g' fs/stat.c
           echo "✅ fs/stat.c 声明与调用点已修复"
           grep -n "susfs_sus_kstat_spoof_generic_fillattr" fs/stat.c
+          
+      - name: Add STATX_SUS_KSTAT macros to susfs_def.h
+        working-directory: kernel
+        run: |
+          # 检查宏是否已存在，不存在则追加
+          if ! grep -q "STATX_SUS_KSTAT" include/linux/susfs_def.h; then
+          cat >> include/linux/susfs_def.h << 'EOF'
+          /* SUSFS v2.3 additions */
+          #ifndef STATX_SUS_KSTAT
+          #define STATX_SUS_KSTAT 0x10000000U
+          #endif
+          #ifndef STATX_SUS_KSTAT_FUSE
+          #define STATX_SUS_KSTAT_FUSE 0x20000000U
+          #endif
+          EOF
+          echo "✅ 已补充 STATX_SUS_KSTAT 宏"
+          else
+          echo "✅ 宏已存在"
+          fi
+          grep -n "STATX_SUS_KSTAT" include/linux/susfs_def.h
 
       - name: Configure Kernel
         working-directory: kernel
