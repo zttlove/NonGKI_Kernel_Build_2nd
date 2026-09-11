@@ -1,4 +1,4 @@
-name: Build Kernel with SUSFS v2.3.0 (Clean 6 Files)
+name: Build Kernel with SUSFS v2.3.0 (Clean 6 + Simonpunk Hooks)
 
 on:
   workflow_dispatch:
@@ -15,6 +15,7 @@ env:
   CCACHE_DIR: "${{ github.workspace }}/.ccache"
   KERNEL_DIR: "${{ github.workspace }}/kernel"
   SUSFS_PATCH_FILE: "susfs_patch_to_5.4.patch"
+  INLINE_HOOKS_SCRIPT: "inline_hooks_simonpunk.sh"
 
 jobs:
   build:
@@ -64,6 +65,9 @@ jobs:
           rm clang.tar.xz
           ${{ env.CLANG_DIR }}/bin/clang --version
 
+      # ============================================================
+      # 1. 覆盖 6 个已清理干净的文件（去 SUSFS v2.1）
+      # ============================================================
       - name: Restore 6 clean files (no SUSFS v2.1)
         working-directory: kernel
         run: |
@@ -82,6 +86,16 @@ jobs:
 
           echo "✅ 6 个文件已覆盖"
 
+          echo "=== 验证残留 ==="
+          for f in fs/namei.c fs/stat.c fs/namespace.c \
+                   fs/proc/task_mmu.c fs/proc/proc_namespace.c kernel/kallsyms.c; do
+            cnt=$(grep -c "susfs" "$f" 2>/dev/null || true)
+            echo "$f: $cnt 处 susfs 引用"
+          done
+
+      # ============================================================
+      # 2. 修复干净文件的版本不匹配
+      # ============================================================
       - name: Fix version mismatch in clean files
         working-directory: kernel
         run: |
@@ -89,48 +103,29 @@ jobs:
           sed -i '/#include <linux\/pgsize_migration.h>/d' fs/proc/task_mmu.c
           echo "✅ 已删除 pgsize_migration.h include"
 
-          echo "=== 修复 kallsyms.c ==="
-          # 结构体名
+          echo "=== 修复 task_mmu.c 的 get_pad_vma / show_map_pad_vma ==="
+          sed -i 's/struct vm_area_struct \*pad_vma = get_pad_vma(v);//' fs/proc/task_mmu.c
+          sed -i 's/struct vm_area_struct \*vma = get_data_vma(v);/struct vm_area_struct *vma = v;/' fs/proc/task_mmu.c
+          sed -i '/show_map_pad_vma(/d' fs/proc/task_mmu.c
+          sed -i '/pad_vma/d' fs/proc/task_mmu.c
+          echo "✅ task_mmu.c 已修复"
+
+          echo "=== 修复 kallsyms.c (proc_ops → file_operations) ==="
           sed -i 's/struct proc_ops/struct file_operations/g' kernel/kallsyms.c
-          # 字段名
-          sed -i 's/\.proc_open\b/.open/g'     kernel/kallsyms.c
-          sed -i 's/\.proc_read\b/.read/g'     kernel/kallsyms.c
-          sed -i 's/\.proc_lseek\b/.llseek/g'  kernel/kallsyms.c
+          sed -i 's/\.proc_open\b/.open/g'      kernel/kallsyms.c
+          sed -i 's/\.proc_read\b/.read/g'      kernel/kallsyms.c
+          sed -i 's/\.proc_lseek\b/.llseek/g'   kernel/kallsyms.c
           sed -i 's/\.proc_release\b/.release/g' kernel/kallsyms.c
-          # 变量名（如果还叫 kallsyms_proc_ops，改成 kallsyms_operations）
           sed -i 's/kallsyms_proc_ops/kallsyms_operations/g' kernel/kallsyms.c
-          echo "✅ 已修复 proc_ops → file_operations"
+          echo "✅ kallsyms.c 已修复"
 
           echo "=== 验证 ==="
           grep -n "pgsize_migration" fs/proc/task_mmu.c || echo "task_mmu.c: 无 pgsize_migration"
           grep -n "proc_ops\|proc_open\|proc_read" kernel/kallsyms.c || echo "kallsyms.c: 无 proc_ops"
-          
-      - name: Fix task_mmu.c pad_vma calls
-        working-directory: kernel
-        run: |
-          T="fs/proc/task_mmu.c"
-          echo "=== 修复 $T ==="
 
-          # 1. 替换 get_pad_vma / get_data_vma 调用为直接用 v
-          sed -i 's/struct vm_area_struct \*pad_vma = get_pad_vma(v);//' "$T"
-          sed -i 's/struct vm_area_struct \*vma = get_data_vma(v);/struct vm_area_struct *vma = v;/' "$T"
-
-          # 2. 删除 show_map_pad_vma 调用（两处）
-          sed -i '/show_map_pad_vma(/d' "$T"
-
-          # 3. 删除可能残留的 pad_vma 引用
-          sed -i '/pad_vma/d' "$T"
-
-          echo "✅ 修复完成"
-          grep -n "get_pad_vma\|get_data_vma\|show_map_pad_vma\|pad_vma" "$T" || echo "无残留"
-     
-      - name: Fix stat.c legacy declaration
-        working-directory: kernel
-        run: |
-          sed -i '/extern void susfs_sus_kstat_spoof_generic_fillattr(struct inode \*inode, struct kstat \*stat);/d' fs/stat.c
-          echo "✅ 已删除旧声明"
-          grep -n "susfs_sus_kstat_spoof_generic_fillattr" fs/stat.c
-    
+      # ============================================================
+      # 3. 安装 ReSukiSU（main 分支）
+      # ============================================================
       - name: Setup ReSukiSU (main)
         working-directory: kernel
         run: |
@@ -149,6 +144,9 @@ jobs:
           echo "source \"drivers/kernelsu/Kconfig\"" >> drivers/Kconfig
           echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
 
+      # ============================================================
+      # 4. 应用 SUSFS v2.3.0 补丁
+      # ============================================================
       - name: Apply SUSFS v2.3.0 Patch
         working-directory: kernel
         run: |
@@ -160,53 +158,51 @@ jobs:
           find . -name "*.rej" | wc -l
 
       # ============================================================
-      # 以下修复步骤已注释掉，因为 6 个文件已是干净版本，
-      # 这些修复要么失效，要么会破坏干净代码。
-      # 若编译报错指出还需要某一步，再逐个取消注释。
+      # 5. 修复 stat.c 里 v2.1 残留的旧声明
       # ============================================================
+      - name: Fix stat.c legacy declaration
+        working-directory: kernel
+        run: |
+          sed -i '/extern void susfs_sus_kstat_spoof_generic_fillattr(struct inode \*inode, struct kstat \*stat);/d' fs/stat.c
+          echo "✅ 已删除 stat.c 旧声明"
+          grep -n "susfs_sus_kstat_spoof_generic_fillattr" fs/stat.c || echo "无残留"
 
-      # - name: Fix task_mmu.c return errors for SUS_MAP/SUS_KSTAT
-      #   working-directory: kernel
-      #   run: |
-      #     ... (原步骤内容)
+      # ============================================================
+      # 6. 应用 simonpunk v2.2.00 的 inline hooks 脚本
+      #    （解决 inline_hook_check.mk 报 ksu_handle_stat 缺失）
+      # ============================================================
+      - name: Apply ReSukiSU Inline Hooks (simonpunk v2.2.00)
+        working-directory: kernel
+        run: |
+          SCRIPT="${{ github.workspace }}/workflow_repo/${{ env.INLINE_HOOKS_SCRIPT }}"
+          if [ ! -f "$SCRIPT" ]; then
+            echo "❌ 找不到脚本: $SCRIPT"
+            exit 1
+          fi
+          chmod +x "$SCRIPT"
+          bash "$SCRIPT" || true
 
-      # - name: Enable KSU_SUSFS_SUS_MOUNT (fix missing symbols)
-      #   working-directory: kernel
-      #   run: |
-      #     ... (原步骤内容)
+          echo "=== 验证钩子 ==="
+          for f in fs/exec.c fs/open.c fs/read_write.c fs/stat.c \
+                   fs/namei.c drivers/input/input.c security/security.c \
+                   security/selinux/hooks.c kernel/reboot.c kernel/sys.c; do
+            cnt=$(grep -c "ksu_handle" "$f" 2>/dev/null || true)
+            echo "$f: $cnt 处 ksu_handle"
+          done
 
-      # - name: Fix legacy variable name in proc_namespace.c
-      #   working-directory: kernel
-      #   run: |
-      #     ... (原步骤内容)
-
-      # - name: Fix conflicting susfs_kstat declaration
-      #   working-directory: kernel
-      #   run: |
-      #     ... (原步骤内容)
-
-      # - name: Add STATX_SUS_KSTAT macros to susfs_def.h
-      #   working-directory: kernel
-      #   run: |
-      #     ... (原步骤内容)
-
-      # - name: Fix STATX_SUS_KSTAT visibility
-      #   working-directory: kernel
-      #   run: |
-      #     ... (原步骤内容)
-
-      # - name: Remove duplicate v2.3 susfs_alloc functions in namespace.c
-      #   working-directory: kernel
-      #   run: |
-      #     ... (原步骤内容)
-
-      - name: Create dummy seccomp_types.h to suppress grep warning
+      # ============================================================
+      # 7. 创建占位文件（消除 seccomp_types.h grep 警告）
+      # ============================================================
+      - name: Create dummy seccomp_types.h
         working-directory: kernel
         run: |
           mkdir -p include/linux
           touch include/linux/seccomp_types.h
-          echo "✅ 已创建占位文件，消除 grep 警告"
+          echo "✅ 已创建占位文件"
 
+      # ============================================================
+      # 8. 配置内核
+      # ============================================================
       - name: Configure Kernel
         working-directory: kernel
         run: |
@@ -254,6 +250,9 @@ jobs:
 
           make olddefconfig O=${{ env.OUTPUT_DIR }}
 
+      # ============================================================
+      # 9. 编译
+      # ============================================================
       - name: Build Kernel
         working-directory: kernel
         run: |
@@ -274,6 +273,9 @@ jobs:
             exit 1
           fi
 
+      # ============================================================
+      # 10. 打包 AnyKernel3
+      # ============================================================
       - name: Package AnyKernel3
         id: package
         run: |
@@ -289,28 +291,31 @@ jobs:
           sed -i 's/^device.name1=.*/device.name1=star/' "$AK3_DIR/anykernel.sh"
 
           cd $AK3_DIR
-          zip -r9 "../${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-clean6-${TIME}.zip" ./*
+          zip -r9 "../${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-clean6-sp-${TIME}.zip" ./*
           cd ..
-          echo "zip_name=${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-clean6-${TIME}.zip" >> $GITHUB_OUTPUT
+          echo "zip_name=${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-clean6-sp-${TIME}.zip" >> $GITHUB_OUTPUT
 
+      # ============================================================
+      # 11. 上传构建产物
+      # ============================================================
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kernel_susfs_v2.3.0_clean6
-          path: ${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-clean6-*.zip
+          name: kernel_susfs_v2.3.0_clean6_sp
+          path: ${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-clean6-sp-*.zip
 
       - name: Optional Release
         if: github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: susfs_v2.3.0_clean6_${{ github.run_number }}
-          name: "SUSFS v2.3.0 (6 clean files)"
+          tag_name: susfs_v2.3.0_clean6_sp_${{ github.run_number }}
+          name: "SUSFS v2.3.0 (Clean 6 + Simonpunk Hooks)"
           body: |
-            ## 测试内核 - SUSFS v2.3.0（覆盖 6 个干净文件）
+            ## 测试内核 - SUSFS v2.3.0（6 个干净文件 + Simonpunk v2.2.00 Hooks）
             - ReSukiSU main
-            - 已覆盖 fs/namei.c、fs/stat.c、fs/namespace.c、fs/proc/task_mmu.c、fs/proc_namespace.c、kernel/kallsyms.c
-            - 其余 14 个文件仍带 SUSFS v2.1
+            - 覆盖 6 个干净文件 + 修复版本不匹配
+            - 应用 simonpunk/backslashxx v2.2.00 inline hooks 脚本
             - 刷机有风险，请备份原内核
-          files: ${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-clean6-*.zip
+          files: ${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-clean6-sp-*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
