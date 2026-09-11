@@ -560,6 +560,19 @@ jobs:
           fi
           grep -n "STATX_SUS_KSTAT" include/linux/susfs_def.h
 
+      - name: Fix STATX_SUS_KSTAT visibility
+        working-directory: kernel
+        run: |
+          # 1. 确认宏在 susfs_def.h 里
+          grep -n "STATX_SUS_KSTAT" include/linux/susfs_def.h || echo "宏不存在"
+          # 2. 确认 fs/stat.c 是否 include susfs_def.h
+          grep -n "susfs_def.h" fs/stat.c || echo "stat.c 未 include"
+          # 3. 如果没有 include，则加上
+          if ! grep -q "susfs_def.h" fs/stat.c; then
+          sed -i '/#include <asm\/unistd.h>/a\#ifdef CONFIG_KSU_SUSFS\n#include <linux\/susfs_def.h>\n#endif' fs/stat.c
+          echo "✅ 已在 fs/stat.c 中添加 susfs_def.h include"
+          fi
+
       - name: Configure Kernel
         working-directory: kernel
         run: |
