@@ -107,58 +107,72 @@ jobs:
       # 关键：修复必须放在 patch-susfs 之后、其他 patch 之前
       # 工作目录是 device_kernel，不是 kernel
       # ============================================================
-      - name: ⚙️Fix namei.c missing found_sus_path and retry label
+      - name: Fix namei.c missing found_sus_path and retry label
         working-directory: device_kernel
+        shell: bash
         run: |
+          set -euo pipefail
           N="fs/namei.c"
+          [[ -f "$N" ]] || { echo "::error::找不到 $N"; exit 1; }
 
-          echo "=== 修复前检查 ==="
-          grep -n "found_sus_path\|retry:" "$N" || echo "  无相关引用"
+          echo "=== 修复前 ==="
+          grep -n "susfs_is_inode_sus_path\|found_sus_path\|^retry:" "$N" || true
 
-          echo "=== 1. 在 __lookup_hash 函数开头插入 found_sus_path 声明 ==="
+          # ---------- 1. 找到使用 susfs_is_inode_sus_path 的那一行 ----------
+          USE_LINE=$(grep -n "susfs_is_inode_sus_path" "$N" | head -1 | cut -d: -f1 || true)
+          if [[ -z "${USE_LINE:-}" ]]; then
+            echo "::error::文件里没有 susfs_is_inode_sus_path，SUSFS 补丁根本没打上，先解决补丁问题"
+            exit 1
+          fi
+          echo "susfs 使用行: $USE_LINE"
+
+          # ---------- 2. 向上找该函数起始行（第一个以 '{' 结尾且前面是函数定义的行） ----------
+          FUNC_START=$(awk -v u="$USE_LINE" '
+            NR<=u && /^[a-zA-Z_].*\(/ && !/;/ { last=NR }
+            END { print last }
+          ' "$N")
+          echo "所属函数起始行: $FUNC_START"
+
+          # ---------- 3. 在函数起始行后插入 bool found_sus_path = false; ----------
           if ! grep -q "bool found_sus_path = false;" "$N"; then
-            awk '
-              BEGIN { in_func = 0 }
-              /^static struct dentry \*__lookup_hash\(const struct qstr \*name,/ {
-                in_func = 1
-              }
-              in_func && /struct inode \*dir = base->d_inode;/ {
-                print
-                print "\tbool found_sus_path = false;"
-                in_func = 0
-                next
-              }
+            awk -v ins="$FUNC_START" '
+              NR==ins { print; print "\tbool found_sus_path = false;"; next }
               { print }
-            ' "$N" > "$N.tmp"
-            mv "$N.tmp" "$N"
+            ' "$N" > "$N.tmp" && mv "$N.tmp" "$N"
             echo "✅ 已插入 found_sus_path 声明"
           else
             echo "✅ found_sus_path 声明已存在"
           fi
 
-          echo "=== 2. 在 dentry = d_alloc(base, name); 后插入 retry 标签 ==="
-          if ! grep -q "^retry:" "$N"; then
-            awk '
-              BEGIN { done = 0 }
-              /dentry = d_alloc\(base, name\);/ && !done {
-                print
-                print "#ifdef CONFIG_KSU_SUSFS_SUS_PATH"
-                print "retry:"
-                print "#endif"
-                done = 1
-                next
-              }
+          # ---------- 4. 在 goto retry 之前确保有 retry: 标签 ----------
+          if ! grep -qE '^[[:space:]]*retry:' "$N"; then
+            # 找到 "goto retry;" 所在行，在它上面插入标签
+            GOTO_LINE=$(grep -n "goto retry;" "$N" | head -1 | cut -d: -f1 || true)
+            if [[ -z "${GOTO_LINE:-}" ]]; then
+              echo "::error::没有找到 goto retry; 说明补丁不完整"
+              exit 1
+            fi
+            awk -v ins="$GOTO_LINE" '
+              NR==ins { print "retry:"; print; next }
               { print }
-            ' "$N" > "$N.tmp"
-            mv "$N.tmp" "$N"
-            echo "✅ 已插入 retry: 标签"
+            ' "$N" > "$N.tmp" && mv "$N.tmp" "$N"
+            echo "✅ 已在 goto retry 前插入 retry: 标签"
           else
             echo "✅ retry: 标签已存在"
           fi
 
-          echo "=== 修复后检查 ==="
-          grep -n "found_sus_path\|retry:" "$N" | head -20
+          # ---------- 5. 最终校验 ----------
+          echo "=== 修复后 ==="
+          grep -n "bool found_sus_path\|^retry:\|goto retry;" "$N" | head -20
 
+          # 必须三样都在，否则直接失败，不要继续编译
+          for pat in "bool found_sus_path = false;" "retry:" "goto retry;"; do
+            grep -q "$pat" "$N" || { echo "::error::修复失败，缺少: $pat"; exit 1; }
+          done
+
+          echo "=== git diff ==="
+          git diff -- "$N" || true
+          
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
 
