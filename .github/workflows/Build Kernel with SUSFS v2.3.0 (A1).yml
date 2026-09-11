@@ -67,28 +67,26 @@ jobs:
       - name: Restore 6 clean files (no SUSFS v2.1)
         working-directory: kernel
         run: |
-          TARBALL="${{ github.workspace }}/workflow_repo/clean6.tar.gz"
+          CLEAN_DIR="${{ github.workspace }}/workflow_repo/patches/clean"
 
-          if [ ! -f "$TARBALL" ]; then
-            echo "❌ 找不到 clean6.tar.gz: $TARBALL"
-            exit 1
-          fi
+          echo "=== 检查 clean 目录 ==="
+          ls -R "$CLEAN_DIR" || { echo "❌ clean 目录不存在"; exit 1; }
 
-          echo "=== 查看 tar 内容 ==="
-          tar tzf "$TARBALL"
+          echo "=== 覆盖 6 个干净文件 ==="
+          cp "$CLEAN_DIR/fs/namei.c"                       fs/namei.c
+          cp "$CLEAN_DIR/fs/stat.c"                        fs/stat.c
+          cp "$CLEAN_DIR/fs/namespace.c"                   fs/namespace.c
+          cp "$CLEAN_DIR/fs/proc/task_mmu.c"               fs/proc/task_mmu.c
+          cp "$CLEAN_DIR/fs/proc/proc_namespace.c"         fs/proc/proc_namespace.c
+          cp "$CLEAN_DIR/kernel/kallsyms.c"                kernel/kallsyms.c
 
-          echo "=== 解压到内核源码 ==="
-          tar xzf "$TARBALL"
+          echo "✅ 6 个文件已覆盖"
 
           echo "=== 验证残留 ==="
           for f in fs/namei.c fs/stat.c fs/namespace.c \
                    fs/proc/task_mmu.c fs/proc/proc_namespace.c kernel/kallsyms.c; do
-            if [ -f "$f" ]; then
-              cnt=$(grep -c "susfs" "$f" 2>/dev/null || true)
-              echo "$f: $cnt 处 susfs 引用"
-            else
-              echo "$f: ❌ 文件不存在"
-            fi
+            cnt=$(grep -c "susfs" "$f" 2>/dev/null || true)
+            echo "$f: $cnt 处 susfs 引用"
           done
 
       - name: Setup ReSukiSU (main)
