@@ -112,88 +112,69 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          echo "================================"
-          echo "🔍 诊断：编译器到底读哪个 namei.c"
-          echo "================================"
-          echo "PWD = $(pwd)"
-          echo "--- 所有 fs/namei.c 的真实路径 ---"
-          find "${GITHUB_WORKSPACE}" -name namei.c -path "*/fs/namei.c" 2>/dev/null || true
-          echo "--- device_kernel 顶层内容 ---"
-          ls -la "${GITHUB_WORKSPACE}/device_kernel/" | head -40 || true
-          echo "--- device_kernel/fs/namei.c 是否存在 ---"
-          ls -la "${GITHUB_WORKSPACE}/device_kernel/fs/namei.c" 2>/dev/null || echo "不存在！"
-
           N="fs/namei.c"
           [[ -f "$N" ]] || { echo "::error::找不到 $N"; exit 1; }
 
-          echo "================================"
-          echo "🔍 修复前：namei.c 里 susfs/retry 相关行"
-          echo "================================"
-          grep -n "susfs_is_inode_sus_path\|found_sus_path\|^retry:\|goto retry" "$N" || true
+          echo "=== 修复前 __lookup_hash 附近 ==="
+          sed -n '1650,1680p' "$N"
 
-          # ---------- 1. 定位使用 susfs_is_inode_sus_path 的行 ----------
-          USE_LINE=$(grep -n "susfs_is_inode_sus_path" "$N" | head -1 | cut -d: -f1 || true)
-          if [[ -z "${USE_LINE:-}" ]]; then
-            echo "::error::文件里没有 susfs_is_inode_sus_path，SUSFS 补丁根本没打上，先解决补丁问题"
-            exit 1
-          fi
-          echo "susfs 使用行: $USE_LINE"
+          # ---------- 1. 定位报错行 1659 所在函数：__lookup_hash ----------
+          # __lookup_hash 的函数结束在 return dentry; 后跟 }
+          # 我们要在这个函数内插入声明和 retry: 标签
 
-          # ---------- 2. 向上找该函数起始行 ----------
-          FUNC_START=$(awk -v u="$USE_LINE" '
-            NR<=u && /^[a-zA-Z_].*\(/ && !/;/ { last=NR }
-            END { print last }
-          ' "$N")
-          echo "所属函数起始行: $FUNC_START"
+          # 找到 __lookup_hash 函数起始行
+          FUNC_START=$(grep -n "^static struct dentry \*__lookup_hash(" "$N" | head -1 | cut -d: -f1)
+          [[ -n "$FUNC_START" ]] || { echo "::error::找不到 __lookup_hash 函数"; exit 1; }
+          echo "__lookup_hash 起始行: $FUNC_START"
 
-          # ---------- 3. 插入 bool found_sus_path = false; ----------
-          if ! grep -q "bool found_sus_path = false;" "$N"; then
-            awk -v ins="$FUNC_START" '
+          # 找到该函数里 goto retry; 的行（一定在 1659 之后、函数结束前）
+          GOTO_LINE=$(awk -v s="$FUNC_START" 'NR>s && /goto retry;/ { print NR; exit }' "$N")
+          [[ -n "$GOTO_LINE" ]] || { echo "::error::__lookup_hash 里没有 goto retry;"; exit 1; }
+          echo "__lookup_hash 里 goto retry; 行: $GOTO_LINE"
+
+          # 找到该函数里 "dentry = d_alloc(base, name);" 的行，作为 retry 标签位置
+          ALLOC_LINE=$(awk -v s="$FUNC_START" -v g="$GOTO_LINE" 'NR>s && NR<g && /dentry = d_alloc\(base, name\);/ { print NR; exit }' "$N")
+          echo "d_alloc 行: ${ALLOC_LINE:-未找到}"
+
+          # ---------- 2. 检查 __lookup_hash 里是否已经有 found_sus_path 声明 ----------
+          # 只看 FUNC_START 到 GOTO_LINE 之间
+          if awk -v s="$FUNC_START" -v g="$GOTO_LINE" 'NR>s && NR<g && /bool found_sus_path = false;/ {found=1} END{exit !found}' "$N"; then
+            echo "✅ __lookup_hash 里已有 found_sus_path 声明"
+          else
+            # 在 __lookup_hash 函数体第一行（含 { 的那行之后）插入
+            # 简单做法：在函数里第一个 struct dentry *dentry; 之后插入
+            INSERT_AFTER=$(awk -v s="$FUNC_START" 'NR>s && /struct dentry \*dentry/ { print NR; exit }' "$N")
+            [[ -n "$INSERT_AFTER" ]] || INSERT_AFTER="$FUNC_START"
+            awk -v ins="$INSERT_AFTER" '
               NR==ins { print; print "\tbool found_sus_path = false;"; next }
               { print }
             ' "$N" > "$N.tmp" && mv "$N.tmp" "$N"
-            echo "✅ 已插入 found_sus_path 声明"
-          else
-            echo "✅ found_sus_path 声明已存在"
+            echo "✅ 已在 __lookup_hash 内插入 found_sus_path 声明（第 $INSERT_AFTER 行之后）"
+            # 行号变了，重新算 GOTO_LINE
+            FUNC_START=$(grep -n "^static struct dentry \*__lookup_hash(" "$N" | head -1 | cut -d: -f1)
+            GOTO_LINE=$(awk -v s="$FUNC_START" 'NR>s && /goto retry;/ { print NR; exit }' "$N")
           fi
 
-          # ---------- 4. 插入 retry: 标签 ----------
-          if ! grep -qE '^[[:space:]]*retry:' "$N"; then
-            GOTO_LINE=$(grep -n "goto retry;" "$N" | head -1 | cut -d: -f1 || true)
-            if [[ -z "${GOTO_LINE:-}" ]]; then
-              echo "::error::没有找到 goto retry; 说明补丁不完整"
-              exit 1
-            fi
-            awk -v ins="$GOTO_LINE" '
+          # ---------- 3. 检查 __lookup_hash 里是否已有 retry: 标签 ----------
+          if awk -v s="$FUNC_START" -v g="$GOTO_LINE" 'NR>s && NR<g && /^retry:/ {found=1} END{exit !found}' "$N"; then
+            echo "✅ __lookup_hash 里已有 retry: 标签"
+          else
+            ALLOC_LINE=$(awk -v s="$FUNC_START" -v g="$GOTO_LINE" 'NR>s && NR<g && /dentry = d_alloc\(base, name\);/ { print NR; exit }' "$N")
+            [[ -n "$ALLOC_LINE" ]] || { echo "::error::__lookup_hash 里找不到 d_alloc(base, name);"; exit 1; }
+            awk -v ins="$ALLOC_LINE" '
               NR==ins { print "retry:"; print; next }
               { print }
             ' "$N" > "$N.tmp" && mv "$N.tmp" "$N"
-            echo "✅ 已在 goto retry 前插入 retry: 标签"
-          else
-            echo "✅ retry: 标签已存在"
+            echo "✅ 已在 __lookup_hash 内 d_alloc 前插入 retry: 标签（第 $ALLOC_LINE 行前）"
           fi
 
-          # ---------- 5. 强校验 ----------
-          echo "================================"
-          echo "🔍 修复后：namei.c 里 susfs/retry 相关行"
-          echo "================================"
-          grep -n "bool found_sus_path\|^retry:\|goto retry" "$N" || true
-
-          for pat in "bool found_sus_path = false;" "retry:" "goto retry;"; do
-            grep -q "$pat" "$N" || { echo "::error::修复失败，缺少: $pat"; exit 1; }
-          done
-
-          echo "--- 报错行附近 (1640-1690) ---"
-          sed -n '1640,1690p' "$N"
-
-          echo "--- git diff ---"
+          # ---------- 4. 校验 ----------
+          echo "=== 修复后 __lookup_hash 附近 ==="
+          sed -n '1650,1690p' "$N"
+          echo "=== git diff ==="
           git diff -- "$N" || true
 
-          # ---------- 6. 清 ccache，防止旧 namei.o 被复用 ----------
-          echo "--- 清理 ccache ---"
           ccache -C 2>/dev/null || true
-          ccache -s 2>/dev/null || true
           echo "✅ Fix step 完成"
           
       - name: 🔗 Patch for no-kprobe
