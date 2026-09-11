@@ -46,7 +46,6 @@ jobs:
 
           echo "正在修复 libtinfo.so.5 依赖..."
           if ! sudo apt install -y libtinfo5; then
-            echo "直接安装 libtinfo5 失败，尝试创建软链接..."
             sudo ln -sf /lib/x86_64-linux-gnu/libtinfo.so.6 /lib/x86_64-linux-gnu/libtinfo.so.5
           fi
 
@@ -66,17 +65,13 @@ jobs:
           ${{ env.CLANG_DIR }}/bin/clang --version
 
       # ============================================================
-      # 1. 覆盖 11 个已清理干净的文件（去 SUSFS v2.1）
+      # 1. 覆盖 11 个已清理干净的文件
       # ============================================================
       - name: Restore clean files (no SUSFS v2.1)
         working-directory: kernel
         run: |
           CLEAN_DIR="${{ github.workspace }}/workflow_repo/patches/clean"
-
-          echo "=== 检查 clean 目录 ==="
           ls -R "$CLEAN_DIR" || { echo "❌ clean 目录不存在"; exit 1; }
-
-          echo "=== 覆盖 11 个干净文件 ==="
 
           cp "$CLEAN_DIR/fs/namei.c"                       fs/namei.c
           cp "$CLEAN_DIR/fs/stat.c"                        fs/stat.c
@@ -89,18 +84,7 @@ jobs:
           cp "$CLEAN_DIR/kernel/kallsyms.c"                kernel/kallsyms.c
           cp "$CLEAN_DIR/kernel/reboot.c"                  kernel/reboot.c
           cp "$CLEAN_DIR/kernel/sys.c"                     kernel/sys.c
-
           echo "✅ 11 个文件已覆盖"
-
-          echo "=== 验证残留 ==="
-          for f in fs/namei.c fs/stat.c fs/namespace.c \
-                   fs/exec.c fs/open.c fs/read_write.c \
-                   fs/proc/task_mmu.c fs/proc/proc_namespace.c \
-                   kernel/kallsyms.c kernel/reboot.c kernel/sys.c; do
-            cnt=$(grep -c "susfs" "$f" 2>/dev/null | head -1)
-            kcnt=$(grep -c "ksu_handle" "$f" 2>/dev/null | head -1)
-            echo "$f: ${cnt:-0} 处 susfs, ${kcnt:-0} 处 ksu_handle"
-          done
 
       # ============================================================
       # 2. 修复干净文件的版本不匹配
@@ -108,33 +92,23 @@ jobs:
       - name: Fix version mismatch in clean files
         working-directory: kernel
         run: |
-          echo "=== 修复 task_mmu.c ==="
           sed -i '/#include <linux\/pgsize_migration.h>/d' fs/proc/task_mmu.c
           sed -i 's/struct vm_area_struct \*pad_vma = get_pad_vma(v);//' fs/proc/task_mmu.c
           sed -i 's/struct vm_area_struct \*vma = get_data_vma(v);/struct vm_area_struct *vma = v;/' fs/proc/task_mmu.c
           sed -i '/show_map_pad_vma(/d' fs/proc/task_mmu.c
           sed -i '/pad_vma/d' fs/proc/task_mmu.c
-          echo "✅ task_mmu.c 已修复"
 
-          echo "=== 修复 kallsyms.c (proc_ops → file_operations) ==="
           sed -i 's/struct proc_ops/struct file_operations/g' kernel/kallsyms.c
           sed -i 's/\.proc_open\b/.open/g'       kernel/kallsyms.c
           sed -i 's/\.proc_read\b/.read/g'       kernel/kallsyms.c
           sed -i 's/\.proc_lseek\b/.llseek/g'    kernel/kallsyms.c
           sed -i 's/\.proc_release\b/.release/g' kernel/kallsyms.c
           sed -i 's/kallsyms_proc_ops/kallsyms_operations/g' kernel/kallsyms.c
-          echo "✅ kallsyms.c 已修复"
 
-          echo "=== 修复 reboot.c kmsg_dump enum for 5.4 ==="
           sed -i '/kmsg_dump(KMSG_DUMP_RESTART);/d'  kernel/reboot.c
           sed -i '/kmsg_dump(KMSG_DUMP_HALT);/d'     kernel/reboot.c
           sed -i '/kmsg_dump(KMSG_DUMP_POWEROFF);/d' kernel/reboot.c
-          echo "✅ reboot.c 已修复"
-
-          echo "=== 验证 ==="
-          grep -n "pgsize_migration" fs/proc/task_mmu.c || echo "task_mmu.c: 无 pgsize_migration"
-          grep -n "proc_ops\|proc_open\|proc_read" kernel/kallsyms.c || echo "kallsyms.c: 无 proc_ops"
-          grep -n "KMSG_DUMP_RESTART\|KMSG_DUMP_HALT\|KMSG_DUMP_POWEROFF" kernel/reboot.c || echo "reboot.c: 无新版 kmsg_dump"
+          echo "✅ 版本不匹配已修复"
 
       # ============================================================
       # 3. 安装 ReSukiSU（main 分支）
@@ -143,7 +117,6 @@ jobs:
         working-directory: kernel
         run: |
           set -e
-          echo "Cloning ReSukiSU main..."
           rm -rf drivers/kernelsu
           git clone https://github.com/ReSukiSU/ReSukiSU.git drivers/kernelsu
           cd drivers/kernelsu
@@ -165,7 +138,6 @@ jobs:
         run: |
           PATCH="${{ github.workspace }}/workflow_repo/Patches/Patch/${{ env.SUSFS_PATCH_FILE }}"
           patch -p1 -N --batch --no-backup-if-mismatch < "$PATCH" || true
-          echo "=== 补丁应用完成，检查 .rej ==="
           find . -name "*.rej" | head -30
           echo "=== .rej 数量 ==="
           find . -name "*.rej" | wc -l
@@ -178,68 +150,113 @@ jobs:
         run: |
           sed -i '/extern void susfs_sus_kstat_spoof_generic_fillattr(struct inode \*inode, struct kstat \*stat);/d' fs/stat.c
           echo "✅ 已删除 stat.c 旧声明（如有）"
-          grep -n "susfs_sus_kstat_spoof_generic_fillattr" fs/stat.c || echo "无残留"
 
       # ============================================================
-      # 6. 修复 susfs_def.h v2.3 宏 + stat.c include（带回退去重）
+      # 6. 修复 susfs_def.h v2.3 宏（插在 #endif 之前，带去重）
       # ============================================================
-      - name: Fix susfs_def.h v2.3 macros + stat.c include
+            - name: Fix susfs_def.h v2.3 macros
         working-directory: kernel
         run: |
-          SUSFS_DEF="include/linux/susfs_def.h"
-          if [ ! -f "$SUSFS_DEF" ]; then
-            echo "❌ 找不到 $SUSFS_DEF"
-            exit 1
-          fi
+          cat > /tmp/fix_susfs_def.py << 'PYEOF'
+import re
 
-          echo "=== 1. 检查 susfs_is_current_app_uid 定义数量 ==="
-          COUNT=$(grep -c "^static inline bool susfs_is_current_app_uid(void)" "$SUSFS_DEF" 2>/dev/null | head -1)
-          COUNT=${COUNT:-0}
-          echo "susfs_is_current_app_uid 定义数量: $COUNT"
+path = 'include/linux/susfs_def.h'
 
-          echo "=== 2. 若重复，用 python 去重 ==="
-          if [ "$COUNT" -gt 1 ]; then
-            python3 -c "
-            import re
-            path = '$SUSFS_DEF'
-            with open(path) as f:
-            content = f.read()
-            pattern = r'static inline bool susfs_is_current_app_uid\(void\) \{[^}]*\}'
-            matches = list(re.finditer(pattern, content, re.DOTALL))
-            if len(matches) > 1:
-            for m in reversed(matches[1:]):
-            content = content[:m.start()] + content[m.end():]
-            with open(path, 'w') as f:
-            f.write(content)
-            print('✅ 去重完成，剩余定义数:', len(matches) - (len(matches)-1))
-            else:
-            print('✅ 无需去重')
-            "
-            fi
+with open(path) as f:
+    content = f.read()
 
-          echo "=== 3. 补充缺失的 v2.3 宏（逐项） ==="
-          if ! grep -q "define STATX_SUS_KSTAT " "$SUSFS_DEF"; then
-            printf '\n#ifndef STATX_SUS_KSTAT\n#define STATX_SUS_KSTAT 0x10000000U\n#endif\n' >> "$SUSFS_DEF"
-            echo "✅ 已补充 STATX_SUS_KSTAT"
-          else
-            echo "✅ STATX_SUS_KSTAT 已存在"
-          fi
+print("=== 处理前 ===")
+print("文件行数:", content.count('\n'))
+print("第一个 #endif:", content.find('#endif'))
+print("最后一个 #endif:", content.rfind('#endif'))
 
-          if ! grep -q "define STATX_SUS_KSTAT_FUSE " "$SUSFS_DEF"; then
-            printf '\n#ifndef STATX_SUS_KSTAT_FUSE\n#define STATX_SUS_KSTAT_FUSE 0x20000000U\n#endif\n' >> "$SUSFS_DEF"
-            echo "✅ 已补充 STATX_SUS_KSTAT_FUSE"
-          else
-            echo "✅ STATX_SUS_KSTAT_FUSE 已存在"
-          fi
+# 1. 删除 #endif 之后的所有残留内容
+first_endif_pos = content.find('#endif')
+if first_endif_pos != -1:
+    guard_end = first_endif_pos + len('#endif')
+    after = content[guard_end:]
+    if 'susfs_is_current_app_uid' in after or 'STATX_SUS_KSTAT' in after:
+        content = content[:guard_end] + '\n'
+        print("✅ 已删除 #endif 之后的残留追加内容")
 
-          if ! grep -q "^static inline bool susfs_is_current_app_uid(void)" "$SUSFS_DEF"; then
-            printf '\nstatic inline bool susfs_is_current_app_uid(void) {\n    return ((current_uid().val %% 100000) >= 10000);\n}\n' >> "$SUSFS_DEF"
-            echo "✅ 已补充 susfs_is_current_app_uid"
-          else
-            echo "✅ susfs_is_current_app_uid 已存在"
-          fi
+# 2. 删除所有已存在的 susfs_is_current_app_uid 定义
+pattern = re.compile(
+    r'\nstatic inline bool susfs_is_current_app_uid\(void\) \{[^}]*\}\n',
+    re.DOTALL
+)
+matches = list(pattern.finditer(content))
+print(f"发现 {len(matches)} 处 susfs_is_current_app_uid 定义")
+if matches:
+    for m in reversed(matches):
+        content = content[:m.start()] + '\n' + content[m.end():]
 
-          echo "=== 4. 确保 fs/stat.c include susfs_def.h ==="
+# 3. 去重 STATX_SUS_KSTAT
+pattern_statx = re.compile(
+    r'#ifndef STATX_SUS_KSTAT\n#define STATX_SUS_KSTAT 0x10000000U\n#endif\n',
+    re.DOTALL
+)
+matches_statx = list(pattern_statx.finditer(content))
+print(f"发现 {len(matches_statx)} 处 STATX_SUS_KSTAT 定义块")
+if len(matches_statx) > 1:
+    for m in reversed(matches_statx[1:]):
+        content = content[:m.start()] + content[m.end():]
+    print("✅ 已去重 STATX_SUS_KSTAT")
+
+# 4. 去重 STATX_SUS_KSTAT_FUSE
+pattern_fuse = re.compile(
+    r'#ifndef STATX_SUS_KSTAT_FUSE\n#define STATX_SUS_KSTAT_FUSE 0x20000000U\n#endif\n',
+    re.DOTALL
+)
+matches_fuse = list(pattern_fuse.finditer(content))
+print(f"发现 {len(matches_fuse)} 处 STATX_SUS_KSTAT_FUSE 定义块")
+if len(matches_fuse) > 1:
+    for m in reversed(matches_fuse[1:]):
+        content = content[:m.start()] + content[m.end():]
+    print("✅ 已去重 STATX_SUS_KSTAT_FUSE")
+
+# 5. 准备要插入的 v2.3 内容
+additions = []
+if 'STATX_SUS_KSTAT 0x10000000U' not in content:
+    additions.append(
+        "#ifndef STATX_SUS_KSTAT\n"
+        "#define STATX_SUS_KSTAT 0x10000000U\n"
+        "#endif"
+    )
+if 'STATX_SUS_KSTAT_FUSE 0x20000000U' not in content:
+    additions.append(
+        "#ifndef STATX_SUS_KSTAT_FUSE\n"
+        "#define STATX_SUS_KSTAT_FUSE 0x20000000U\n"
+        "#endif"
+    )
+if 'susfs_is_current_app_uid(void)' not in content:
+    additions.append(
+        "static inline bool susfs_is_current_app_uid(void) {\n"
+        "    return ((current_uid().val % 100000) >= 10000);\n"
+        "}"
+    )
+
+# 6. 在最后一个 #endif 之前插入
+if additions:
+    last_endif = content.rfind('#endif')
+    if last_endif == -1:
+        raise SystemExit("❌ 找不到 #endif")
+    insert_text = '\n' + '\n\n'.join(additions) + '\n\n'
+    content = content[:last_endif] + insert_text + content[last_endif:]
+    print("✅ 已在最后一个 #endif 之前插入 v2.3 内容")
+
+with open(path, 'w') as f:
+    f.write(content)
+
+print("=== 处理后 ===")
+print("文件行数:", content.count('\n'))
+print("susfs_is_current_app_uid 数量:", content.count('susfs_is_current_app_uid'))
+print("STATX_SUS_KSTAT 数量:", content.count('STATX_SUS_KSTAT 0x10000000U'))
+print("STATX_SUS_KSTAT_FUSE 数量:", content.count('STATX_SUS_KSTAT_FUSE 0x20000000U'))
+PYEOF
+
+          python3 /tmp/fix_susfs_def.py
+
+          echo "=== 确保 fs/stat.c include susfs_def.h ==="
           if ! grep -q "linux/susfs_def.h" fs/stat.c; then
             sed -i '/#include <asm\/unistd.h>/a\#ifdef CONFIG_KSU_SUSFS\n#include <linux\/susfs_def.h>\n#endif' fs/stat.c
             echo "✅ 已添加 susfs_def.h include 到 fs/stat.c"
@@ -247,11 +264,11 @@ jobs:
             echo "✅ fs/stat.c 已有 susfs_def.h include"
           fi
 
-          echo "=== 5. 最终验证 ==="
-          final_count=$(grep -c "^static inline bool susfs_is_current_app_uid(void)" "$SUSFS_DEF" 2>/dev/null | head -1)
-          echo "susfs_is_current_app_uid 最终数量: ${final_count:-0}"
-          grep -n "STATX_SUS_KSTAT" "$SUSFS_DEF" | head -4 || echo "  无 STATX_SUS_KSTAT"
-          grep -n "susfs_def.h" fs/stat.c || echo "  stat.c 无 include"
+          echo "=== 最终验证 susfs_def.h 结构 ==="
+          echo "--- 开头 3 行 ---"
+          head -3 include/linux/susfs_def.h
+          echo "--- 结尾 15 行 ---"
+          tail -15 include/linux/susfs_def.h
 
       # ============================================================
       # 7. 应用 simonpunk v2.2.00 inline hooks 脚本
@@ -276,7 +293,7 @@ jobs:
           done
 
       # ============================================================
-      # 8. 创建占位文件（消除 seccomp_types.h grep 警告）
+      # 8. 创建占位文件
       # ============================================================
       - name: Create dummy seccomp_types.h
         working-directory: kernel
@@ -381,7 +398,7 @@ jobs:
           echo "zip_name=${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-clean11-sp-${TIME}.zip" >> $GITHUB_OUTPUT
 
       # ============================================================
-      # 12. 上传构建产物
+      # 12. 上传
       # ============================================================
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -396,11 +413,10 @@ jobs:
           tag_name: susfs_v2.3.0_clean11_sp_${{ github.run_number }}
           name: "SUSFS v2.3.0 (11 Clean Files + Simonpunk Hooks)"
           body: |
-            ## 测试内核 - SUSFS v2.3.0（11 个干净文件 + Simonpunk v2.2.00 Hooks）
+            ## 测试内核 - SUSFS v2.3.0
             - ReSukiSU main
-            - 覆盖 11 个干净文件
-            - 修复版本不匹配（task_mmu / kallsyms / reboot / stat）
-            - 补充 SUSFS v2.3 宏（python 去重 + printf 追加）
+            - 覆盖 11 个干净文件 + 修复版本不匹配
+            - v2.3 宏通过 python 插入 #endif 之前（避免 guard 外的重复）
             - 应用 simonpunk/backslashxx v2.2.00 inline hooks 脚本
             - 刷机有风险，请备份原内核
           files: ${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-clean11-sp-*.zip
