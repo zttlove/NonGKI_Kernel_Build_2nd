@@ -224,7 +224,7 @@ jobs:
           mkdir -p "${TMP_DIR}"
 
           AK3_DIR="${KERNEL_DIR}/Anykernel3"
-          if [[ -d "${AK3_DIR}" && -f "${AK3_DIR}/anykernel.sh" ]]; then
+          
           
           sed -i 's/^do.devicecheck=1/do.devicecheck=0/' "$AK3_DIR/anykernel.sh"
           sed -i 's/^BLOCK=.*/BLOCK=boot/' "$AK3_DIR/anykernel.sh"
