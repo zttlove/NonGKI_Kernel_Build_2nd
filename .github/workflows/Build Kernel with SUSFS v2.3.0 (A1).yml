@@ -1,4 +1,4 @@
-name: Build Kernel with SUSFS v2.3.0 (Clean 6 + Simonpunk Hooks)
+name: Build Kernel with SUSFS v2.3.0 (Clean Files + Simonpunk Hooks)
 
 on:
   workflow_dispatch:
@@ -66,9 +66,9 @@ jobs:
           ${{ env.CLANG_DIR }}/bin/clang --version
 
       # ============================================================
-      # 1. 覆盖 6 个已清理干净的文件（去 SUSFS v2.1）
+      # 1. 覆盖 11 个已清理干净的文件（去 SUSFS v2.1）
       # ============================================================
-      - name: Restore 6 clean files (no SUSFS v2.1)
+      - name: Restore clean files (no SUSFS v2.1)
         working-directory: kernel
         run: |
           CLEAN_DIR="${{ github.workspace }}/workflow_repo/patches/clean"
@@ -76,21 +76,35 @@ jobs:
           echo "=== 检查 clean 目录 ==="
           ls -R "$CLEAN_DIR" || { echo "❌ clean 目录不存在"; exit 1; }
 
-          echo "=== 覆盖 6 个干净文件 ==="
+          echo "=== 覆盖 11 个干净文件 ==="
+
+          # --- 第 1 批：fs 目录 ---
           cp "$CLEAN_DIR/fs/namei.c"                       fs/namei.c
           cp "$CLEAN_DIR/fs/stat.c"                        fs/stat.c
           cp "$CLEAN_DIR/fs/namespace.c"                   fs/namespace.c
+          cp "$CLEAN_DIR/fs/exec.c"                        fs/exec.c
+          cp "$CLEAN_DIR/fs/open.c"                        fs/open.c
+          cp "$CLEAN_DIR/fs/read_write.c"                  fs/read_write.c
+
+          # --- 第 2 批：fs/proc 目录 ---
           cp "$CLEAN_DIR/fs/proc/task_mmu.c"               fs/proc/task_mmu.c
           cp "$CLEAN_DIR/fs/proc/proc_namespace.c"         fs/proc/proc_namespace.c
-          cp "$CLEAN_DIR/kernel/kallsyms.c"                kernel/kallsyms.c
 
-          echo "✅ 6 个文件已覆盖"
+          # --- 第 3 批：kernel 目录 ---
+          cp "$CLEAN_DIR/kernel/kallsyms.c"                kernel/kallsyms.c
+          cp "$CLEAN_DIR/kernel/reboot.c"                  kernel/reboot.c
+          cp "$CLEAN_DIR/kernel/sys.c"                     kernel/sys.c
+
+          echo "✅ 11 个文件已覆盖"
 
           echo "=== 验证残留 ==="
           for f in fs/namei.c fs/stat.c fs/namespace.c \
-                   fs/proc/task_mmu.c fs/proc/proc_namespace.c kernel/kallsyms.c; do
+                   fs/exec.c fs/open.c fs/read_write.c \
+                   fs/proc/task_mmu.c fs/proc/proc_namespace.c \
+                   kernel/kallsyms.c kernel/reboot.c kernel/sys.c; do
             cnt=$(grep -c "susfs" "$f" 2>/dev/null || true)
-            echo "$f: $cnt 处 susfs 引用"
+            kcnt=$(grep -c "ksu_handle" "$f" 2>/dev/null || true)
+            echo "$f: $cnt 处 susfs, $kcnt 处 ksu_handle"
           done
 
       # ============================================================
@@ -112,9 +126,9 @@ jobs:
 
           echo "=== 修复 kallsyms.c (proc_ops → file_operations) ==="
           sed -i 's/struct proc_ops/struct file_operations/g' kernel/kallsyms.c
-          sed -i 's/\.proc_open\b/.open/g'      kernel/kallsyms.c
-          sed -i 's/\.proc_read\b/.read/g'      kernel/kallsyms.c
-          sed -i 's/\.proc_lseek\b/.llseek/g'   kernel/kallsyms.c
+          sed -i 's/\.proc_open\b/.open/g'       kernel/kallsyms.c
+          sed -i 's/\.proc_read\b/.read/g'       kernel/kallsyms.c
+          sed -i 's/\.proc_lseek\b/.llseek/g'    kernel/kallsyms.c
           sed -i 's/\.proc_release\b/.release/g' kernel/kallsyms.c
           sed -i 's/kallsyms_proc_ops/kallsyms_operations/g' kernel/kallsyms.c
           echo "✅ kallsyms.c 已修复"
@@ -158,18 +172,17 @@ jobs:
           find . -name "*.rej" | wc -l
 
       # ============================================================
-      # 5. 修复 stat.c 里 v2.1 残留的旧声明
+      # 5. 修复 stat.c 里 v2.1 残留的旧声明（保险）
       # ============================================================
       - name: Fix stat.c legacy declaration
         working-directory: kernel
         run: |
           sed -i '/extern void susfs_sus_kstat_spoof_generic_fillattr(struct inode \*inode, struct kstat \*stat);/d' fs/stat.c
-          echo "✅ 已删除 stat.c 旧声明"
+          echo "✅ 已删除 stat.c 旧声明（如有）"
           grep -n "susfs_sus_kstat_spoof_generic_fillattr" fs/stat.c || echo "无残留"
 
       # ============================================================
-      # 6. 应用 simonpunk v2.2.00 的 inline hooks 脚本
-      #    （解决 inline_hook_check.mk 报 ksu_handle_stat 缺失）
+      # 6. 应用 simonpunk v2.2.00 inline hooks 脚本
       # ============================================================
       - name: Apply ReSukiSU Inline Hooks (simonpunk v2.2.00)
         working-directory: kernel
@@ -291,9 +304,9 @@ jobs:
           sed -i 's/^device.name1=.*/device.name1=star/' "$AK3_DIR/anykernel.sh"
 
           cd $AK3_DIR
-          zip -r9 "../${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-clean6-sp-${TIME}.zip" ./*
+          zip -r9 "../${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-clean11-sp-${TIME}.zip" ./*
           cd ..
-          echo "zip_name=${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-clean6-sp-${TIME}.zip" >> $GITHUB_OUTPUT
+          echo "zip_name=${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-clean11-sp-${TIME}.zip" >> $GITHUB_OUTPUT
 
       # ============================================================
       # 11. 上传构建产物
@@ -301,21 +314,22 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kernel_susfs_v2.3.0_clean6_sp
-          path: ${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-clean6-sp-*.zip
+          name: kernel_susfs_v2.3.0_clean11_sp
+          path: ${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-clean11-sp-*.zip
 
       - name: Optional Release
         if: github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: susfs_v2.3.0_clean6_sp_${{ github.run_number }}
-          name: "SUSFS v2.3.0 (Clean 6 + Simonpunk Hooks)"
+          tag_name: susfs_v2.3.0_clean11_sp_${{ github.run_number }}
+          name: "SUSFS v2.3.0 (11 Clean Files + Simonpunk Hooks)"
           body: |
-            ## 测试内核 - SUSFS v2.3.0（6 个干净文件 + Simonpunk v2.2.00 Hooks）
+            ## 测试内核 - SUSFS v2.3.0（11 个干净文件 + Simonpunk v2.2.00 Hooks）
             - ReSukiSU main
-            - 覆盖 6 个干净文件 + 修复版本不匹配
+            - 覆盖 11 个干净文件（fs/namei.c, stat.c, namespace.c, exec.c, open.c, read_write.c, proc/task_mmu.c, proc_namespace.c, kernel/kallsyms.c, reboot.c, sys.c）
+            - 修复版本不匹配
             - 应用 simonpunk/backslashxx v2.2.00 inline hooks 脚本
             - 刷机有风险，请备份原内核
-          files: ${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-clean6-sp-*.zip
+          files: ${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-clean11-sp-*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
