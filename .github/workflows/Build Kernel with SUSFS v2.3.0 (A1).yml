@@ -64,12 +64,32 @@ jobs:
           rm clang.tar.xz
           ${{ env.CLANG_DIR }}/bin/clang --version
 
-      - name: Restore 6 clean files
+      - name: Restore 6 clean files (no SUSFS v2.1)
         working-directory: kernel
         run: |
-          tar xzf "${{ github.workspace }}/workflow_repo/clean6.tar.gz"
-          echo "✅ 6 个文件已覆盖"
-          grep -c "susfs" fs/namei.c || true
+          TARBALL="${{ github.workspace }}/workflow_repo/clean6.tar.gz"
+
+          if [ ! -f "$TARBALL" ]; then
+            echo "❌ 找不到 clean6.tar.gz: $TARBALL"
+            exit 1
+          fi
+
+          echo "=== 查看 tar 内容 ==="
+          tar tzf "$TARBALL"
+
+          echo "=== 解压到内核源码 ==="
+          tar xzf "$TARBALL"
+
+          echo "=== 验证残留 ==="
+          for f in fs/namei.c fs/stat.c fs/namespace.c \
+                   fs/proc/task_mmu.c fs/proc/proc_namespace.c kernel/kallsyms.c; do
+            if [ -f "$f" ]; then
+              cnt=$(grep -c "susfs" "$f" 2>/dev/null || true)
+              echo "$f: $cnt 处 susfs 引用"
+            else
+              echo "$f: ❌ 文件不存在"
+            fi
+          done
 
       - name: Setup ReSukiSU (main)
         working-directory: kernel
