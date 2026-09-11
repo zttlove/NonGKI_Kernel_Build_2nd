@@ -210,9 +210,10 @@ jobs:
           mkdir -p include/linux
           touch include/linux/seccomp_types.h
           echo "✅ 已创建占位文件，消除 grep 警告"
-            - name: Apply ReSukiSU SUSFS Inline Hooks to kernel
-              working-directory: kernel
-              run: |
+          
+      - name: Apply ReSukiSU SUSFS Inline Hooks to kernel
+        working-directory: kernel
+        run: |
           set +e   # 脚本内部有大量可选分支，容忍局部失败
           echo "=== 开始注入 ReSukiSU SUSFS Inline Hooks ==="
 
