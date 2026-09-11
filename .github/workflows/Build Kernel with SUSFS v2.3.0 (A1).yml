@@ -204,17 +204,17 @@ jobs:
           if ! grep -q "STATX_SUS_KSTAT" "$SUSFS_DEF"; then
             cat >> "$SUSFS_DEF" << 'EOF'
 
-/* SUSFS v2.3 additions */
-#ifndef STATX_SUS_KSTAT
-#define STATX_SUS_KSTAT 0x10000000U
-#endif
-#ifndef STATX_SUS_KSTAT_FUSE
-#define STATX_SUS_KSTAT_FUSE 0x20000000U
-#endif
-static inline bool susfs_is_current_app_uid(void) {
-    return ((current_uid().val % 100000) >= 10000);
-}
-EOF
+          /* SUSFS v2.3 additions */
+          #ifndef STATX_SUS_KSTAT
+          #define STATX_SUS_KSTAT 0x10000000U
+          #endif
+          #ifndef STATX_SUS_KSTAT_FUSE
+          #define STATX_SUS_KSTAT_FUSE 0x20000000U
+          #endif
+          static inline bool susfs_is_current_app_uid(void) {
+          return ((current_uid().val % 100000) >= 10000);
+          }
+          EOF
             echo "✅ 已补充 STATX_SUS_KSTAT / STATX_SUS_KSTAT_FUSE / susfs_is_current_app_uid"
           else
             echo "✅ 宏已存在"
