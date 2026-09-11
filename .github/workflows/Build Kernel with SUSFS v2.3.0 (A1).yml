@@ -168,10 +168,10 @@ jobs:
           echo "=== 2. 添加 v2.3 的 static_key extern 声明 ==="
           if ! grep -q "extern struct static_key_false susfs_is_hide_sus_mnts_for_non_su_procs_enabled" "$PN"; then
             sed -i '/^#include "internal.h"/a\
-#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\
-extern struct static_key_false susfs_is_hide_sus_mnts_for_non_su_procs_enabled;\
-extern bool susfs_is_current_ksu_domain(void);\
-#endif' "$PN"
+            #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\
+            extern struct static_key_false susfs_is_hide_sus_mnts_for_non_su_procs_enabled;\
+            extern bool susfs_is_current_ksu_domain(void);\
+            #endif' "$PN"
             echo "✅ 已添加 extern 声明"
           else
             echo "✅ extern 声明已存在"
