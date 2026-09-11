@@ -123,7 +123,14 @@ jobs:
 
           echo "✅ 修复完成"
           grep -n "get_pad_vma\|get_data_vma\|show_map_pad_vma\|pad_vma" "$T" || echo "无残留"
-
+     
+      - name: Fix stat.c legacy declaration
+        working-directory: kernel
+        run: |
+          sed -i '/extern void susfs_sus_kstat_spoof_generic_fillattr(struct inode \*inode, struct kstat \*stat);/d' fs/stat.c
+          echo "✅ 已删除旧声明"
+          grep -n "susfs_sus_kstat_spoof_generic_fillattr" fs/stat.c
+    
       - name: Setup ReSukiSU (main)
         working-directory: kernel
         run: |
