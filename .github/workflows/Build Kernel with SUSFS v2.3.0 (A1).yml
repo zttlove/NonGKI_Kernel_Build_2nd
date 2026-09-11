@@ -152,7 +152,39 @@ jobs:
           echo "✅ 已删除 stat.c 旧声明（如有）"
 
       # ============================================================
-      # 6. 修复 susfs_def.h v2.3 宏（调用独立 Python 脚本）
+      # 6. 修复 proc_namespace.c 缺失的 SUSFS_MOUNT 声明
+      # ============================================================
+      - name: Fix proc_namespace.c SUSFS_MOUNT declarations
+        working-directory: kernel
+        run: |
+          PN="fs/proc_namespace.c"
+
+          echo "=== 检查 proc_namespace.c 现状 ==="
+          grep -n "susfs" "$PN" | head -10 || echo "  无 susfs 引用"
+
+          echo "=== 1. 删除旧的 bool 声明 ==="
+          sed -i '/^extern bool susfs_hide_sus_mnts_for_non_su_procs;$/d' "$PN"
+
+          echo "=== 2. 添加 v2.3 的 static_key extern 声明 ==="
+          if ! grep -q "extern struct static_key_false susfs_is_hide_sus_mnts_for_non_su_procs_enabled" "$PN"; then
+            sed -i '/^#include "internal.h"/a\
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\
+extern struct static_key_false susfs_is_hide_sus_mnts_for_non_su_procs_enabled;\
+extern bool susfs_is_current_ksu_domain(void);\
+#endif' "$PN"
+            echo "✅ 已添加 extern 声明"
+          else
+            echo "✅ extern 声明已存在"
+          fi
+
+          echo "=== 3. 验证 ==="
+          grep -n "susfs_is_hide_sus_mnts_for_non_su_procs_enabled\|susfs_hide_sus_mnts_for_non_su_procs" "$PN" | head -10
+
+          echo "=== 4. 确认 susfs.c 里有对应定义 ==="
+          grep -n "DEFINE_STATIC_KEY_FALSE(susfs_is_hide_sus_mnts_for_non_su_procs_enabled)" fs/susfs.c || echo "  ❌ susfs.c 里没有对应定义！"
+
+      # ============================================================
+      # 7. 修复 susfs_def.h v2.3 宏（调用独立 Python 脚本）
       # ============================================================
       - name: Fix susfs_def.h v2.3 macros
         working-directory: kernel
@@ -174,7 +206,7 @@ jobs:
           tail -15 include/linux/susfs_def.h
 
       # ============================================================
-      # 7. 应用 simonpunk v2.2.00 inline hooks 脚本
+      # 8. 应用 simonpunk v2.2.00 inline hooks 脚本
       # ============================================================
       - name: Apply ReSukiSU Inline Hooks (simonpunk v2.2.00)
         working-directory: kernel
@@ -196,7 +228,7 @@ jobs:
           done
 
       # ============================================================
-      # 8. 创建占位文件
+      # 9. 创建占位文件
       # ============================================================
       - name: Create dummy seccomp_types.h
         working-directory: kernel
@@ -206,7 +238,7 @@ jobs:
           echo "✅ 已创建占位文件"
 
       # ============================================================
-      # 9. 配置内核
+      # 10. 配置内核
       # ============================================================
       - name: Configure Kernel
         working-directory: kernel
@@ -256,7 +288,7 @@ jobs:
           make olddefconfig O=${{ env.OUTPUT_DIR }}
 
       # ============================================================
-      # 10. 编译
+      # 11. 编译
       # ============================================================
       - name: Build Kernel
         working-directory: kernel
@@ -279,7 +311,7 @@ jobs:
           fi
 
       # ============================================================
-      # 11. 打包 AnyKernel3
+      # 12. 打包 AnyKernel3
       # ============================================================
       - name: Package AnyKernel3
         id: package
@@ -301,7 +333,7 @@ jobs:
           echo "zip_name=${{ env.DEVICE_CODENAME }}-SUSFS_v2.3.0-clean11-sp-${TIME}.zip" >> $GITHUB_OUTPUT
 
       # ============================================================
-      # 12. 上传
+      # 13. 上传
       # ============================================================
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -319,6 +351,7 @@ jobs:
             ## 测试内核 - SUSFS v2.3.0
             - ReSukiSU main
             - 覆盖 11 个干净文件 + 修复版本不匹配
+            - 修复 proc_namespace.c 的 SUSFS_MOUNT 声明
             - v2.3 宏通过独立 python 脚本处理
             - 应用 simonpunk/backslashxx v2.2.00 inline hooks 脚本
             - 刷机有风险，请备份原内核
