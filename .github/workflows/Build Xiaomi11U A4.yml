@@ -107,7 +107,7 @@ jobs:
       # 关键：修复必须放在 patch-susfs 之后、其他 patch 之前
       # 工作目录是 device_kernel，不是 kernel
       # ============================================================
-      - name: Fix namei.c missing found_sus_path and retry label
+      - name: ⚙️Fix namei.c missing found_sus_path and retry label
         working-directory: device_kernel
         run: |
           N="fs/namei.c"
