@@ -573,6 +573,60 @@ jobs:
           echo "✅ 已在 fs/stat.c 中添加 susfs_def.h include"
           fi
 
+      - name: Remove duplicate v2.3 susfs_alloc functions in namespace.c
+        working-directory: kernel
+        run: |
+          # 删除 v2.3 补丁新增的那一组（第 332 行以后的）
+          # 保留内核自带的 v2.1 版本（第 222 行那一组）
+          python3 - << 'EOF'
+          import re
+          path = 'fs/namespace.c'
+          with open(path) as f:
+          lines = f.readlines()
+          # 找出所有 susfs_alloc_unshare_ksu_vfsmnt 定义的起始行
+          def_starts = [i for i, l in enumerate(lines)
+          if re.match(r'^static struct mount \*susfs_alloc_unshare_ksu_vfsmnt\(', l)]
+          if len(def_starts) > 1:
+          # 保留第一个，删除第二个及其整个函数体（直到下一个顶层 }）
+          start = def_starts[1]
+          brace = 0
+          end = start
+          for i in range(start, len(lines)):
+            brace += lines[i].count('{') - lines[i].count('}')
+            if brace == 0 and i > start:
+                end = i
+                break
+           del lines[start:end+1]
+           print(f"✅ 删除重复的 susfs_alloc_unshare_ksu_vfsmnt: 行 {start+1}-{end+1}")
+
+           with open(path, 'w') as f:
+           f.writelines(lines)
+           EOF
+           # 同理处理 susfs_alloc_non_unshare_ksu_vfsmnt
+           python3 - << 'EOF'
+           import re
+           path = 'fs/namespace.c'
+           with open(path) as f:
+           lines = f.readlines()
+           def_starts = [i for i, l in enumerate(lines)
+           if re.match(r'^static struct mount \*susfs_alloc_non_unshare_ksu_vfsmnt\(', l)]
+           if len(def_starts) > 1:
+           start = def_starts[1]
+           brace = 0
+           end = start
+           for i in range(start, len(lines)):
+           brace += lines[i].count('{') - lines[i].count('}')
+           if brace == 0 and i > start:
+                end = i
+                break
+           del lines[start:end+1]
+           print(f"✅ 删除重复的 susfs_alloc_non_unshare_ksu_vfsmnt: 行 {start+1}-{end+1}")
+           with open(path, 'w') as f:
+           f.writelines(lines)
+           EOF
+           grep -c "susfs_alloc_unshare_ksu_vfsmnt" fs/namespace.c
+           grep -c "susfs_alloc_non_unshare_ksu_vfsmnt" fs/namespace.c
+
       - name: Configure Kernel
         working-directory: kernel
         run: |
