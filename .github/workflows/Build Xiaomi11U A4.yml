@@ -123,26 +123,6 @@ jobs:
       - name: 🔧 Patch Hide Stuff
         uses: ./.github/workflows/patch-hide-stuff
       
-      - name: 修正错误
-        run: |
-          cd "$GITHUB_WORKSPACE/device_kernel"
-          # 目标文件列表
-          GKI_INCOMPATIBLE_FILES=(
-          "fs/proc/task_mmu.c"
-          "kernel/kallsyms.c"
-          "fs/exec.c"
-          "fs/namei.c"
-          "fs/namespace.c"
-          "fs/proc_namespace.c"
-          )
-          echo "=== Reverting GKI-incompatible source files ==="
-          git checkout HEAD -- "${GKI_INCOMPATIBLE_FILES[@]}"
-          
-          
-
-
-         
-
           
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
