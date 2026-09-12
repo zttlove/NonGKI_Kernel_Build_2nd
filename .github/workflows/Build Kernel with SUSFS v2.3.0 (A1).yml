@@ -63,32 +63,7 @@ jobs:
           rm clang.tar.xz
           ${{ env.CLANG_DIR }}/bin/clang --version
 
-      # ============================================================
-      # 1. 【检测】仓库自带 SUSFS 状态
-      # ============================================================
-      - name: Detect repo-native SUSFS status
-        working-directory: kernel
-        run: |
-          echo "=== 仓库自带 SUSFS 相关文件 ==="
-          ls -la fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h 2>/dev/null || echo "（部分文件不存在）"
-
-          echo ""
-          echo "=== fs/susfs.c 是否存在 susfs_is_hide_sus_mnts_for_non_su_procs_enabled 定义 ==="
-          grep -n "DEFINE_STATIC_KEY_FALSE(susfs_is_hide_sus_mnts_for_non_su_procs_enabled)" fs/susfs.c \
-            || echo "（未找到）"
-
-          echo ""
-          echo "=== fs/namespace.c 里 SUSFS 函数分布 ==="
-          grep -n "susfs_alloc_unshare_ksu_vfsmnt\|susfs_alloc_non_unshare_ksu_vfsmnt" fs/namespace.c
-
-          echo ""
-          echo "=== 当前 namespace.c 关键符号 ==="
-          grep -n "^int ksys_mount\|^int ksys_umount\|^void __init mnt_init\|^struct kobject \*fs_kobj" fs/namespace.c
-
-          echo ""
-          echo "=== fs/Makefile 里 namespace.o ==="
-          grep -n "namespace" fs/Makefile
-
+      
       # ============================================================
       # 2. 安装 ReSukiSU（main 分支）
       # ============================================================
@@ -109,39 +84,7 @@ jobs:
           echo "source \"drivers/kernelsu/Kconfig\"" >> drivers/Kconfig
           echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
 
-      # ============================================================
-      # 3. 应用 simonpunk v2.2.00 inline hooks 脚本
-      # ============================================================
-      - name: Apply ReSukiSU Inline Hooks (simonpunk v2.2.00)
-        working-directory: kernel
-        run: |
-          SCRIPT="${{ github.workspace }}/workflow_repo/${{ env.INLINE_HOOKS_SCRIPT }}"
-          if [ ! -f "$SCRIPT" ]; then
-            echo "❌ 找不到脚本: $SCRIPT"
-            exit 1
-          fi
-          chmod +x "$SCRIPT"
-          bash "$SCRIPT" || true
-
-          echo ""
-          echo "=== 验证钩子 ==="
-          for f in fs/exec.c fs/open.c fs/read_write.c fs/stat.c \
-                   fs/namei.c drivers/input/input.c security/security.c \
-                   security/selinux/hooks.c kernel/reboot.c kernel/sys.c; do
-            cnt=$(grep -c "ksu_handle" "$f" 2>/dev/null | head -1)
-            echo "$f: ${cnt:-0} 处 ksu_handle"
-          done
-
-      # ============================================================
-      # 4. 创建占位文件
-      # ============================================================
-      - name: Create dummy seccomp_types.h
-        working-directory: kernel
-        run: |
-          mkdir -p include/linux
-          touch include/linux/seccomp_types.h
-          echo "✅ 已创建占位文件"
-
+      
       # ============================================================
       # 5. 配置内核
       # ============================================================
