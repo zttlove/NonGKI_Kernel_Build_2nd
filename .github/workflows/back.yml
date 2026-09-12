@@ -89,7 +89,9 @@ jobs:
             cat "$rej"
             echo "==================== end $rej ===================="
           done
-
+          
+          grep -n -A 10 "static void mnt_free_id" fs/namespace.concurrency: 
+      
       - name: Upload .rej files as artifact (if any)
         if: steps.apply_v22.outputs.PATCH_FAILED == 'true'
         uses: actions/upload-artifact@v4
