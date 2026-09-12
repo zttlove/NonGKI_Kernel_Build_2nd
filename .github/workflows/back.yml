@@ -89,10 +89,5 @@ jobs:
             cat "$rej"
             echo "==================== end $rej ===================="
           done
-          
-          sed -n '15,30p' fs/stat.c
-          grep "CONFIG_KSU_SUSFS_SUS_KSTAT" out/.config
-          grep -n "susfs_def.h" fs/stat.c
-          grep -n "STATX_SUS_KSTAT\|susfs_is_current_app_uid" include/linux/susfs_def.h
-          grep -n "susfs_is_current_app_uid\|STATX_SUS_KSTAT" include/linux/susfs_def.h
+          grep -n "1 << 2[0-9]\|1 << 30\|1 << 31" include/uapi/linux/stat.h
       
