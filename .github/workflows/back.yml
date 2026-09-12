@@ -34,4 +34,4 @@ jobs:
           echo "=== include/linux/susfs_def.h ==="
           grep -c "STATX_SUS_KSTAT\|susfs_is_current_app_uid" include/linux/susfs_def.h
 
-          grep -n "VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT" fs/namespace.c
+          grep -n "mnt_flags |=" fs/namespace.c
