@@ -105,14 +105,14 @@ jobs:
             scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
             --enable KSU \
             --enable INIT_ON_ALLOC_DEFAULT_ON \
-            --enable KSU_HOOK_INLINE \
-            --disable KSU_HOOK_TRACEPOINT \
+            --disable KSU_HOOK_INLINE \
+            --enable KSU_HOOK_TRACEPOINT \
             --disable KSU_HOOK_MANUAL \
             --enable KSU_SELINUX \
             --enable KSU_ZYGISK \
-            --disable KPROBES \
-            --disable HAVE_KPROBES \
-            --disable KPROBE_EVENTS \
+            --enable KPROBES \
+            --enable HAVE_KPROBES \
+            --enable KPROBE_EVENTS \
             --enable KALLSYMS \
             --enable KALLSYMS_ALL \
             --enable MODULES \
@@ -131,7 +131,7 @@ jobs:
             --enable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
             --enable KSU_SUSFS_ENABLE_LOG \
             --enable KSU_SUSFS_SUS_SU \
-            --set-val CONFIG_FRAME_WARN 3072
+            --set-val FRAME_WARN 3072
 
           make olddefconfig O=${{ env.OUTPUT_DIR }}
 
