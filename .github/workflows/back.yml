@@ -34,4 +34,6 @@ jobs:
           echo "=== include/linux/susfs_def.h ==="
           grep -c "STATX_SUS_KSTAT\|susfs_is_current_app_uid" include/linux/susfs_def.h
 
-          grep -n "1 << 2[0-9]\|1 << 30\|1 << 31" include/uapi/linux/stat.h
+          # A1 workflow 里 Build Kernel 的报错
+          grep -E "error:|Error 1" kernel/build.log | head -20
+          # back.yml 里最后一个挂掉的 step 名
