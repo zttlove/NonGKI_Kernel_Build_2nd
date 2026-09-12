@@ -138,6 +138,8 @@ jobs:
           echo ""
           echo "=== 最终 .config 里 SUSFS 相关项 ==="
           grep "KSU_SUSFS" ${{ env.OUTPUT_DIR }}/.config | sort
+          cat drivers/kernelsu/kernel/tools/inline_hook_check.mk
+          grep -rn "ksu_handle_" drivers/kernelsu/kernel/ | head -30
 
       # ============================================================
       # 6. 编译（输出 build.log 便于排查）
