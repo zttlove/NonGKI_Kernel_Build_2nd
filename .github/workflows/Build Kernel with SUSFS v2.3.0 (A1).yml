@@ -14,7 +14,7 @@ env:
   CLANG_DIR: "${{ github.workspace }}/clang"
   CCACHE_DIR: "${{ github.workspace }}/.ccache"
   KERNEL_DIR: "${{ github.workspace }}/kernel"
-  
+
 
 jobs:
   build:
@@ -42,12 +42,10 @@ jobs:
             bc bison flex libelf-dev libssl-dev libncurses-dev \
             make python3 device-tree-compiler git curl xz-utils \
             ccache zip unzip
-
           echo "正在修复 libtinfo.so.5 依赖..."
           if ! sudo apt install -y libtinfo5; then
             sudo ln -sf /lib/x86_64-linux-gnu/libtinfo.so.6 /lib/x86_64-linux-gnu/libtinfo.so.5
           fi
-
           if [ ! -f /lib/x86_64-linux-gnu/libtinfo.so.5 ]; then
             echo "::error::修复失败！libtinfo.so.5 仍然不存在。"
             exit 1
@@ -63,9 +61,8 @@ jobs:
           rm clang.tar.xz
           ${{ env.CLANG_DIR }}/bin/clang --version
 
-      
       # ============================================================
-      # 2. 安装 ReSukiSU（main 分支）
+      # 2. 安装 ReSukiSU（main 分支，pin 到 b2ac2fc）
       # ============================================================
       - name: Setup ReSukiSU (main)
         working-directory: kernel
@@ -76,7 +73,6 @@ jobs:
           cd drivers/kernelsu
           git checkout b2ac2fc
           cd ../..
-
           echo "source \"drivers/kernelsu/kernel/Kconfig\"" > drivers/kernelsu/Kconfig
           echo "obj-\$(CONFIG_KSU) += kernel/" > drivers/kernelsu/Makefile
           sed -i '/source "drivers\/kernelsu\/Kconfig"/d' drivers/Kconfig || true
@@ -84,7 +80,6 @@ jobs:
           echo "source \"drivers/kernelsu/Kconfig\"" >> drivers/Kconfig
           echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
 
-      
       # ============================================================
       # 5. 配置内核
       # ============================================================
@@ -98,11 +93,9 @@ jobs:
           ccache -M 6G
           export LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- \
                  CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
-
           make mrproper || true
           make -j$(nproc) O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
-
-            scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
+          scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
             --enable KSU \
             --enable INIT_ON_ALLOC_DEFAULT_ON \
             --disable KSU_HOOK_INLINE \
@@ -132,14 +125,16 @@ jobs:
             --enable KSU_SUSFS_ENABLE_LOG \
             --enable KSU_SUSFS_SUS_SU \
             --set-val FRAME_WARN 3072
-
           make olddefconfig O=${{ env.OUTPUT_DIR }}
-
+          echo ""
+          echo "=== 最终 .config 里 KSU_HOOK 相关项 ==="
+          grep "KSU_HOOK" ${{ env.OUTPUT_DIR }}/.config | sort
+          echo ""
+          echo "=== 最终 .config 里 KPROBES 相关项 ==="
+          grep "KPROBES" ${{ env.OUTPUT_DIR }}/.config | sort
           echo ""
           echo "=== 最终 .config 里 SUSFS 相关项 ==="
           grep "KSU_SUSFS" ${{ env.OUTPUT_DIR }}/.config | sort
-          cat drivers/kernelsu/kernel/tools/inline_hook_check.mk
-          grep -rn "ksu_handle_" drivers/kernelsu/kernel/ | head -30
 
       # ============================================================
       # 6. 编译（输出 build.log 便于排查）
@@ -155,23 +150,18 @@ jobs:
           ccache -M 6G
           export LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- \
                  CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
-
           make -j$(nproc) O=${{ env.OUTPUT_DIR }} \
             KCFLAGS="-Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-array-parameter -Wno-declaration-after-statement" \
             2>&1 | tee build.log
-
           echo ""
           echo "=== namespace.o 是否编译成功 ==="
           grep -E "CC\s+fs/namespace\.o" build.log && echo "✅" || echo "❌ 未编译！"
-
           echo ""
           echo "=== namespace.c 的 error ==="
           grep -iE "namespace\.c.*error" build.log | head -20 || echo "（无）"
-
           echo ""
           echo "=== 最终 undefined symbol ==="
           grep -iE "undefined symbol" build.log | head -30 || echo "（无）"
-
           if [ ! -f "${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image" ]; then
             echo "ERROR: Kernel Image not found!"
             exit 1
@@ -188,12 +178,10 @@ jobs:
           IMG_PATH="${{ env.KERNEL_DIR }}/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image"
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git $AK3_DIR
           cp -f "$IMG_PATH" "$AK3_DIR/Image"
-
           sed -i 's/^do.devicecheck=1/do.devicecheck=0/' "$AK3_DIR/anykernel.sh"
           sed -i 's/^BLOCK=.*/BLOCK=boot/' "$AK3_DIR/anykernel.sh"
           sed -i 's/^IS_SLOT_DEVICE=0/IS_SLOT_DEVICE=1/' "$AK3_DIR/anykernel.sh"
           sed -i 's/^device.name1=.*/device.name1=star/' "$AK3_DIR/anykernel.sh"
-
           cd $AK3_DIR
           zip -r9 "../${{ env.DEVICE_CODENAME }}-SUSFS-reponative-sp-${TIME}.zip" ./*
           cd ..
@@ -221,12 +209,12 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: susfs_reponative_sp_${{ github.run_number }}
-          name: "SUSFS (Repo-native + Simonpunk Hooks)"
+          name: "SUSFS (Repo-native + KPROBES Hook)"
           body: |
             ## 测试内核 - 仓库自带 SUSFS
-            - ReSukiSU main
-            - 仓库自带 SUSFS（未打 v2.3 补丁，避免重复定义冲突）
-            - 应用 simonpunk/backslashxx v2.2.00 inline hooks 脚本
+            - ReSukiSU b2ac2fc (v35089)
+            - 仓库自带 SUSFS
+            - KPROBES/Tracepoint Hook（非 Inline Hook）
             - 刷机有风险，请备份原内核
           files: ${{ env.DEVICE_CODENAME }}-SUSFS-reponative-sp-*.zip
         env:
