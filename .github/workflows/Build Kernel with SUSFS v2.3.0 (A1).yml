@@ -14,7 +14,7 @@ env:
   CLANG_DIR: "${{ github.workspace }}/clang"
   CCACHE_DIR: "${{ github.workspace }}/.ccache"
   KERNEL_DIR: "${{ github.workspace }}/kernel"
-  INLINE_HOOKS_SCRIPT: "inline_hooks_simonpunk.sh"
+  
 
 jobs:
   build:
