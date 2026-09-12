@@ -89,9 +89,10 @@ jobs:
             cat "$rej"
             echo "==================== end $rej ===================="
           done
-         
-          grep -n "struct vm_area_struct \*vma" fs/proc/task_mmu.c
-          grep -n "susfs_def.h" fs/proc/task_mmu.c
+          grep -c "SUSFS_IS_INODE_SUS_MAP" fs/proc/task_mmu.c   # 期望 1
+          grep -c "bypass_orig_flow"       fs/proc/task_mmu.c   # 期望 2
+
+
           
           
 
