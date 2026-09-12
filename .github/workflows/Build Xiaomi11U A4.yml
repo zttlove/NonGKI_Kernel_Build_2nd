@@ -13,7 +13,7 @@ env:
   EXTRA_CMDS : "LD=ld.lld LLVM=1 LLVM_IAS=1"
   KCFLAGS_EXTRA : "-Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-array-parameter -Wno-declaration-after-statement -fno-stack-protector"
 
-  KERNEL_SOURCE : "https://github.com/MiYume0721/android_kernel_xiaomi_sm8350_miyume.git"
+  KERNEL_SOURCE : "zttlove/android_kernel_xiaomi_sm8350_miyume"
   KERNEL_BRANCH : "main"
 
   CLANG_SOURCE : "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-18.04.tar.xz"
@@ -36,8 +36,8 @@ env:
   KERNELSU_AUTO_GET : "true"
   KERNELSU_AUTO_FORK : "xxksu"
 
-  SUSFS_ENABLE : false
-  SUSFS_FIXED : false
+  SUSFS_ENABLE : true
+  SUSFS_FIXED : true
 
   AK3_SOURCE : "https://github.com/osm0sis/Anykernel3.git"
   AK3_BRANCH : "master"
