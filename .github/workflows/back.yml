@@ -94,5 +94,5 @@ jobs:
           grep "CONFIG_KSU_SUSFS_SUS_KSTAT" out/.config
           grep -n "susfs_def.h" fs/stat.c
           grep -n "STATX_SUS_KSTAT\|susfs_is_current_app_uid" include/linux/susfs_def.h
-          
+          grep -n "susfs_is_current_app_uid\|STATX_SUS_KSTAT" include/linux/susfs_def.h
       
