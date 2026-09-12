@@ -36,3 +36,6 @@ jobs:
 
           echo "=== fs/susfs.c ==="
           grep -c "susfs_is_inode_sus_kstat\|susfs_sus_kstat_spoof_generic_fillattr" fs/susfs.c
+
+          grep -c "#ifdef" fs/namespace.c
+          grep -c "#endif" fs/namespace.c
