@@ -91,14 +91,14 @@ jobs:
           echo ""
           echo "=== 替换为空操作 ==="
           cat > drivers/kernelsu/kernel/tools/inline_hook_check.mk << 'EOF'
-# Bypassed by workflow - 跳过 ReSukiSU 强制 inline hook 检查
-define check_ksu_hook
-endef
-define check_ksu_hook_incompatible
-endef
-define check_ksu_manual_guard
-endef
-EOF
+          # Bypassed by workflow - 跳过 ReSukiSU 强制 inline hook 检查
+          define check_ksu_hook
+          endef
+          define check_ksu_hook_incompatible
+          endef
+          define check_ksu_manual_guard
+          endef
+          EOF
           echo "=== 替换后 ==="
           cat drivers/kernelsu/kernel/tools/inline_hook_check.mk
 
