@@ -78,7 +78,7 @@ jobs:
           cd ../..
 
           echo "source \"drivers/kernelsu/kernel/Kconfig\"" > drivers/kernelsu/Kconfig
-          echo "obj-y += kernel/" > drivers/kernelsu/Makefile
+          echo "obj-\$(CONFIG_KSU) += kernel/" > drivers/kernelsu/Makefile
           sed -i '/source "drivers\/kernelsu\/Kconfig"/d' drivers/Kconfig || true
           sed -i '/obj-\$(CONFIG_KSU) += kernelsu\//d' drivers/Makefile || true
           echo "source \"drivers/kernelsu/Kconfig\"" >> drivers/Kconfig
