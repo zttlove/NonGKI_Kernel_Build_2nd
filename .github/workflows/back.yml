@@ -89,8 +89,9 @@ jobs:
             cat "$rej"
             echo "==================== end $rej ===================="
           done
-          grep -n "susfs_def.h\|SUSFS_IS_INODE_SUS_MAP" fs/proc/base.c
          
+          grep -n "struct vm_area_struct \*vma" fs/proc/task_mmu.c
+          grep -n "susfs_def.h" fs/proc/task_mmu.c
           
           
 
