@@ -89,8 +89,11 @@ jobs:
             cat "$rej"
             echo "==================== end $rej ===================="
           done
-          grep -c "SUSFS_IS_INODE_SUS_MAP" fs/proc/task_mmu.c.rej
-          grep -c "bypass_orig_flow"       fs/proc/task_mmu.c.rej
+          grep -rn "susfs_is_current_app_uid" include/linux/susfs*.h
+          grep -rn "susfs_sus_kstat_spoof_vfs_statfs\|susfs_is_inode_sus_kstat" fs/susfs.c include/linux/susfs.h
+          grep -rn "SUSFS_IS_INODE_OPEN_REDIRECT" include/linux/susfs_def.h
+
+
 
 
           
