@@ -1,4 +1,4 @@
-name: Build Kernel with SUSFS (Repo-native + Simonpunk Hooks)
+name: Build Kernel with SUSFS (A1)
 
 on:
   workflow_dispatch:
