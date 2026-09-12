@@ -90,11 +90,7 @@ jobs:
             echo "==================== end $rej ===================="
           done
 
-          
-          # 1 个 .rej 对应的关键符号，逐个 grep
-           sed -n '55,75p'  fs/stat.c
-           sed -n '95,115p' fs/stat.c
-           cat fs/stat.c.rej
+          grep -n "susfs_sus_kstat_spoof_generic_fillattr" fs/stat.c
           
       - name: Upload .rej files as artifact (if any)
         if: steps.apply_v22.outputs.PATCH_FAILED == 'true'
