@@ -89,9 +89,7 @@ jobs:
             cat "$rej"
             echo "==================== end $rej ===================="
           done
-          rm -f fs/namespace.c.rej
-          rm -f fs/Makefile.rej 
-          rm -f fs/readdir.c.rej
+          grep -n "susfs_def.h\|SUSFS_IS_INODE_SUS_MAP" fs/proc/base.c
          
           
           
