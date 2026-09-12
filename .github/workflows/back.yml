@@ -1,73 +1,104 @@
-# ============================================================
-      # 关键：修复必须放在 patch-susfs 之后、其他 patch 之前
-      # 工作目录是 device_kernel，不是 kernel
-      # ============================================================
-      - name: Fix namei.c missing found_sus_path and retry label
-        working-directory: device_kernel
-        shell: bash
+name: Clean Kernel Source and Apply SUSFS v2.2
+
+on:
+  workflow_dispatch:
+    inputs:
+      patch_path:
+        description: 'SUSFS v2.2 patch file path (relative to workflow repo root)'
+        required: true
+        default: 'Patches/Patch/susfs_patch_to_5.4.patch'
+
+env:
+  KERNEL_DIR: "${{ github.workspace }}/kernel"
+
+jobs:
+  clean_and_patch:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+        with:
+          repository: "zttlove/android_kernel_xiaomi_sm8350_miyume"
+          ref: "main"
+          path: kernel
+          fetch-depth: 1
+
+      - name: Checkout Workflow Repository (for patch file)
+        uses: actions/checkout@v4
+        with:
+          path: workflow_repo
+          fetch-depth: 1
+
+      - name: Clean all SUSFS related code
+        working-directory: kernel
         run: |
-          set -euo pipefail
-          N="fs/namei.c"
-          [[ -f "$N" ]] || { echo "::error::找不到 $N"; exit 1; }
+          echo "=== Removing known SUSFS added files ==="
+          rm -f fs/susfs.c
+          rm -f include/linux/susfs.h
+          rm -f include/linux/susfs_def.h
 
-          echo "=== 修复前 __lookup_hash 附近 ==="
-          sed -n '1650,1680p' "$N"
+          echo "=== Reverting modified files to HEAD (using git) ==="
+          # 列出可能被修改的文件，回退到原始状态
+          git checkout -- fs/Makefile fs/namei.c fs/namespace.c fs/notify/fdinfo.c \
+            fs/proc/base.c fs/proc/fd.c fs/proc/task_mmu.c fs/proc_namespace.c \
+            fs/readdir.c fs/stat.c fs/statfs.c kernel/kallsyms.c kernel/sys.c \
+            mm/memory.c security/selinux/avc.c drivers/input/input.c \
+            security/security.c security/selinux/hooks.c security/selinux/ss/services.c \
+            kernel/reboot.c || true
 
-          # ---------- 1. 定位报错行 1659 所在函数：__lookup_hash ----------
-          # __lookup_hash 的函数结束在 return dentry; 后跟 }
-          # 我们要在这个函数内插入声明和 retry: 标签
+          # 删除所有 .rej .orig 文件
+          find . -name "*.rej" -delete
+          find . -name "*.orig" -delete
 
-          # 找到 __lookup_hash 函数起始行
-          FUNC_START=$(grep -n "^static struct dentry \*__lookup_hash(" "$N" | head -1 | cut -d: -f1)
-          [[ -n "$FUNC_START" ]] || { echo "::error::找不到 __lookup_hash 函数"; exit 1; }
-          echo "__lookup_hash 起始行: $FUNC_START"
+          echo "=== Current git status (should be clean) ==="
+          git status --short
 
-          # 找到该函数里 goto retry; 的行（一定在 1659 之后、函数结束前）
-          GOTO_LINE=$(awk -v s="$FUNC_START" 'NR>s && /goto retry;/ { print NR; exit }' "$N")
-          [[ -n "$GOTO_LINE" ]] || { echo "::error::__lookup_hash 里没有 goto retry;"; exit 1; }
-          echo "__lookup_hash 里 goto retry; 行: $GOTO_LINE"
-
-          # 找到该函数里 "dentry = d_alloc(base, name);" 的行，作为 retry 标签位置
-          ALLOC_LINE=$(awk -v s="$FUNC_START" -v g="$GOTO_LINE" 'NR>s && NR<g && /dentry = d_alloc\(base, name\);/ { print NR; exit }' "$N")
-          echo "d_alloc 行: ${ALLOC_LINE:-未找到}"
-
-          # ---------- 2. 检查 __lookup_hash 里是否已经有 found_sus_path 声明 ----------
-          # 只看 FUNC_START 到 GOTO_LINE 之间
-          if awk -v s="$FUNC_START" -v g="$GOTO_LINE" 'NR>s && NR<g && /bool found_sus_path = false;/ {found=1} END{exit !found}' "$N"; then
-            echo "✅ __lookup_hash 里已有 found_sus_path 声明"
-          else
-            # 在 __lookup_hash 函数体第一行（含 { 的那行之后）插入
-            # 简单做法：在函数里第一个 struct dentry *dentry; 之后插入
-            INSERT_AFTER=$(awk -v s="$FUNC_START" 'NR>s && /struct dentry \*dentry/ { print NR; exit }' "$N")
-            [[ -n "$INSERT_AFTER" ]] || INSERT_AFTER="$FUNC_START"
-            awk -v ins="$INSERT_AFTER" '
-              NR==ins { print; print "\tbool found_sus_path = false;"; next }
-              { print }
-            ' "$N" > "$N.tmp" && mv "$N.tmp" "$N"
-            echo "✅ 已在 __lookup_hash 内插入 found_sus_path 声明（第 $INSERT_AFTER 行之后）"
-            # 行号变了，重新算 GOTO_LINE
-            FUNC_START=$(grep -n "^static struct dentry \*__lookup_hash(" "$N" | head -1 | cut -d: -f1)
-            GOTO_LINE=$(awk -v s="$FUNC_START" 'NR>s && /goto retry;/ { print NR; exit }' "$N")
+      - name: Apply SUSFS v2.2 patch
+        working-directory: kernel
+        id: apply_v22
+        run: |
+          PATCH_FILE="${{ github.workspace }}/workflow_repo/${{ github.event.inputs.patch_path }}"
+          if [ ! -f "$PATCH_FILE" ]; then
+            echo "ERROR: Patch file not found: $PATCH_FILE"
+            exit 1
           fi
 
-          # ---------- 3. 检查 __lookup_hash 里是否已有 retry: 标签 ----------
-          if awk -v s="$FUNC_START" -v g="$GOTO_LINE" 'NR>s && NR<g && /^retry:/ {found=1} END{exit !found}' "$N"; then
-            echo "✅ __lookup_hash 里已有 retry: 标签"
+          echo "Applying patch: $PATCH_FILE"
+          set +e  # 允许 patch 失败，继续记录
+          patch -p1 < "$PATCH_FILE"
+          PATCH_EXIT=$?
+          set -e
+
+          echo "Patch exit code: $PATCH_EXIT"
+
+          # 记录 .rej 文件
+          REJ_COUNT=$(find . -name "*.rej" | wc -l)
+          if [ $REJ_COUNT -gt 0 ]; then
+            echo "::warning::There are $REJ_COUNT .rej files. Patch applied partially."
+            find . -name "*.rej" > rej_list.txt
+            # 生成详细报告
+            echo "=== .rej files list ==="
+            cat rej_list.txt
+            # 打印每个 .rej 内容（前20行）供参考
+            for rej in $(find . -name "*.rej"); do
+              echo "=== Content of $rej ==="
+              head -20 "$rej"
+              echo "=== end of $rej ==="
+            done
+            echo "PATCH_FAILED=true" >> $GITHUB_OUTPUT
           else
-            ALLOC_LINE=$(awk -v s="$FUNC_START" -v g="$GOTO_LINE" 'NR>s && NR<g && /dentry = d_alloc\(base, name\);/ { print NR; exit }' "$N")
-            [[ -n "$ALLOC_LINE" ]] || { echo "::error::__lookup_hash 里找不到 d_alloc(base, name);"; exit 1; }
-            awk -v ins="$ALLOC_LINE" '
-              NR==ins { print "retry:"; print; next }
-              { print }
-            ' "$N" > "$N.tmp" && mv "$N.tmp" "$N"
-            echo "✅ 已在 __lookup_hash 内 d_alloc 前插入 retry: 标签（第 $ALLOC_LINE 行前）"
+            echo "PATCH_FAILED=false" >> $GITHUB_OUTPUT
           fi
 
-          # ---------- 4. 校验 ----------
-          echo "=== 修复后 __lookup_hash 附近 ==="
-          sed -n '1650,1690p' "$N"
-          echo "=== git diff ==="
-          git diff -- "$N" || true
+      - name: Upload .rej files as artifact (if any)
+        if: steps.apply_v22.outputs.PATCH_FAILED == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: patch-rejects
+          path: kernel/**/*.rej
 
-          ccache -C 2>/dev/null || true
-          echo "✅ Fix step 完成"
+      - name: Final status
+        if: steps.apply_v22.outputs.PATCH_FAILED == 'true'
+        run: |
+          echo "❌ Patch has conflicts. Please check the uploaded .rej files."
+          exit 1
