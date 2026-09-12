@@ -1,18 +1,10 @@
-name: Clean Kernel Source and Apply SUSFS v2.3
+name: Verify SUSFS in Kernel Source
 
 on:
   workflow_dispatch:
-    inputs:
-      patch_path:
-        description: 'SUSFS v2.3 patch file path (relative to workflow repo root)'
-        required: true
-        default: 'Patches/Patch/susfs_patch_to_5.4.patch'
-
-env:
-  KERNEL_DIR: "${{ github.workspace }}/kernel"
 
 jobs:
-  clean_and_patch:
+  verify:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout Kernel Source
@@ -23,71 +15,24 @@ jobs:
           path: kernel
           fetch-depth: 1
 
-      - name: Checkout Workflow Repository (for patch file)
-        uses: actions/checkout@v4
-        with:
-          path: workflow_repo
-          fetch-depth: 1
-
-      - name: Clean all SUSFS related code
+      - name: Verify SUSFS modifications exist
         working-directory: kernel
         run: |
-          echo "=== Removing known SUSFS added files ==="
-          rm -f fs/susfs.c
-          rm -f include/linux/susfs.h
-          rm -f include/linux/susfs_def.h
+          echo "=== fs/readdir.c ==="
+          grep -c "susfs_is_inode_sus_path" fs/readdir.c
+          grep -c "struct inode \*inode" fs/readdir.c
 
-          echo "=== Reverting modified files to HEAD (using git) ==="
-          git checkout -- fs/Makefile fs/namei.c fs/namespace.c fs/notify/fdinfo.c \
-            fs/proc/base.c fs/proc/fd.c fs/proc/task_mmu.c fs/proc_namespace.c \
-            fs/readdir.c fs/stat.c fs/statfs.c kernel/kallsyms.c kernel/sys.c \
-            mm/memory.c security/selinux/avc.c drivers/input/input.c \
-            security/security.c security/selinux/hooks.c security/selinux/ss/services.c \
-            kernel/reboot.c || true
+          echo "=== fs/stat.c ==="
+          grep -c "susfs_sus_kstat_spoof_generic_fillattr" fs/stat.c
 
-          find . -name "*.rej" -delete
-          find . -name "*.orig" -delete
+          echo "=== fs/statfs.c ==="
+          grep -c "susfs_statfs_by_dentry" fs/statfs.c
 
-          echo "=== Current git status (should be clean) ==="
-          git status --short
+          echo "=== fs/namespace.c ==="
+          grep -c "VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT" fs/namespace.c
 
-      - name: Apply SUSFS v2.3 patch
-        working-directory: kernel
-        id: apply_v22
-        run: |
-          PATCH_FILE="${{ github.workspace }}/workflow_repo/${{ github.event.inputs.patch_path }}"
-          if [ ! -f "$PATCH_FILE" ]; then
-            echo "ERROR: Patch file not found: $PATCH_FILE"
-            exit 1
-          fi
+          echo "=== include/linux/susfs_def.h ==="
+          grep -c "STATX_SUS_KSTAT\|susfs_is_current_app_uid" include/linux/susfs_def.h
 
-          echo "Applying patch: $PATCH_FILE"
-          set +e
-          patch -p1 < "$PATCH_FILE"
-          PATCH_EXIT=$?
-          set -e
-
-          echo "Patch exit code: $PATCH_EXIT"
-
-          REJ_COUNT=$(find . -name "*.rej" | wc -l)
-          if [ $REJ_COUNT -gt 0 ]; then
-            echo "::warning::There are $REJ_COUNT .rej files. Patch applied partially."
-            find . -name "*.rej" > rej_list.txt
-            echo "=== .rej files list ==="
-            cat rej_list.txt
-            echo "PATCH_FAILED=true" >> $GITHUB_OUTPUT
-          else
-            echo "PATCH_FAILED=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Show all .rej contents
-        if: steps.apply_v22.outputs.PATCH_FAILED == 'true'
-        working-directory: kernel
-        run: |
-          for rej in $(find . -name "*.rej"); do
-            echo "==================== $rej ===================="
-            cat "$rej"
-            echo "==================== end $rej ===================="
-          done
-          grep -n "1 << 2[0-9]\|1 << 30\|1 << 31" include/uapi/linux/stat.h
-      
+          echo "=== fs/susfs.c ==="
+          grep -c "susfs_is_inode_sus_kstat\|susfs_sus_kstat_spoof_generic_fillattr" fs/susfs.c
