@@ -34,8 +34,6 @@ jobs:
           echo "=== include/linux/susfs_def.h ==="
           grep -c "STATX_SUS_KSTAT\|susfs_is_current_app_uid" include/linux/susfs_def.h
 
-          echo "=== fs/susfs.c ==="
-          grep -c "susfs_is_inode_sus_kstat\|susfs_sus_kstat_spoof_generic_fillattr" fs/susfs.c
-
+          grep -n "#ifdef\|#endif" fs/namespace.c
           grep -c "#ifdef" fs/namespace.c
           grep -c "#endif" fs/namespace.c
