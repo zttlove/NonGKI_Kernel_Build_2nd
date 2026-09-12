@@ -89,7 +89,18 @@ jobs:
           else
             echo "PATCH_FAILED=false" >> $GITHUB_OUTPUT
           fi
-
+          
+      - name: Show namespace.c.rej
+        if: steps.apply_v22.outputs.PATCH_FAILED == 'true'
+        working-directory: kernel
+        run: |
+          if [ -f fs/namespace.c.rej ]; then
+          echo "===== fs/namespace.c.rej ====="
+          cat fs/namespace.c.rej
+          else
+          echo "fs/namespace.c.rej not found"
+           fi
+    
       - name: Upload .rej files as artifact (if any)
         if: steps.apply_v22.outputs.PATCH_FAILED == 'true'
         uses: actions/upload-artifact@v4
