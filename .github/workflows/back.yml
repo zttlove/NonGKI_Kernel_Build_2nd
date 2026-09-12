@@ -91,9 +91,15 @@ jobs:
           done
 
           
-          grep -n "susfs_ksu_sid\|susfs_priv_app_sid\|susfs_is_avc_log_spoofing_enabled" security/selinux/avc.c
-          grep -n "bypass_orig_flow" security/selinux/avc.c
-
+          # 11 个 .rej 对应的关键符号，逐个 grep
+          grep -rn "susfs_is_inode_sus_path" fs/readdir.c              # 期望 5
+          grep -rn "susfs_def.h" fs/proc/base.c fs/proc/task_mmu.c fs/proc/fd.c fs/statfs.c
+          grep -rn "susfs_spoof_cmdline_or_bootconfig" fs/proc/cmdline.c
+          grep -rn "susfs_spoof_uname" kernel/sys.c                    # 期望 2
+          grep -rn "susfs_ksu_sid" security/selinux/avc.c              # 期望 2
+          grep -rn "VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT" fs/namespace.c
+          grep -rn "susfs" fs/Makefile
+          grep -rn "susfs_statfs_by_dentry\|SUSFS_IS_INODE_SUS_KSTAT" fs/statfs.c
 
 
           
