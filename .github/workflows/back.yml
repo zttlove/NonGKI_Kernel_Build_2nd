@@ -37,3 +37,4 @@ jobs:
           grep -c "^#ifdef" fs/namespace.c
           grep -c "^#ifndef" fs/namespace.c
           grep -c "^#endif" fs/namespace.c
+          grep -c "^#endif" fs/namespace.c
