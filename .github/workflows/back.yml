@@ -90,7 +90,7 @@ jobs:
             echo "==================== end $rej ===================="
           done
           
-          grep -n -A 10 "static void mnt_free_id" fs/namespace.concurrency: 
+         
           grep -n "susfs_is_inode_sus_path" fs/readdir.c
       
       - name: Upload .rej files as artifact (if any)
