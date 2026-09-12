@@ -95,7 +95,8 @@ jobs:
           grep -n "susfs_get_data_path"         fs/readdir.c   # 期望 5 处（FUSE 分支）
           grep -n "path_put"                    fs/readdir.c   # 期望 5 处
           grep -n "extern.*susfs_"              fs/readdir.c   # 期望 2 处
-      
+          make fs/readdir.o
+          
       - name: Upload .rej files as artifact (if any)
         if: steps.apply_v22.outputs.PATCH_FAILED == 'true'
         uses: actions/upload-artifact@v4
