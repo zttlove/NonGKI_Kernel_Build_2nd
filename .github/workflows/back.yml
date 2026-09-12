@@ -100,7 +100,7 @@ jobs:
           grep -rn "VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT" fs/namespace.c
           grep -rn "susfs" fs/Makefile
           grep -rn "susfs_statfs_by_dentry\|SUSFS_IS_INODE_SUS_KSTAT" fs/statfs.c
-
+          grep -n "susfs" fs/stat.c
 
           
           
