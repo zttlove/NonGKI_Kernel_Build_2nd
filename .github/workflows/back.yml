@@ -89,9 +89,10 @@ jobs:
             cat "$rej"
             echo "==================== end $rej ===================="
           done
-          rm -f fs/readdir.c.rej
           rm -f fs/namespace.c.rej
           rm -f fs/Makefile.rej 
+          rm -f fs/readdir.c.rej
+         
           
           
 
