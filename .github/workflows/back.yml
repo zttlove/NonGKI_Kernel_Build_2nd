@@ -53,7 +53,7 @@ jobs:
           echo "=== Current git status (should be clean) ==="
           git status --short
 
-      - name: Apply SUSFS v2.2 patch
+      - name: Apply SUSFS v2.3 patch
         working-directory: kernel
         id: apply_v22
         run: |
