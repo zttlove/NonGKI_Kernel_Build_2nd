@@ -1,10 +1,10 @@
-name: Clean Kernel Source and Apply SUSFS v2.2
+name: Clean Kernel Source and Apply SUSFS v2.3
 
 on:
   workflow_dispatch:
     inputs:
       patch_path:
-        description: 'SUSFS v2.2 patch file path (relative to workflow repo root)'
+        description: 'SUSFS v2.3 patch file path (relative to workflow repo root)'
         required: true
         default: 'Patches/Patch/susfs_patch_to_5.4.patch'
 
