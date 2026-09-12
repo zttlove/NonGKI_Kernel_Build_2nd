@@ -89,8 +89,8 @@ jobs:
             cat "$rej"
             echo "==================== end $rej ===================="
           done
-          grep -n "SUSFS_IS_INODE_SUS_MAP" fs/proc/task_mmu.c
-          grep -n "bypass_orig_flow"       fs/proc/task_mmu.c
+          grep -c "SUSFS_IS_INODE_SUS_MAP" fs/proc/task_mmu.c.rej
+          grep -c "bypass_orig_flow"       fs/proc/task_mmu.c.rej
 
 
           
