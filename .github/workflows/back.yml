@@ -89,18 +89,10 @@ jobs:
             cat "$rej"
             echo "==================== end $rej ===================="
           done
-
-          grep -n "susfs_sus_kstat_spoof_generic_fillattr" fs/stat.c
           
-      - name: Upload .rej files as artifact (if any)
-        if: steps.apply_v22.outputs.PATCH_FAILED == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: patch-rejects
-          path: kernel/**/*.rej
-
-      - name: Final status
-        if: steps.apply_v22.outputs.PATCH_FAILED == 'true'
-        run: |
-          echo "❌ Patch has conflicts. Please check the uploaded .rej files."
-          exit 1
+          sed -n '15,30p' fs/stat.c
+          grep "CONFIG_KSU_SUSFS_SUS_KSTAT" out/.config
+          grep -n "susfs_def.h" fs/stat.c
+          grep -n "STATX_SUS_KSTAT\|susfs_is_current_app_uid" include/linux/susfs_def.h
+          
+      
