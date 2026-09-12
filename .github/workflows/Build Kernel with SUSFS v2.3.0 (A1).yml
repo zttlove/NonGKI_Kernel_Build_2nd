@@ -157,6 +157,8 @@ jobs:
           echo ""
           echo "=== 最终 .config 里 SUSFS 相关项 ==="
           grep "KSU_SUSFS" ${{ env.OUTPUT_DIR }}/.config | sort || echo "（无）"
+          grep -n "susfs_def.h" fs/stat.c
+          grep -n "STATX_SUS_KSTAT" include/linux/susfs_def.h
 
       # ============================================================
       # 6. 编译（输出 build.log 便于排查）
