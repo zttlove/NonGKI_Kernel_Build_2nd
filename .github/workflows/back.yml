@@ -34,4 +34,4 @@ jobs:
           echo "=== include/linux/susfs_def.h ==="
           grep -c "STATX_SUS_KSTAT\|susfs_is_current_app_uid" include/linux/susfs_def.h
 
-         awk '/#ifdef/ {a[NR]=$0} /#endif/ {b[NR]=$0} END {print "ifdef:", length(a); print "endif:", length(b); for (i in a) print "  " i ": " a[i]}' fs/namespace.c
+          awk '/#ifdef/ {a[NR]=$0} /#endif/ {b[NR]=$0} END {print "ifdef:", length(a); print "endif:", length(b); for (i in a) print "  " i ": " a[i]}' fs/namespace.c
