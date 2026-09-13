@@ -71,7 +71,7 @@ jobs:
           rm -rf drivers/kernelsu
           git clone https://github.com/ReSukiSU/ReSukiSU.git drivers/kernelsu
           cd drivers/kernelsu
-          git checkout b2ac2fc
+          git log --oneline -1
           cd ../..
           echo "source \"drivers/kernelsu/kernel/Kconfig\"" > drivers/kernelsu/Kconfig
           echo "obj-\$(CONFIG_KSU) += kernel/" > drivers/kernelsu/Makefile
