@@ -18,10 +18,4 @@ jobs:
       - name: Verify SUSFS modifications exist
         working-directory: kernel
         run: |  
-          grep -n "susfs_is_inode_sus_kstat\|susfs_sus_kstat_spoof_vfs_statfs\|susfs_get_non_sus_vfsmnt_from_vfsmnt\|susfs_get_non_sus_mnt_id_from_mnt" fs/susfs.c
-          echo "---"
-          grep -n "susfs_sus_kstat_spoof_generic_fillattr" fs/susfs.c
-          echo "---"
-          grep -n "sus_mnt\|susfs_sus_mnt" fs/susfs.c | head -20
-          echo "---"
-          grep -n "susfs_is_inode_sus_path" fs/susfs.c
+          grep -n "STATX_SUS_KSTAT\|susfs_get_non_sus\|st_susfs_sus_kstat_hlist" include/linux/susfs_def.h include/linux/susfs.h
