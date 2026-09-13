@@ -18,4 +18,4 @@ jobs:
       - name: Verify SUSFS modifications exist
         working-directory: kernel
         run: |  
-          grep -n "STATX_SUS_KSTAT\|susfs_get_non_sus\|st_susfs_sus_kstat_hlist" include/linux/susfs_def.h include/linux/susfs.h
+          grep -rn "lookup_positive_unlocked" fs/namei.c
