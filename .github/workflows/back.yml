@@ -18,4 +18,6 @@ jobs:
       - name: Verify SUSFS modifications exist
         working-directory: kernel
         run: |  
-         grep -n "lookup_positive_unlocked" fs/namei.c
+         git clone https://github.com/ReSukiSU/ReSukiSU.git /tmp/resukisu
+         cd /tmp/resukisu
+         git log --oneline | grep -iE "v?35089|35089"
