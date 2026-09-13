@@ -148,16 +148,7 @@ jobs:
             --enable KSU_SUSFS_SUS_SU \
             --set-val FRAME_WARN 3072
           make olddefconfig O=${{ env.OUTPUT_DIR }}
-          echo ""
-          echo "=== 最终 .config 里 KSU_HOOK 相关项 ==="
-          grep "KSU_HOOK" ${{ env.OUTPUT_DIR }}/.config | sort || echo "（无）"
-          echo ""
-          echo "=== 最终 .config 里 KPROBES 相关项 ==="
-          grep "KPROBES" ${{ env.OUTPUT_DIR }}/.config | sort || echo "（无）"
-          echo ""
-          echo "=== 最终 .config 里 SUSFS 相关项 ==="
-          grep "KSU_SUSFS" ${{ env.OUTPUT_DIR }}/.config | sort || echo "（无）"
-          grep -n "susfs_def.h" fs/stat.c
+          
          
 
       # ============================================================
