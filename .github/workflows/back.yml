@@ -35,5 +35,7 @@ jobs:
           grep -c "STATX_SUS_KSTAT\|susfs_is_current_app_uid" include/linux/susfs_def.h
 
 
-          sed -n '124,140p' fs/namespace.c
-          grep -n "susfs_def.h" fs/namespace.c
+          grep -n "susfs_is_inode_sus_kstat" fs/susfs.c
+          grep -n "susfs_sus_kstat_spoof_vfs_statfs" fs/susfs.c
+          grep -n "susfs_get_non_sus_vfsmnt_from_vfsmnt" fs/susfs.c
+          grep -n "susfs_get_non_sus_mnt_id_from_mnt" fs/susfs.c
