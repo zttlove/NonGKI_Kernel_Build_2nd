@@ -169,7 +169,7 @@ jobs:
             KCFLAGS="-Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-array-parameter -Wno-declaration-after-statement" \
             2>&1 | tee build.log
           echo ""
-           echo "=== namei.c 编译错误 ==="
+          echo "=== namei.c 编译错误 ==="
           grep -n -B2 -A5 "namei.c.*error\|error.*namei.c\|CC.*fs/namei" build.log | head -60
           echo ""
           echo "=== namespace.o 是否编译成功 ==="
@@ -184,8 +184,6 @@ jobs:
             echo "ERROR: Kernel Image not found!"
             exit 1
           fi
-
-          grep -n "namei.c" build.log
 
       # ============================================================
       # 7. 打包 AnyKernel3
