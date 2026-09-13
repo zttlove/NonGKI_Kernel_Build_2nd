@@ -18,4 +18,4 @@ jobs:
       - name: Verify SUSFS modifications exist
         working-directory: kernel
         run: |  
-          grep -n "namei.c" build.log | head -40
+          grep -n "namei" fs/Makefile
