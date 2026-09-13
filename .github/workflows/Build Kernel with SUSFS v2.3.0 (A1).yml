@@ -164,25 +164,24 @@ jobs:
           export CCACHE_DIR="${{ env.CCACHE_DIR }}"
           ccache -M 6G
           export LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- \
-                 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           make -j$(nproc) O=${{ env.OUTPUT_DIR }} \
-            KCFLAGS="-Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-array-parameter -Wno-declaration-after-statement" \
-            2>&1 | tee build.log
+          KCFLAGS="-Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-array-parameter -Wno-declaration-after-statement" \
+          2>&1 | tee build.log
+
           echo ""
-          echo "=== namei.c 编译错误 ==="
-          grep -n -B2 -A5 "namei.c.*error\|error.*namei.c\|CC.*fs/namei" build.log | head -60
+          echo "=== fs/namei.c 相关日志 ==="
+          grep -n "namei" build.log | head -60
           echo ""
-          echo "=== namespace.o 是否编译成功 ==="
-          grep -E "CC\s+fs/namespace\.o" build.log && echo "✅" || echo "❌ 未编译！"
+          echo "=== 所有 error 行 ==="
+          grep -n "error:" build.log | head -60
           echo ""
-          echo "=== namespace.c 的 error ==="
-          grep -iE "namespace\.c.*error" build.log | head -20 || echo "（无）"
-          echo ""
-          echo "=== 最终 undefined symbol ==="
+          echo "=== 所有 undefined symbol ==="
           grep -iE "undefined symbol" build.log | head -30 || echo "（无）"
+
           if [ ! -f "${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image" ]; then
-            echo "ERROR: Kernel Image not found!"
-            exit 1
+          echo "ERROR: Kernel Image not found!"
+          exit 1
           fi
 
       # ============================================================
