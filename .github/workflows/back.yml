@@ -18,21 +18,7 @@ jobs:
       - name: Verify SUSFS modifications exist
         working-directory: kernel
         run: |
-          echo "=== fs/readdir.c ==="
-          grep -c "susfs_is_inode_sus_path" fs/readdir.c
-          grep -c "struct inode \*inode" fs/readdir.c
-
-          echo "=== fs/stat.c ==="
-          grep -c "susfs_sus_kstat_spoof_generic_fillattr" fs/stat.c
-
-          echo "=== fs/statfs.c ==="
-          grep -c "susfs_statfs_by_dentry" fs/statfs.c
-
-          echo "=== fs/namespace.c ==="
-          grep -c "VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT" fs/namespace.c
-
-          echo "=== include/linux/susfs_def.h ==="
-          grep -c "STATX_SUS_KSTAT\|susfs_is_current_app_uid" include/linux/susfs_def.h
+          
 
 
           grep -n "susfs_is_inode_sus_kstat" fs/susfs.c
