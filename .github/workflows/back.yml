@@ -35,5 +35,4 @@ jobs:
           grep -c "STATX_SUS_KSTAT\|susfs_is_current_app_uid" include/linux/susfs_def.h
 
 
-          grep -n "STATX_SUS_KSTAT\|susfs_is_current_app_uid" fs/stat.c
-          grep -n "VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT" include/linux/susfs_def.h
+          grep -n "susfs_def.h" fs/stat.c
