@@ -18,6 +18,4 @@ jobs:
       - name: Verify SUSFS modifications exist
         working-directory: kernel
         run: |  
-         git clone https://github.com/ReSukiSU/ReSukiSU.git /tmp/resukisu
-         cd /tmp/resukisu
-         git log --oneline | grep -iE "v?35089|35089"
+          grep -n "namei.c" build.log | head -40
