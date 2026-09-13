@@ -169,6 +169,9 @@ jobs:
             KCFLAGS="-Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-array-parameter -Wno-declaration-after-statement" \
             2>&1 | tee build.log
           echo ""
+           echo "=== namei.c 编译错误 ==="
+          grep -n -B2 -A5 "namei.c.*error\|error.*namei.c\|CC.*fs/namei" build.log | head -60
+          echo ""
           echo "=== namespace.o 是否编译成功 ==="
           grep -E "CC\s+fs/namespace\.o" build.log && echo "✅" || echo "❌ 未编译！"
           echo ""
