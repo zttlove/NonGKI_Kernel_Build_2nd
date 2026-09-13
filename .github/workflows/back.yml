@@ -18,5 +18,4 @@ jobs:
       - name: Verify SUSFS modifications exist
         working-directory: kernel
         run: |  
-         grep -n "lookup_one_len_unlocked" fs/namei.c include/linux/namei.h
-         grep -n "d_really_is_negative" include/linux/dcache.h
+         grep -n "lookup_positive_unlocked" fs/namei.c
