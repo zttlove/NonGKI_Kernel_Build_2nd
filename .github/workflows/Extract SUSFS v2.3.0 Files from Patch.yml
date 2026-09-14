@@ -1,4 +1,4 @@
-name: Extract SUSFS Files from Patch
+name: Update SUSFS files from patch
 
 on:
   workflow_dispatch:
@@ -6,12 +6,16 @@ on:
 env:
   KERNEL_REPO: "zttlove/android_kernel_xiaomi_sm8350_miyume"
   KERNEL_BRANCH: "main"
-  PATCH_PATH: "Patches/Patch/susfs_patch_to_5.4.patch"   # ← 改成实际存在的补丁名
+  PATCH_PATH: "Patches/Patch/susfs_patch_to_5.4.patch"
 
 jobs:
-  extract:
+  update:
     runs-on: ubuntu-22.04
     steps:
+
+      # ============================================================
+      # 1. Checkout 内核源码（用 PAT，才有 push 权限）
+      # ============================================================
       - name: Checkout Kernel Source
         uses: actions/checkout@v4
         with:
@@ -19,33 +23,44 @@ jobs:
           ref: ${{ env.KERNEL_BRANCH }}
           path: kernel
           fetch-depth: 1
+          token: ${{ secrets.KERNEL_PAT }}
 
-      - name: Checkout Workflow Repo (for patch)
+      # ============================================================
+      # 2. Checkout workflow repo（拿补丁文件）
+      # ============================================================
+      - name: Checkout Workflow Repo
         uses: actions/checkout@v4
         with:
           path: workflow_repo
           fetch-depth: 1
 
-      - name: Locate and verify patch file
+      # ============================================================
+      # 3. 定位并验证补丁文件
+      # ============================================================
+      - name: Locate and verify patch
         id: locate
         run: |
           set -e
           PATCH="${{ github.workspace }}/workflow_repo/${{ env.PATCH_PATH }}"
           echo "检查补丁: $PATCH"
           if [ ! -f "$PATCH" ]; then
-            echo "ERROR: 补丁不存在"
-            find "${{ github.workspace }}/workflow_repo" -name "*.patch"
+            echo "::error::补丁文件不存在"
+            echo "=== workflow_repo 里所有 .patch ==="
+            find "${{ github.workspace }}/workflow_repo" -name "*.patch" || true
             exit 1
           fi
-          echo "=== 补丁文件大小 ==="
+          echo "=== 补丁行数 ==="
           wc -l "$PATCH"
-          echo "=== 补丁包含的文件 ==="
+          echo "=== 补丁包含的 diff 段 ==="
           grep "^diff --git" "$PATCH" || true
           echo "=== 补丁最后 5 行 ==="
           tail -5 "$PATCH"
           echo "patch_file=$PATCH" >> $GITHUB_OUTPUT
 
-      - name: Extract three files
+      # ============================================================
+      # 4. 删除旧文件 + 用补丁重新生成三个文件
+      # ============================================================
+      - name: Extract and overwrite three files
         working-directory: kernel
         run: |
           set -e
@@ -54,7 +69,7 @@ jobs:
           echo "=== 删除旧文件 ==="
           rm -f fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h
 
-          echo "=== git apply 三个文件 ==="
+          echo "=== git apply 只应用这三个文件 ==="
           git apply \
             --include='fs/susfs.c' \
             --include='include/linux/susfs.h' \
@@ -62,36 +77,47 @@ jobs:
             "$PATCH"
 
           echo ""
-          echo "=== 验证 ==="
+          echo "=== 验证文件已生成 ==="
           for f in fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h; do
-            [ -f "$f" ] || { echo "❌ 缺失: $f"; exit 1; }
+            if [ ! -f "$f" ]; then
+              echo "::error::缺失 $f"
+              exit 1
+            fi
             wc -l "$f"
           done
 
           echo ""
-          echo -n "susfs_is_inode_sus_kstat: "
+          echo "=== 验证关键函数/宏 ==="
+          echo -n "susfs_is_inode_sus_kstat:            "
           grep -c "susfs_is_inode_sus_kstat" fs/susfs.c || true
-          echo -n "susfs_sus_kstat_spoof_vfs_statfs: "
+          echo -n "susfs_sus_kstat_spoof_vfs_statfs:    "
           grep -c "susfs_sus_kstat_spoof_vfs_statfs" fs/susfs.c || true
-          echo -n "susfs_get_non_sus_vfsmnt_from_vfsmnt: "
+          echo -n "susfs_get_non_sus_vfsmnt_from_vfsmnt:"
           grep -c "susfs_get_non_sus_vfsmnt_from_vfsmnt" fs/susfs.c || true
-          echo -n "susfs_get_non_sus_mnt_id_from_mnt: "
+          echo -n "susfs_get_non_sus_mnt_id_from_mnt:   "
           grep -c "susfs_get_non_sus_mnt_id_from_mnt" fs/susfs.c || true
-          echo -n "STATX_SUS_KSTAT: "
+          echo -n "STATX_SUS_KSTAT (def.h):             "
           grep -c "STATX_SUS_KSTAT" include/linux/susfs_def.h || true
           echo -n "VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT: "
           grep -c "VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT" include/linux/susfs_def.h || true
 
+      # ============================================================
+      # 5. 提交并推送到内核仓库
+      # ============================================================
       - name: Commit and push
         working-directory: kernel
         run: |
           set -e
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
           git add fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h
+
           if git diff --cached --quiet; then
-            echo "无变化"
+            echo "无变化，跳过提交"
             exit 0
           fi
-          git commit -m "Add SUSFS files from patch"
+
+          git commit -m "Update SUSFS files from patch"
           git push origin HEAD:${{ env.KERNEL_BRANCH }}
+          echo "✅ 已推送"
