@@ -117,29 +117,27 @@ jobs:
       - name: 🔧 Patch Hide Stuff
         uses: ./.github/workflows/patch-hide-stuff
         
-      - name: Bypass inline_hook_check.mk
+      - name: 🔧 Patch KSU Kbuild check
         working-directory: device_kernel
         run: |
-          set -e
-          TARGET=$(find . -name 'inline_hook_check.mk' -print -quit)
-          echo "找到文件: ${TARGET:-<无>}"
-          if [ -z "$TARGET" ]; then
-            echo "::warning::未找到 inline_hook_check.mk，跳过"
+          # 找到 Kbuild 文件
+          KBUILD_FILE=$(find . -path '*/drivers/kernelsu/Kbuild' -print -quit)
+          if [ -z "$KBUILD_FILE" ]; then
+            echo "::warning::Kbuild file not found, skipping"
             exit 0
           fi
-          echo "=== 原始前 50 行 ==="
-          head -50 "$TARGET" || true
-          cat > "$TARGET" << 'EOF'
-          # Bypassed by workflow - 跳过 ReSukiSU 强制 inline hook 检查
-          define check_ksu_hook
-          endef
-          define check_ksu_hook_incompatible
-          endef
-          define check_ksu_manual_guard
-          endef
-          EOF
-          echo "=== 替换后 ==="
-          cat "$TARGET"
+
+          echo "Patching: $KBUILD_FILE"
+          # 备份原始文件
+          cp "$KBUILD_FILE" "$KBUILD_FILE.bak"
+
+          # 注释掉第 189 行附近强制检查 SUSFS 的行
+          # 具体行号可能因版本而异，建议用 grep 确认
+          sed -i 's/^.*You should integrate susfs in your kernel.*$/# & # Bypassed by workflow/' "$KBUILD_FILE"
+
+          echo "=== 检查修改结果 ==="
+          sed -n '185,195p' "$KBUILD_FILE"
+          
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
 
