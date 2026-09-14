@@ -103,6 +103,8 @@ jobs:
 
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs
+          cd $GITHUB_WORKSPACE/device_kernel/
+          cat fs/proc/task_mmu.c.rej
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
