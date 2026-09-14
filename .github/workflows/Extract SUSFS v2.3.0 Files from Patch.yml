@@ -14,6 +14,21 @@ jobs:
     steps:
 
       # ============================================================
+      # 0. 检查 KERNEL_PAT 是否配置
+      # ============================================================
+      - name: Check KERNEL_PAT secret
+        run: |
+          if [ -z "${{ secrets.KERNEL_PAT }}" ]; then
+            echo "::error::KERNEL_PAT secret 未配置！"
+            echo "请到 https://github.com/zttlove/NonGKI_Kernel_Build_2nd/settings/secrets/actions"
+            echo "新建一个名为 KERNEL_PAT 的 secret，值为 GitHub Personal Access Token（勾 repo 权限）"
+            exit 1
+          fi
+          echo "✅ KERNEL_PAT 已配置（长度: ${#KERNEL_PAT}）"
+        env:
+          KERNEL_PAT: ${{ secrets.KERNEL_PAT }}
+
+      # ============================================================
       # 1. Checkout 内核源码（用 PAT，才有 push 权限）
       # ============================================================
       - name: Checkout Kernel Source
@@ -88,17 +103,17 @@ jobs:
 
           echo ""
           echo "=== 验证关键函数/宏 ==="
-          echo -n "susfs_is_inode_sus_kstat:            "
+          echo -n "susfs_is_inode_sus_kstat:             "
           grep -c "susfs_is_inode_sus_kstat" fs/susfs.c || true
-          echo -n "susfs_sus_kstat_spoof_vfs_statfs:    "
+          echo -n "susfs_sus_kstat_spoof_vfs_statfs:     "
           grep -c "susfs_sus_kstat_spoof_vfs_statfs" fs/susfs.c || true
-          echo -n "susfs_get_non_sus_vfsmnt_from_vfsmnt:"
+          echo -n "susfs_get_non_sus_vfsmnt_from_vfsmnt: "
           grep -c "susfs_get_non_sus_vfsmnt_from_vfsmnt" fs/susfs.c || true
-          echo -n "susfs_get_non_sus_mnt_id_from_mnt:   "
+          echo -n "susfs_get_non_sus_mnt_id_from_mnt:    "
           grep -c "susfs_get_non_sus_mnt_id_from_mnt" fs/susfs.c || true
-          echo -n "STATX_SUS_KSTAT (def.h):             "
+          echo -n "STATX_SUS_KSTAT (def.h):              "
           grep -c "STATX_SUS_KSTAT" include/linux/susfs_def.h || true
-          echo -n "VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT: "
+          echo -n "VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT:  "
           grep -c "VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT" include/linux/susfs_def.h || true
 
       # ============================================================
@@ -120,4 +135,4 @@ jobs:
 
           git commit -m "Update SUSFS files from patch"
           git push origin HEAD:${{ env.KERNEL_BRANCH }}
-          echo "✅ 已推送"
+          echo "✅ 已推送到 ${{ env.KERNEL_REPO }}"
