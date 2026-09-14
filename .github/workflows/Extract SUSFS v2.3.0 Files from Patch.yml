@@ -1,0 +1,98 @@
+name: Extract SUSFS v2.3.0 Files from Patch
+
+on:
+  workflow_dispatch:
+
+env:
+  KERNEL_REPO: "zttlove/android_kernel_xiaomi_sm8350_miyume"
+  KERNEL_BRANCH: "main"
+  PATCH_PATH: "Patches/Patch/susfs-v2.3.0.patch"
+
+jobs:
+  extract:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.KERNEL_REPO }}
+          ref: ${{ env.KERNEL_BRANCH }}
+          path: kernel
+          fetch-depth: 1
+
+      - name: Checkout Workflow Repo (for patch)
+        uses: actions/checkout@v4
+        with:
+          path: workflow_repo
+          fetch-depth: 1
+
+      - name: Locate patch file
+        id: locate
+        run: |
+          set -e
+          PATCH="${{ github.workspace }}/workflow_repo/${{ env.PATCH_PATH }}"
+          if [ ! -f "$PATCH" ]; then
+            echo "ERROR: Patch file not found: $PATCH"
+            echo "=== workflow_repo 里的补丁文件 ==="
+            find "${{ github.workspace }}/workflow_repo" -name "*.patch" | head -20
+            exit 1
+          fi
+          echo "patch_file=$PATCH" >> $GITHUB_OUTPUT
+
+      - name: Extract susfs.c / susfs.h / susfs_def.h from patch
+        working-directory: kernel
+        run: |
+          set -e
+          PATCH="${{ steps.locate.outputs.patch_file }}"
+
+          echo "=== 删除旧文件（如存在）==="
+          rm -f fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h
+
+          echo "=== 用 git apply 只应用这三个文件 ==="
+          git apply \
+            --include='fs/susfs.c' \
+            --include='include/linux/susfs.h' \
+            --include='include/linux/susfs_def.h' \
+            "$PATCH"
+
+          echo ""
+          echo "=== 验证文件已生成 ==="
+          for f in fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h; do
+            if [ ! -f "$f" ]; then
+              echo "❌ 缺失: $f"
+              exit 1
+            fi
+            wc -l "$f"
+          done
+
+          echo ""
+          echo "=== 验证关键函数/宏 ==="
+          echo -n "susfs_is_inode_sus_kstat: "
+          grep -c "susfs_is_inode_sus_kstat" fs/susfs.c || true
+          echo -n "susfs_sus_kstat_spoof_vfs_statfs: "
+          grep -c "susfs_sus_kstat_spoof_vfs_statfs" fs/susfs.c || true
+          echo -n "susfs_get_non_sus_vfsmnt_from_vfsmnt: "
+          grep -c "susfs_get_non_sus_vfsmnt_from_vfsmnt" fs/susfs.c || true
+          echo -n "susfs_get_non_sus_mnt_id_from_mnt: "
+          grep -c "susfs_get_non_sus_mnt_id_from_mnt" fs/susfs.c || true
+          echo -n "STATX_SUS_KSTAT (def.h): "
+          grep -c "STATX_SUS_KSTAT" include/linux/susfs_def.h || true
+          echo -n "VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT (def.h): "
+          grep -c "VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT" include/linux/susfs_def.h || true
+
+      - name: Commit and push
+        working-directory: kernel
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h
+
+          if git diff --cached --quiet; then
+            echo "没有变化，无需提交"
+            exit 0
+          fi
+
+          git commit -m "Add SUSFS v2.3.0 files from patch"
+          git push origin HEAD:${{ env.KERNEL_BRANCH }}
