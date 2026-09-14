@@ -178,6 +178,9 @@ jobs:
           echo ""
           echo "=== 所有 undefined symbol ==="
           grep -iE "undefined symbol" build.log | head -30 || echo "（无）"
+          echo "===================================="
+          grep -n "susfs_open_redirect_spoof_vfs_statfs" fs/statfs.c   # 期望 0
+          grep -n "susfs_open_redirect_spoof_seq_show" fs/proc/fd.c    # 期望 0
 
           if [ ! -f "${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image" ]; then
           echo "ERROR: Kernel Image not found!"
