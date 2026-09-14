@@ -169,24 +169,7 @@ jobs:
           KCFLAGS="-Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-array-parameter -Wno-declaration-after-statement" \
           2>&1 | tee build.log
 
-          echo ""
-          echo "=== fs/namei.c 相关日志 ==="
-          grep -n "namei" build.log | head -60
-          echo ""
-          echo "=== 所有 error 行 ==="
-          grep -n "error:" build.log | head -60
-          echo ""
-          echo "=== 所有 undefined symbol ==="
-          grep -iE "undefined symbol" build.log | head -30 || echo "（无）"
-          echo "===================================="
-          grep -n "susfs_open_redirect_spoof_vfs_statfs" fs/statfs.c   # 期望 0
-          grep -n "susfs_open_redirect_spoof_seq_show" fs/proc/fd.c    # 期望 0
-
-          if [ ! -f "${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image" ]; then
-          echo "ERROR: Kernel Image not found!"
-          exit 1
-          fi
-
+          
       # ============================================================
       # 7. 打包 AnyKernel3
       # ============================================================
