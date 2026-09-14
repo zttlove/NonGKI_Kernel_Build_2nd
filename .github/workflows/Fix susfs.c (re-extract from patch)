@@ -1,0 +1,85 @@
+name: Fix susfs.c (re-extract from patch)
+
+on:
+  workflow_dispatch:
+
+env:
+  KERNEL_REPO: "zttlove/android_kernel_xiaomi_sm8350_miyume"
+  KERNEL_BRANCH: "main"
+  PATCH_PATH: "Patches/Patch/susfs_patch_to_5.4.patch"
+
+jobs:
+  fix:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.KERNEL_REPO }}
+          ref: ${{ env.KERNEL_BRANCH }}
+          path: kernel
+          fetch-depth: 1
+          token: ${{ secrets.KERNEL_PAT }}
+
+      - name: Checkout Workflow Repo
+        uses: actions/checkout@v4
+        with:
+          path: workflow_repo
+          fetch-depth: 1
+
+      - name: Verify current susfs.c is polluted
+        working-directory: kernel
+        run: |
+          echo "=== 当前 susfs.c 行数 ==="
+          wc -l fs/susfs.c
+          echo ""
+          echo "=== 检查是否有 stat.c 函数（应为 0）==="
+          echo -n "generic_fillattr: "
+          grep -c "generic_fillattr" fs/susfs.c || true
+          echo -n "vfs_getattr: "
+          grep -c "vfs_getattr" fs/susfs.c || true
+          echo -n "vfs_statx: "
+          grep -c "vfs_statx" fs/susfs.c || true
+
+      - name: Re-extract susfs.c from patch
+        working-directory: kernel
+        run: |
+          set -e
+          PATCH="${{ github.workspace }}/workflow_repo/${{ env.PATCH_PATH }}"
+
+          echo "=== 删除旧 susfs.c ==="
+          rm -f fs/susfs.c
+
+          echo "=== 从补丁重新提取 ==="
+          git apply --include='fs/susfs.c' "$PATCH"
+
+          echo ""
+          echo "=== 验证新 susfs.c ==="
+          wc -l fs/susfs.c
+          echo ""
+          echo "=== 应该有 susfs 函数，不应该有 stat.c 函数 ==="
+          echo -n "susfs_is_inode_sus_kstat (应 >0): "
+          grep -c "susfs_is_inode_sus_kstat" fs/susfs.c || true
+          echo -n "susfs_sus_kstat_spoof_generic_fillattr (应 >0): "
+          grep -c "susfs_sus_kstat_spoof_generic_fillattr" fs/susfs.c || true
+          echo -n "generic_fillattr (应 =0): "
+          grep -c "generic_fillattr" fs/susfs.c || true
+          echo -n "vfs_getattr (应 =0): "
+          grep -c "vfs_getattr" fs/susfs.c || true
+          echo -n "vfs_statx (应 =0): "
+          grep -c "vfs_statx" fs/susfs.c || true
+
+      - name: Commit and push
+        working-directory: kernel
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add fs/susfs.c
+          if git diff --cached --quiet; then
+            echo "无变化"
+            exit 0
+          fi
+          git commit -m "Fix fs/susfs.c: re-extract from patch"
+          git push origin HEAD:${{ env.KERNEL_BRANCH }}
+          echo "✅ 已推送"
