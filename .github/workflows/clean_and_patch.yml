@@ -82,7 +82,7 @@ jobs:
             # 打印每个 .rej 内容（前20行）供参考
             for rej in $(find . -name "*.rej"); do
               echo "=== Content of $rej ==="
-              head -300 "$rej"
+              
               echo "=== end of $rej ==="
             done
             echo "PATCH_FAILED=true" >> $GITHUB_OUTPUT
