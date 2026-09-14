@@ -36,8 +36,8 @@ env:
   KERNELSU_AUTO_GET : "true"
   KERNELSU_AUTO_FORK : "resukisu"
 
-  SUSFS_ENABLE : true
-  SUSFS_FIXED : true
+  SUSFS_ENABLE : false
+  SUSFS_FIXED : false
 
   AK3_SOURCE : "https://github.com/osm0sis/Anykernel3.git"
   AK3_BRANCH : "master"
@@ -117,27 +117,7 @@ jobs:
       - name: 🔧 Patch Hide Stuff
         uses: ./.github/workflows/patch-hide-stuff
         
-      - name: 🔧 Patch KSU Kbuild check
-        working-directory: device_kernel
-        run: |
-          # 找到 Kbuild 文件
-          KBUILD_FILE=$(find . -path '*/drivers/kernelsu/Kbuild' -print -quit)
-          if [ -z "$KBUILD_FILE" ]; then
-            echo "::warning::Kbuild file not found, skipping"
-            exit 0
-          fi
-
-          echo "Patching: $KBUILD_FILE"
-          # 备份原始文件
-          cp "$KBUILD_FILE" "$KBUILD_FILE.bak"
-
-          # 注释掉第 189 行附近强制检查 SUSFS 的行
-          # 具体行号可能因版本而异，建议用 grep 确认
-          sed -i 's/^.*You should integrate susfs in your kernel.*$/# & # Bypassed by workflow/' "$KBUILD_FILE"
-
-          echo "=== 检查修改结果 ==="
-          sed -n '185,195p' "$KBUILD_FILE"
-          
+      
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
 
