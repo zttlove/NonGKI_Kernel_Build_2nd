@@ -120,11 +120,15 @@ jobs:
       - name: Bypass inline_hook_check.mk
         working-directory: device_kernel
         run: |
-          TARGET=drivers/kernelsu/kernel/tools/inline_hook_check.mk
-          echo "=== 原始 inline_hook_check.mk 前 50 行 ==="
+          set -e
+          TARGET=$(find . -name 'inline_hook_check.mk' -print -quit)
+          echo "找到文件: ${TARGET:-<无>}"
+          if [ -z "$TARGET" ]; then
+            echo "::warning::未找到 inline_hook_check.mk，跳过"
+            exit 0
+          fi
+          echo "=== 原始前 50 行 ==="
           head -50 "$TARGET" || true
-          echo ""
-          echo "=== 替换为空操作 ==="
           cat > "$TARGET" << 'EOF'
           # Bypassed by workflow - 跳过 ReSukiSU 强制 inline hook 检查
           define check_ksu_hook
@@ -136,7 +140,6 @@ jobs:
           EOF
           echo "=== 替换后 ==="
           cat "$TARGET"
-
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
 
