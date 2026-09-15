@@ -71,7 +71,7 @@ env:
 
   BASEBAND_GUARD_ENABLE: "false"
   BASEBAND_GUARD_BOOT: "false"
-  HIDE_STUFF: "false"
+
 
   GENERATE_DTB: "false"
   GENERATE_CHIP: "qcom"
@@ -117,8 +117,7 @@ jobs:
       - name: 🔒 Patch Kernel of Baseband Guard
         uses: ./.github/workflows/patch-baseband-guard
 
-      - name: 🔧 Patch Hide Stuff
-        uses: ./.github/workflows/patch-hide-stuff
+     
         
       
       - name: 🚀 Build Process
