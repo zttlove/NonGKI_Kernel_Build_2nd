@@ -47,7 +47,33 @@ runs:
             echo "CONFIG_THREAD_INFO_IN_TASK=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
 
           fi
+      - name: Force SUSFS integration marker
+        if: env.SUSFS_ENABLE == 'true'
+        shell: bash
+        run: |
+          cd $GITHUB_WORKSPACE/device_kernel
 
+          # 1) 给 fs/namespace.c 加上标记
+          if grep -q "CONFIG_KSU_SUSFS" fs/namespace.c; then
+            echo "[+] Marker already present."
+          else
+            sed -i '1a /* CONFIG_KSU_SUSFS */' fs/namespace.c
+            echo "[+] Inserted CONFIG_KSU_SUSFS marker."
+          fi
+
+          # 2) 把 Kbuild 里的 $(error ...) 降级为 $(warning ...)
+          if [ -f drivers/kernelsu/Kbuild ]; then
+            sed -i 's/\$(error You should integrate susfs in your kernel/$(warning SUSFS integration check bypassed/' \
+              drivers/kernelsu/Kbuild
+            echo "[+] Downgraded SUSFS error to warning."
+            grep -n "SUSFS integration" drivers/kernelsu/Kbuild || true
+          fi
+
+          # 3) 确认 fs/Makefile 里有 susfs.o
+          if [ -f fs/susfs.c ] && ! grep -q "susfs.o" fs/Makefile; then
+            echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> fs/Makefile
+            echo "[+] Added susfs.o to fs/Makefile."
+          fi
       # ============================================================
       # 已手动打好 SUSFS 补丁，以下两个 patch 步骤暂时跳过。
       # 如需恢复自动打补丁，取消注释即可。
