@@ -101,6 +101,24 @@ jobs:
       - name: ⚙️ Get neccssary tools
         uses: ./.github/workflows/build-ready
         
+      - name: 🧱 Ensure device_kernel is cloned
+        shell: bash
+        run: |
+          set -euo pipefail
+          KERNEL_DIR="$GITHUB_WORKSPACE/device_kernel"
+          if [ -d "$KERNEL_DIR/.git" ]; then
+            echo "[+] device_kernel already exists, skip clone."
+          else
+            echo "[+] device_kernel not found, cloning..."
+            rm -rf "$KERNEL_DIR"
+            git clone "${{ env.KERNEL_SOURCE }}" \
+              -b "${{ env.KERNEL_BRANCH }}" \
+              "$KERNEL_DIR" --depth=1
+          fi
+          echo "[+] device_kernel ready:"
+          ls -la "$KERNEL_DIR" | head
+     
+        
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs
         
