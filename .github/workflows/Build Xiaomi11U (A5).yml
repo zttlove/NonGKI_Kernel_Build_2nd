@@ -107,10 +107,7 @@ jobs:
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
 
-      - name: 🪛 Extra Kernel Options
-        run: |
-          cd "$GITHUB_WORKSPACE/device_kernel"
-
+     
       - name: 🧰 Patch Kernel of Re:Kernel
         uses: ./.github/workflows/patch-rekernel
 
