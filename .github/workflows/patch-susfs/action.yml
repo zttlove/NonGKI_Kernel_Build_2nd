@@ -26,6 +26,33 @@ runs:
 
           fi
 
+      - name: Force fetch SUSFS core files
+        if: env.SUSFS_ENABLE == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd $GITHUB_WORKSPACE/device_kernel
+
+          BASE="https://raw.githubusercontent.com/zttlove/android_kernel_xiaomi_sm8350_miyume/main"
+
+          echo "[+] Downloading susfs_def.h..."
+          mkdir -p include/linux
+          curl -fL -o include/linux/susfs_def.h "$BASE/include/linux/susfs_def.h"
+
+          echo "[+] Downloading susfs.h..."
+          curl -fL -o include/linux/susfs.h "$BASE/include/linux/susfs.h"
+
+          echo "[+] Downloading susfs.c..."
+          mkdir -p fs
+          curl -fL -o fs/susfs.c "$BASE/fs/susfs.c"
+
+          echo "[+] Ensuring fs/Makefile has susfs.o..."
+          grep -q "susfs.o" fs/Makefile || echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> fs/Makefile
+
+          echo "[+] Verify:"
+          ls -la include/linux/susfs_def.h include/linux/susfs.h fs/susfs.c
+          grep -n "susfs.o" fs/Makefile
+
       - name: Set KSU and SUSFS for DEFCONFIG
         if: env.SUSFS_ENABLE == 'true'
         shell: bash
@@ -42,11 +69,11 @@ runs:
           echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
           echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
           echo "CONFIG_KSU_SUSFS_SUS_MAP=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-          
+
           if grep -q "THREAD_INFO_IN_TASK" "drivers/kernelsu/Kconfig"; then
             echo "CONFIG_THREAD_INFO_IN_TASK=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
-
           fi
+
       - name: Force SUSFS integration marker
         if: env.SUSFS_ENABLE == 'true'
         shell: bash
@@ -74,6 +101,7 @@ runs:
             echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> fs/Makefile
             echo "[+] Added susfs.o to fs/Makefile."
           fi
+
       # ============================================================
       # 已手动打好 SUSFS 补丁，以下两个 patch 步骤暂时跳过。
       # 如需恢复自动打补丁，取消注释即可。
