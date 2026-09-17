@@ -99,18 +99,19 @@ runs:
             fi
           fi
 
-      - name: Cleaned KernelSU and Hook
-        shell: bash
-        run: |
-          cd $GITHUB_WORKSPACE/device_kernel
-
-          cp /tmp/Bin/clean_hook.sh ./
-          bash clean_hook.sh
-
-      - name: Set KernelSU
-        shell: bash
-        run: |
-          cd $GITHUB_WORKSPACE/device_kernel
+          # - name: Cleaned KernelSU and Hook
+          #   shell: bash
+          #   run: |
+          #     cd $GITHUB_WORKSPACE/device_kernel
+          #
+          #     cp /tmp/Bin/clean_hook.sh ./
+          #     bash clean_hook.sh
+          #
+          # - name: Set KernelSU
+          #   shell: bash
+          #   run: |
+          #     cd $GITHUB_WORKSPACE/device_kernel
+          #     ...（整个 KERNELSU_AUTO / KERNELSU_MANUAL 逻辑）
 
           # Function
           KERNELSU_AUTO(){
