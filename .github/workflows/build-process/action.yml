@@ -28,7 +28,7 @@ runs:
         uses: hendrikmuhs/ccache-action@v1.2.22
         with:
           key: build-kernel-${{ env.DEVICE_NAME }}${{ env.UPLOADNAME }}
-          max-size: 2G
+          max-size: 6G
 
       - name: Build Kernel
         shell: bash
