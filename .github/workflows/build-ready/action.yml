@@ -97,10 +97,135 @@ runs:
           fi
 
       # ============================================================
-      # 已移除：Cleaned KernelSU and Hook、Set KernelSU
-      # 原因：zttlove/main 已完整集成 KernelSU + SUSFS，
-      #      clean_hook.sh 会破坏源码，重新 clone KernelSU 也多余。
+      # Cleaned KernelSU and Hook 已移除：clean_hook.sh 会破坏
+      # zttlove/main 已集成的 SUSFS 源码，导致 #if/#endif 配对打乱、
+      # 函数头丢失等语法错误。
       # ============================================================
+
+      - name: Set KernelSU
+        shell: bash
+        run: |
+          cd $GITHUB_WORKSPACE/device_kernel
+
+          # Function
+          KERNELSU_AUTO(){
+            if [[ "${{ env.KERNELSU_AUTO_FORK }}" == "xxksu" ]]; then
+                KERNELSU_AUTHOR="backslashxx"
+                KERNELSU_NAME="KernelSU"
+                KERNELSU_ORIGIN_BRANCH="master"
+                if [[ "${{ env.SUSFS_ENABLE }}" == "true" ]]; then
+                    KERNELSU_BRANCH="master"
+
+                else
+                    KERNELSU_BRANCH="master"
+                fi
+            elif [[ "${{ env.KERNELSU_AUTO_FORK }}" == "rsuntk" ]]; then
+                KERNELSU_AUTHOR="rsuntk"
+                KERNELSU_NAME="KernelSU"
+                KERNELSU_ORIGIN_BRANCH="main"
+                if [[ "${{ env.SUSFS_ENABLE }}" == "true" ]]; then
+                    echo "${{ env.KERNELSU_AUTO_FORK }} doesn't support SuSFS! "
+                    false
+                else
+                    KERNELSU_BRANCH="main"
+                fi
+            elif [[ "${{ env.KERNELSU_AUTO_FORK }}" == "sukisu" ]]; then
+                KERNELSU_AUTHOR="SukiSU-Ultra"
+                KERNELSU_NAME="SukiSU-Ultra"
+                KERNELSU_ORIGIN_BRANCH="main"
+                if [[ "${{ env.SUSFS_ENABLE }}" == "true" ]]; then
+                    KERNELSU_BRANCH="builtin"
+                else
+                    KERNELSU_BRANCH="builtin"
+                fi
+            elif [[ "${{ env.KERNELSU_AUTO_FORK }}" == "next" ]]; then
+                KERNELSU_AUTHOR="KernelSU-Next"
+                KERNELSU_NAME="KernelSU-Next"
+                KERNELSU_ORIGIN_BRANCH="legacy"
+                if [[ "${{ env.SUSFS_ENABLE }}" == "true" ]]; then
+                    echo "${{ env.KERNELSU_AUTO_FORK }} doesn't support SuSFS! "
+                    false
+                else
+                    KERNELSU_BRANCH="legacy"
+                fi
+            elif [[ "${{ env.KERNELSU_AUTO_FORK }}" == "resukisu" ]]; then
+                KERNELSU_AUTHOR="ReSukiSU"
+                KERNELSU_NAME="ReSukiSU"
+                KERNELSU_ORIGIN_BRANCH="main"
+                if [[ "${{ env.SUSFS_ENABLE }}" == "true" ]]; then
+                    KERNELSU_BRANCH="main"
+                else
+                    KERNELSU_BRANCH="main"
+                fi
+            else
+                echo "Please input vaild fork name!"
+                false
+            fi
+
+            if [[ "${{ env.KERNELSU_AUTO_FORK }}" == "next" ]]; then
+                KERNELSU_FOLDER="KernelSU-Next"
+                echo "KERNELSU_NAME=$KERNELSU_FOLDER" >> $GITHUB_ENV
+
+            else
+                KERNELSU_FOLDER="KernelSU"
+                echo "KERNELSU_NAME=$KERNELSU_FOLDER" >> $GITHUB_ENV
+
+            fi
+
+            if [[ "${{ env.KERNELSU_METHOD }}" == "shell" ]]; then
+                curl -sSL "https://raw.githubusercontent.com/${KERNELSU_AUTHOR}/${KERNELSU_NAME}/refs/heads/${KERNELSU_ORIGIN_BRANCH}/kernel/setup.sh" | bash -s "$KERNELSU_BRANCH"
+
+            elif [[ "${{ env.KERNELSU_METHOD }}" == "manual" ]]; then
+                git clone "https://github.com/$KERNELSU_AUTHOR/$KERNELSU_NAME.git" -b "$KERNELSU_BRANCH" "$KERNELSU_FOLDER"
+                ln -sf "../$KERNELSU_FOLDER/kernel" "drivers/kernelsu"
+                grep -q "kernelsu" "$GITHUB_WORKSPACE/device_kernel/drivers/Makefile" || printf "\nobj-\$(CONFIG_KSU) += kernelsu/\n" >> $GITHUB_WORKSPACE/device_kernel/drivers/Makefile
+                grep -q "source \"drivers/kernelsu/Kconfig\"" "$GITHUB_WORKSPACE/device_kernel/drivers/Kconfig" || sed -i "/endmenu/i\source \"drivers/kernelsu/Kconfig\"" "${GITHUB_WORKSPACE}/device_kernel/drivers/Kconfig"
+                echo "KernelSU Settings done."
+
+            elif [[ "${{ env.KERNELSU_METHOD }}" == "only" ]]; then
+                git clone "https://github.com/$KERNELSU_AUTHOR/$KERNELSU_NAME.git" -b "$KERNELSU_BRANCH" "$KERNELSU_FOLDER"
+                ln -sf "../$KERNELSU_FOLDER/kernel" "drivers/kernelsu"
+
+            fi
+          }
+
+          KERNELSU_MANUAL(){
+            if [[ "${{ env.KERNELSU_SOURCE }}" == *Next* ]]; then
+                KERNELSU_FOLDER="KernelSU-Next"
+                echo "KERNELSU_NAME=$KERNELSU_FOLDER" >> $GITHUB_ENV
+
+            else
+                KERNELSU_FOLDER="KernelSU"
+                echo "KERNELSU_NAME=$KERNELSU_FOLDER" >> $GITHUB_ENV
+
+            fi
+
+            if [[ "${{ env.KERNELSU_METHOD }}" == "shell" ]]; then
+                curl -sSL "${{ env.KERNELSU_SOURCE }}" | bash -s "${{ env.KERNELSU_BRANCH }}"
+
+            elif [[ "${{ env.KERNELSU_METHOD }}" == "manual" ]]; then
+                git clone "${{ env.KERNELSU_SOURCE }}" -b "${{ env.KERNELSU_BRANCH }}" "$KERNELSU_FOLDER"
+                ln -sf "../$KERNELSU_FOLDER/kernel" "drivers/kernelsu"
+                grep -q "kernelsu" "$GITHUB_WORKSPACE/device_kernel/drivers/Makefile" || printf "\nobj-\$(CONFIG_KSU) += kernelsu/\n" >> $GITHUB_WORKSPACE/device_kernel/drivers/Makefile
+                grep -q "source \"drivers/kernelsu/Kconfig\"" "$GITHUB_WORKSPACE/device_kernel/drivers/Kconfig" || sed -i "/endmenu/i\source \"drivers/kernelsu/Kconfig\"" "${GITHUB_WORKSPACE}/device_kernel/drivers/Kconfig"
+                echo "KernelSU Settings done."
+
+            elif [[ "${{ env.KERNELSU_METHOD }}" == "only" ]]; then
+                git clone "${{ env.KERNELSU_SOURCE }}" -b "${{ env.KERNELSU_BRANCH }}" "$KERNELSU_FOLDER"
+                ln -sf "../$KERNELSU_FOLDER/kernel" "drivers/kernelsu"
+
+            fi
+          }
+
+          # Core
+          if [[ ${{ env.KERNELSU_AUTO_GET }} == "true" ]]; then
+            KERNELSU_AUTO
+
+          else
+            KERNELSU_MANUAL
+
+          fi
+          echo "KERNELSU_METHOD=${{ env.KERNELSU_METHOD }}" >> $GITHUB_ENV
 
       - name: KPM Function Support
         if: env.KPM_ENABLE == 'true'
