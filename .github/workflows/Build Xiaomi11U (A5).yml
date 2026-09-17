@@ -127,7 +127,8 @@ jobs:
             CONFIG_KSU_SUSFS \
             CONFIG_KSU_SUSFS_SUS_PATH \
             CONFIG_KSU_SUSFS_SUS_KSTAT \
-            CONFIG_KSU_SUSFS_ENABLE_LOG do
+            CONFIG_KSU_SUSFS_ENABLE_LOG 
+            do
             grep -q "^$opt=y" "$DEFCONFIG" || echo "$opt=y" >> "$DEFCONFIG"
           done
           echo "[+] defconfig updated."
