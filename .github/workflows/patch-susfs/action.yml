@@ -3,55 +3,61 @@ name: 'Patch SuSFS for Kernel.'
 runs:
   using: 'composite'
   steps:
-      - name: Get SuSFS
-        if: env.SUSFS_ENABLE == 'true'
-        shell: bash
-        run: |
-          cd $GITHUB_WORKSPACE/device_kernel/
+      # ============================================================
+      # SUSFS 补丁已全部合并进源码，以下步骤全部跳过。
+      # 只保留 Set KSU and SUSFS for DEFCONFIG，确保 defconfig 里
+      # 启用了 CONFIG_KSU_SUSFS_*，否则源码里的 SUSFS 代码不会被编译。
+      # ============================================================
 
-          # Core
-          if [[ "${{ env.SUSFS_FIXED }}" == true ]]; then
-            if [ -z "${{ env.PATCHES_SOURCE }}" ] || [ -z "${{ env.PATCHES_BRANCH }}" ]; then
-              echo "[-] Please input a vaild source and branch!"
-              false
+      # - name: Get SuSFS
+      #   if: env.SUSFS_ENABLE == 'true'
+      #   shell: bash
+      #   run: |
+      #     cd $GITHUB_WORKSPACE/device_kernel/
+      #
+      #     # Core
+      #     if [[ "${{ env.SUSFS_FIXED }}" == true ]]; then
+      #       if [ -z "${{ env.PATCHES_SOURCE }}" ] || [ -z "${{ env.PATCHES_BRANCH }}" ]; then
+      #         echo "[-] Please input a vaild source and branch!"
+      #         false
+      #
+      #       elif [[ "${{ env.PATCHES_SOURCE }}" == *".git" ]]; then
+      #         echo "[-] Please do not set a full URL in PATCH_SOURCE!"
+      #         false
+      #
+      #       else
+      #         git clone https://github.com/${{ env.PATCHES_SOURCE }}.git -b ${{ env.PATCHES_BRANCH }} NonGKI_Kernel_Patches --depth=1
+      #
+      #       fi
+      #
+      #     fi
 
-            elif [[ "${{ env.PATCHES_SOURCE }}" == *".git" ]]; then
-              echo "[-] Please do not set a full URL in PATCH_SOURCE!"
-              false
-
-            else
-              git clone https://github.com/${{ env.PATCHES_SOURCE }}.git -b ${{ env.PATCHES_BRANCH }} NonGKI_Kernel_Patches --depth=1 # It's not necessary.
-
-            fi
-
-          fi
-
-      - name: Force fetch SUSFS core files
-        if: env.SUSFS_ENABLE == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd $GITHUB_WORKSPACE/device_kernel
-
-          BASE="https://raw.githubusercontent.com/zttlove/android_kernel_xiaomi_sm8350_miyume/main"
-
-          echo "[+] Downloading susfs_def.h..."
-          mkdir -p include/linux
-          curl -fL -o include/linux/susfs_def.h "$BASE/include/linux/susfs_def.h"
-
-          echo "[+] Downloading susfs.h..."
-          curl -fL -o include/linux/susfs.h "$BASE/include/linux/susfs.h"
-
-          echo "[+] Downloading susfs.c..."
-          mkdir -p fs
-          curl -fL -o fs/susfs.c "$BASE/fs/susfs.c"
-
-          echo "[+] Ensuring fs/Makefile has susfs.o..."
-          grep -q "susfs.o" fs/Makefile || echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> fs/Makefile
-
-          echo "[+] Verify:"
-          ls -la include/linux/susfs_def.h include/linux/susfs.h fs/susfs.c
-          grep -n "susfs.o" fs/Makefile
+      # - name: Force fetch SUSFS core files
+      #   if: env.SUSFS_ENABLE == 'true'
+      #   shell: bash
+      #   run: |
+      #     set -euo pipefail
+      #     cd $GITHUB_WORKSPACE/device_kernel
+      #
+      #     BASE="https://raw.githubusercontent.com/zttlove/android_kernel_xiaomi_sm8350_miyume/main"
+      #
+      #     echo "[+] Downloading susfs_def.h..."
+      #     mkdir -p include/linux
+      #     curl -fL -o include/linux/susfs_def.h "$BASE/include/linux/susfs_def.h"
+      #
+      #     echo "[+] Downloading susfs.h..."
+      #     curl -fL -o include/linux/susfs.h "$BASE/include/linux/susfs.h"
+      #
+      #     echo "[+] Downloading susfs.c..."
+      #     mkdir -p fs
+      #     curl -fL -o fs/susfs.c "$BASE/fs/susfs.c"
+      #
+      #     echo "[+] Ensuring fs/Makefile has susfs.o..."
+      #     grep -q "susfs.o" fs/Makefile || echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> fs/Makefile
+      #
+      #     echo "[+] Verify:"
+      #     ls -la include/linux/susfs_def.h include/linux/susfs.h fs/susfs.c
+      #     grep -n "susfs.o" fs/Makefile
 
       - name: Set KSU and SUSFS for DEFCONFIG
         if: env.SUSFS_ENABLE == 'true'
@@ -74,39 +80,31 @@ runs:
             echo "CONFIG_THREAD_INFO_IN_TASK=y" >> ./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}
           fi
 
-      - name: Force SUSFS integration marker
-        if: env.SUSFS_ENABLE == 'true'
-        shell: bash
-        run: |
-          cd $GITHUB_WORKSPACE/device_kernel
-
-          # 1) 给 fs/namespace.c 加上标记
-          if grep -q "CONFIG_KSU_SUSFS" fs/namespace.c; then
-            echo "[+] Marker already present."
-          else
-            sed -i '1a /* CONFIG_KSU_SUSFS */' fs/namespace.c
-            echo "[+] Inserted CONFIG_KSU_SUSFS marker."
-          fi
-
-          # 2) 把 Kbuild 里的 $(error ...) 降级为 $(warning ...)
-          if [ -f drivers/kernelsu/Kbuild ]; then
-            sed -i 's/\$(error You should integrate susfs in your kernel/$(warning SUSFS integration check bypassed/' \
-              drivers/kernelsu/Kbuild
-            echo "[+] Downgraded SUSFS error to warning."
-            grep -n "SUSFS integration" drivers/kernelsu/Kbuild || true
-          fi
-
-          # 3) 确认 fs/Makefile 里有 susfs.o
-          if [ -f fs/susfs.c ] && ! grep -q "susfs.o" fs/Makefile; then
-            echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> fs/Makefile
-            echo "[+] Added susfs.o to fs/Makefile."
-          fi
-
-      # ============================================================
-      # 已手动打好 SUSFS 补丁，以下两个 patch 步骤暂时跳过。
-      # 如需恢复自动打补丁，取消注释即可。
-      # ============================================================
+      # - name: Force SUSFS integration marker
+      #   if: env.SUSFS_ENABLE == 'true'
+      #   shell: bash
+      #   run: |
+      #     cd $GITHUB_WORKSPACE/device_kernel
       #
+      #     if grep -q "CONFIG_KSU_SUSFS" fs/namespace.c; then
+      #       echo "[+] Marker already present."
+      #     else
+      #       sed -i '1a /* CONFIG_KSU_SUSFS */' fs/namespace.c
+      #       echo "[+] Inserted CONFIG_KSU_SUSFS marker."
+      #     fi
+      #
+      #     if [ -f drivers/kernelsu/Kbuild ]; then
+      #       sed -i 's/\$(error You should integrate susfs in your kernel/$(warning SUSFS integration check bypassed/' \
+      #         drivers/kernelsu/Kbuild
+      #       echo "[+] Downgraded SUSFS error to warning."
+      #       grep -n "SUSFS integration" drivers/kernelsu/Kbuild || true
+      #     fi
+      #
+      #     if [ -f fs/susfs.c ] && ! grep -q "susfs.o" fs/Makefile; then
+      #       echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> fs/Makefile
+      #       echo "[+] Added susfs.o to fs/Makefile."
+      #     fi
+
       # - name: Patch SuSFS
       #   if: env.SUSFS_ENABLE == 'true'
       #   shell: bash
@@ -125,10 +123,8 @@ runs:
       #       find . -type f \( -name "*.rej" -o -name "*.orig" \) -delete
       #       echo "[+] Removed all .rej and .orig files."
       #       echo "[+] =================================== "
-      #
       #     }
       #
-      #     # Check SuSFS
       #     if grep -q "CONFIG_KSU_SUSFS" "fs/namespace.c"; then
       #       echo "[-] SuSFS is already patched, Skipped."
       #       echo "SUSFS_SKIP=true" >> $GITHUB_ENV
@@ -141,7 +137,6 @@ runs:
       #
       #     fi
       #
-      #     # Patch .rej find
       #     if [[ "${{ env.BUILD_DEBUGGER }}" == "true" ]]; then
       #       echo "[+] Checking SuSFS v${SUSFS_VERSION} rej files..."
       #       mapfile -t REJ_FILES < <(find . -type f -name "*.rej")
@@ -172,7 +167,7 @@ runs:
       #       fi
       #
       #     fi
-      #
+
       # - name: SUSFS Patch Fixed
       #   if: env.SUSFS_ENABLE == 'true' && env.SUSFS_SKIP != 'true'
       #   shell: bash
@@ -202,7 +197,7 @@ runs:
       #       done
       #
       #     fi
-      #
+
       # - name: Upload Build Patch Rejected Files
       #   if: env.BUILD_DEBUGGER == 'true'
       #   uses: actions/upload-artifact@v4
