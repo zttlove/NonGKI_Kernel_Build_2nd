@@ -124,7 +124,7 @@ jobs:
           cd $GITHUB_WORKSPACE/device_kernel
           DEFCONFIG="./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}"
           for opt in \
-            CONFIG_KSU_SUSFS \
+            
             CONFIG_KSU_SUSFS_SUS_PATH \
             CONFIG_KSU_SUSFS_SUS_MOUNT \
             CONFIG_KSU_SUSFS_SUS_KSTAT \
