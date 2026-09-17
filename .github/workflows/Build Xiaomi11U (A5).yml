@@ -124,16 +124,10 @@ jobs:
           cd $GITHUB_WORKSPACE/device_kernel
           DEFCONFIG="./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}"
           for opt in \
-            
+            CONFIG_KSU_SUSFS \
             CONFIG_KSU_SUSFS_SUS_PATH \
-            CONFIG_KSU_SUSFS_SUS_MOUNT \
             CONFIG_KSU_SUSFS_SUS_KSTAT \
-            CONFIG_KSU_SUSFS_SPOOF_UNAME \
-            CONFIG_KSU_SUSFS_ENABLE_LOG \
-            CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
-            CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
-            CONFIG_KSU_SUSFS_OPEN_REDIRECT \
-            CONFIG_KSU_SUSFS_SUS_MAP ; do
+            CONFIG_KSU_SUSFS_ENABLE_LOG do
             grep -q "^$opt=y" "$DEFCONFIG" || echo "$opt=y" >> "$DEFCONFIG"
           done
           echo "[+] defconfig updated."
