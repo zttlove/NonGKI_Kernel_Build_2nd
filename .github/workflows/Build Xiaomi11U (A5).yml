@@ -176,6 +176,19 @@ jobs:
           DEFCONFIG="./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}"
           grep -i "susfs" "$DEFCONFIG" || echo "(no susfs line in defconfig)"
 
+      - name: 🔍 Debug - check kernelsu integration
+        shell: bash
+        run: |
+          cd $GITHUB_WORKSPACE/device_kernel
+          echo "=== drivers/kernelsu contents ==="
+          ls -la drivers/kernelsu/ 2>&1 || echo "NOT FOUND"
+          echo "=== KernelSU symlink? ==="
+          ls -la drivers/kernelsu 2>&1 || echo "NOT FOUND"
+          echo "=== KernelSU dir? ==="
+          ls -la KernelSU/ 2>&1 | head -20 || echo "NOT FOUND"
+          echo "=== check manual_hook_check.mk ==="
+          cat drivers/kernelsu/kernel/tools/manual_hook_check.mk 2>/dev/null | head -100 || echo "NOT FOUND"
+     
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
 
