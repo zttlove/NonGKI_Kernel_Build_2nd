@@ -36,8 +36,8 @@ env:
   KERNELSU_AUTO_GET : "true"
   KERNELSU_AUTO_FORK : "resukisu"
 
-  SUSFS_ENABLE: true
-  SUSFS_FIXED: true
+  SUSFS_ENABLE: "false"
+  SUSFS_FIXED: "false"
 
   AK3_SOURCE : "https://github.com/osm0sis/Anykernel3.git"
   AK3_BRANCH : "master"
@@ -72,7 +72,6 @@ env:
   BASEBAND_GUARD_ENABLE: "false"
   BASEBAND_GUARD_BOOT: "false"
 
-
   GENERATE_DTB: "false"
   GENERATE_CHIP: "qcom"
 
@@ -100,22 +99,83 @@ jobs:
 
       - name: ⚙️ Get neccssary tools
         uses: ./.github/workflows/build-ready
-        
-      
-            
-      - name: 🪝 Patch Kernel of SUSFS
-        uses: ./.github/workflows/patch-susfs
-        
-      - name: 🔗 Patch for no-kprobe
-        uses: ./.github/workflows/patch-no-kprobe
 
-     
-      - name: 🧰 Patch Kernel of Re:Kernel
-        uses: ./.github/workflows/patch-rekernel
+      - name: 🧱 Ensure device_kernel is cloned
+        shell: bash
+        run: |
+          set -euo pipefail
+          KERNEL_DIR="$GITHUB_WORKSPACE/device_kernel"
+          if [ -d "$KERNEL_DIR/.git" ]; then
+            echo "[+] device_kernel already exists, skip clone."
+          else
+            echo "[+] device_kernel not found, cloning..."
+            rm -rf "$KERNEL_DIR"
+            git clone "${{ env.KERNEL_SOURCE }}" \
+              -b "${{ env.KERNEL_BRANCH }}" \
+              "$KERNEL_DIR" --depth=1
+          fi
+          echo "[+] device_kernel ready:"
+          ls -la "$KERNEL_DIR" | head || true
 
-      - name: 🔒 Patch Kernel of Baseband Guard
-        uses: ./.github/workflows/patch-baseband-guard
-           
+      - name: 🛠️ Set KSU and SUSFS for DEFCONFIG
+        if: env.SUSFS_ENABLE == 'true'
+        shell: bash
+        run: |
+          cd $GITHUB_WORKSPACE/device_kernel
+          DEFCONFIG="./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}"
+          for opt in \
+            CONFIG_KSU_SUSFS \
+            CONFIG_KSU_SUSFS_SUS_PATH \
+            CONFIG_KSU_SUSFS_SUS_MOUNT \
+            CONFIG_KSU_SUSFS_SUS_KSTAT \
+            CONFIG_KSU_SUSFS_SPOOF_UNAME \
+            CONFIG_KSU_SUSFS_ENABLE_LOG \
+            CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+            CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+            CONFIG_KSU_SUSFS_OPEN_REDIRECT \
+            CONFIG_KSU_SUSFS_SUS_MAP ; do
+            grep -q "^$opt=y" "$DEFCONFIG" || echo "$opt=y" >> "$DEFCONFIG"
+          done
+          echo "[+] defconfig updated."
+
+      - name: 🛠️ Force disable all SUSFS configs in DEFCONFIG
+        if: env.SUSFS_ENABLE != 'true'
+        shell: bash
+        run: |
+          cd $GITHUB_WORKSPACE/device_kernel
+          DEFCONFIG="./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}"
+          for opt in \
+            CONFIG_KSU_SUSFS \
+            CONFIG_KSU_SUSFS_SUS_PATH \
+            CONFIG_KSU_SUSFS_SUS_MOUNT \
+            CONFIG_KSU_SUSFS_SUS_KSTAT \
+            CONFIG_KSU_SUSFS_SPOOF_UNAME \
+            CONFIG_KSU_SUSFS_ENABLE_LOG \
+            CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+            CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+            CONFIG_KSU_SUSFS_OPEN_REDIRECT \
+            CONFIG_KSU_SUSFS_SUS_MAP ; do
+            sed -i "/^$opt=y/d" "$DEFCONFIG"
+            grep -q "^# $opt is not set" "$DEFCONFIG" || echo "# $opt is not set" >> "$DEFCONFIG"
+          done
+          echo "[+] all SUSFS configs disabled in defconfig."
+          echo "=== final defconfig SUSFS lines ==="
+          grep -i "susfs" "$DEFCONFIG" || echo "(no susfs line)"
+
+      - name: 🔍 Verify SUSFS patches are applied
+        shell: bash
+        run: |
+          cd $GITHUB_WORKSPACE/device_kernel
+          echo "=== namespace.c has susfs_can_hook_mount ==="
+          grep -n "susfs_can_hook_mount" fs/namespace.c || echo "NOT FOUND"
+          echo "=== fd.c has no d_path bug ==="
+          grep -n "IS_ERR(dpath)" fs/proc/fd.c || echo "NOT FOUND (this is OK if you removed the SUS_MOUNT branch)"
+          echo "=== readdir.c has no SUS_PATH hook ==="
+          grep -n "susfs_is_inode_sus_path" fs/readdir.c || echo "NOT FOUND (this is OK)"
+          echo "=== defconfig SUSFS state ==="
+          DEFCONFIG="./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}"
+          grep -i "susfs" "$DEFCONFIG" || echo "(no susfs line in defconfig)"
+
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
 
@@ -145,13 +205,11 @@ jobs:
           mkdir -p "${TMP_DIR}"
 
           AK3_DIR="${KERNEL_DIR}/Anykernel3"
-          
-          
+
           sed -i 's/^do.devicecheck=1/do.devicecheck=0/' "$AK3_DIR/anykernel.sh"
           sed -i 's/^BLOCK=.*/BLOCK=boot/' "$AK3_DIR/anykernel.sh"
           sed -i 's/^IS_SLOT_DEVICE=0/IS_SLOT_DEVICE=1/' "$AK3_DIR/anykernel.sh"
           sed -i 's/^device.name1=.*/device.name1=star/' "$AK3_DIR/anykernel.sh"
-
 
           cp -v "${IMG_PATH}" "${TMP_DIR}/Image"
 
