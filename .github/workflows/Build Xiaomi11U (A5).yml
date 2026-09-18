@@ -21,6 +21,8 @@ env:
 
   DEFCONFIG_NAME : "vendor/star_defconfig"
 
+  PYTHON_VERSION: "3"
+
   SUSFS_PATCH_URL : "https://raw.githubusercontent.com/JackA1ltman/NonGKI_Kernel_Patches/refs/heads/main/Patch/susfs_patch_to_5.4.patch"
 
 jobs:
