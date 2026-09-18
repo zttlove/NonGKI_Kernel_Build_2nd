@@ -123,11 +123,9 @@ jobs:
         run: |
           set -euo pipefail
           cd $GITHUB_WORKSPACE/device_kernel
-          echo "=== Download setup.sh from JackA1ltman ==="
-          curl -LSs "https://raw.githubusercontent.com/JackA1ltman/NonGKI_Kernel_Patches/refs/heads/main/setup.sh" -o setup.sh
-          chmod +x setup.sh
-          echo "=== Run setup.sh ==="
-          bash setup.sh
+          cp $GITHUB_WORKSPACE/susfs_inline_hook_patches.sh ./patch.sh
+          chmod +x ./patch.sh
+          bash ./patch.sh
           echo "=== Verify hooks ==="
           grep -n "ksu_handle_stat" fs/stat.c || echo "NOT FOUND: ksu_handle_stat"
           grep -n "ksu_handle_faccessat" fs/open.c || echo "NOT FOUND: ksu_handle_faccessat"
