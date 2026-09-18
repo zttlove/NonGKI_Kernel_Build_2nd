@@ -61,7 +61,7 @@ env:
   SUSFS_PATCH_FIXED: "susfs_fixed"
 
   REKERNEL_ENABLE: "false"
-  HOOK_METHOD: "kprobe"
+  HOOK_METHOD: "manual"
   KERNEL_PATCH: "false"
 
   KPM_ENABLE: "false"
