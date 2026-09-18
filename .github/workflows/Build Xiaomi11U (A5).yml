@@ -61,7 +61,7 @@ env:
   SUSFS_PATCH_FIXED: "susfs_fixed"
 
   REKERNEL_ENABLE: "false"
-  HOOK_METHOD: "kprobe"
+  HOOK_METHOD: "manual"
   KERNEL_PATCH: "false"
 
   KPM_ENABLE: "false"
@@ -183,16 +183,7 @@ jobs:
           ls -la KernelSU/ 2>&1 | head -20 || echo "NOT FOUND"
           echo "=== check manual_hook_check.mk ==="
           cat drivers/kernelsu/kernel/tools/manual_hook_check.mk 2>/dev/null | head -100 || echo "NOT FOUND"
-
-      - name: 🛠️ Bypass KSU inline hook check
-        shell: bash
-        run: |
-          cd $GITHUB_WORKSPACE/device_kernel
-          if [ -d "drivers/kernelsu/kernel/tools" ]; then
-            mv drivers/kernelsu/kernel/tools drivers/kernelsu/kernel/tools.disabled
-            echo "[+] KSU tools directory disabled."
-          fi
-     
+   
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
 
