@@ -137,42 +137,39 @@ jobs:
       - name: 🪝 Patch SUSFS 2.3
         shell: bash
         run: |
-         set -euo pipefail
-         cd $GITHUB_WORKSPACE/device_kernel
+          set -euo pipefail
+          cd $GITHUB_WORKSPACE/device_kernel
 
-         echo "=== Downloading SUSFS 2.3 patch ==="
-         # 优先使用 env 中定义的 SUSFS_PATCH_URL 直接下载补丁
-         if [ -n "${{ env.SUSFS_PATCH_URL }}" ]; then
-         curl -L -o susfs_patch_to_5.4.patch "${{ env.SUSFS_PATCH_URL }}"
-         else
-         # 如果没有配置 URL，则尝试使用本地文件
-         echo "未配置 SUSFS_PATCH_URL，尝试使用本地文件..."
-         cp $GITHUB_WORKSPACE/Patches/Patch/susfs_patch_to_5.4.patch ./susfs_patch_to_5.4.patch
-         fi
+          echo "=== Cloning patches repository ==="
+          # 直接从你的 PATCHES_SOURCE 克隆，避开 404 问题
+          git clone --depth=1 https://github.com/${{ env.PATCHES_SOURCE }}.git -b ${{ env.PATCHES_BRANCH }} patches_repo
 
-         echo "=== Verify patch file ==="
-         head -5 susfs_patch_to_5.4.patch
-         wc -l susfs_patch_to_5.4.patch
+          echo "=== Locating SUSFS 2.3 patch ==="
+          # 自动在克隆的仓库里寻找符合 susfs 和 5.4 特征的补丁
+          PATCH_FILE=$(find patches_repo -type f -name "*.patch" | grep -i "susfs" | grep -i "5.4" | head -n 1 || true)
 
-         echo "=== Applying patch ==="
-         patch -p1 < susfs_patch_to_5.4.patch || true
+          if [ -z "$PATCH_FILE" ]; then
+          echo "::error::未在补丁仓库中找到 SUSFS 5.4 补丁！"
+          find patches_repo -name "*.patch" || true
+          exit 1
+          fi
+          echo "✅ 找到补丁: $PATCH_FILE"
 
-         echo "=== Checking .rej files ==="
-         REJ_FILES=$(find . -name "*.rej" -type f)
-         if [ -n "$REJ_FILES" ]; then
-         echo "::error::❌ Patch created .rej files:"
-         echo "$REJ_FILES"
-         for f in $REJ_FILES; do
-         echo "--- $f ---"
-         cat "$f"
-         done
-         exit 1
-         fi
+          echo "=== Applying patch (ONLY core SUSFS files) ==="
+          # 关键：使用 git apply 配合 --include 参数，只应用 SUSFS 核心文件，完全避开触摸屏等驱动的冲突，且不会生成 .rej 文件
+          if ! git apply \
+          --include='fs/susfs.c' \
+          --include='include/linux/susfs.h' \
+          --include='include/linux/susfs_def.h' \
+          "$PATCH_FILE"; then
+          echo "::error::❌ 补丁应用失败！请检查补丁格式是否匹配当前内核源码。"
+          exit 1
+          fi
 
-         echo "=== Verifying core files ==="
-         ls -la fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h
+          echo "=== Verifying core files ==="
+          ls -la fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h
 
-         echo "[+] SUSFS 2.3 patch applied."
+          echo "[+] SUSFS 2.3 core files patched successfully."
 
       - name: 🛠️ Set KSU and SUSFS for DEFCONFIG
         shell: bash
