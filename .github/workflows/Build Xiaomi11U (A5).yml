@@ -1,4 +1,4 @@
-name: Build Xiaomi11U with SUSFS 2.3
+name: Build Xiaomi11U with SUSFS 2.3（A5）
 
 on:
   workflow_call:
