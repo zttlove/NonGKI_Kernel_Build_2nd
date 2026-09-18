@@ -37,7 +37,7 @@ env:
   KERNELSU_AUTO_FORK : "resukisu"
 
   SUSFS_ENABLE: "true"
-  SUSFS_FIXED: "true"
+  SUSFS_FIXED: "false"
 
   AK3_SOURCE : "https://github.com/osm0sis/Anykernel3.git"
   AK3_BRANCH : "master"
@@ -117,6 +117,22 @@ jobs:
           echo "[+] device_kernel ready:"
           ls -la "$KERNEL_DIR" | head || true
 
+      - name: 🛠️ Apply SUSFS v2.3 + KSU patches
+        if: env.SUSFS_ENABLE == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd $GITHUB_WORKSPACE/device_kernel
+          echo "=== Download setup.sh from JackA1ltman ==="
+          curl -LSs "https://raw.githubusercontent.com/JackA1ltman/NonGKI_Kernel_Patches/refs/heads/main/setup.sh" -o setup.sh
+          chmod +x setup.sh
+          echo "=== Run setup.sh ==="
+          bash setup.sh
+          echo "=== Verify hooks ==="
+          grep -n "ksu_handle_stat" fs/stat.c || echo "NOT FOUND: ksu_handle_stat"
+          grep -n "ksu_handle_faccessat" fs/open.c || echo "NOT FOUND: ksu_handle_faccessat"
+          grep -n "ksu_handle_sys_reboot" kernel/reboot.c || echo "NOT FOUND: ksu_handle_sys_reboot"
+
       - name: 🛠️ Set KSU and SUSFS for DEFCONFIG
         if: env.SUSFS_ENABLE == 'true'
         shell: bash
@@ -124,52 +140,38 @@ jobs:
           cd $GITHUB_WORKSPACE/device_kernel
           DEFCONFIG="./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}"
           for opt in \
+            CONFIG_KSU \
+            CONFIG_KSU_MANUAL_HOOK \
             CONFIG_KSU_SUSFS \
             CONFIG_KSU_SUSFS_SUS_PATH \
             CONFIG_KSU_SUSFS_SUS_KSTAT \
-            CONFIG_KSU_SUSFS_ENABLE_LOG 
-            do
-            grep -q "^$opt=y" "$DEFCONFIG" || echo "$opt=y" >> "$DEFCONFIG"
+            CONFIG_KSU_SUSFS_ENABLE_LOG
+          do
+            grep -q "^$opt=y" "$DEFCONFIG" && sed -i "s|^$opt.*|$opt=y|" "$DEFCONFIG" || echo "$opt=y" >> "$DEFCONFIG"
           done
           echo "[+] defconfig updated."
-
-      - name: 🛠️ Force disable all SUSFS configs in DEFCONFIG
-        if: env.SUSFS_ENABLE != 'true'
-        shell: bash
-        run: |
-          cd $GITHUB_WORKSPACE/device_kernel
-          DEFCONFIG="./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}"
-          for opt in \
-            CONFIG_KSU_SUSFS \
-            CONFIG_KSU_SUSFS_SUS_PATH \
-            CONFIG_KSU_SUSFS_SUS_MOUNT \
-            CONFIG_KSU_SUSFS_SUS_KSTAT \
-            CONFIG_KSU_SUSFS_SPOOF_UNAME \
-            CONFIG_KSU_SUSFS_ENABLE_LOG \
-            CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
-            CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
-            CONFIG_KSU_SUSFS_OPEN_REDIRECT \
-            CONFIG_KSU_SUSFS_SUS_MAP ; do
-            sed -i "/^$opt=y/d" "$DEFCONFIG"
-            grep -q "^# $opt is not set" "$DEFCONFIG" || echo "# $opt is not set" >> "$DEFCONFIG"
-          done
-          echo "[+] all SUSFS configs disabled in defconfig."
-          echo "=== final defconfig SUSFS lines ==="
-          grep -i "susfs" "$DEFCONFIG" || echo "(no susfs line)"
+          echo "=== final defconfig KSU/SUSFS lines ==="
+          grep -iE "ksu|susfs" "$DEFCONFIG" || echo "(no ksu/susfs line)"
 
       - name: 🔍 Verify SUSFS patches are applied
         shell: bash
         run: |
           cd $GITHUB_WORKSPACE/device_kernel
-          echo "=== namespace.c has susfs_can_hook_mount ==="
-          grep -n "susfs_can_hook_mount" fs/namespace.c || echo "NOT FOUND"
-          echo "=== fd.c has no d_path bug ==="
-          grep -n "IS_ERR(dpath)" fs/proc/fd.c || echo "NOT FOUND (this is OK if you removed the SUS_MOUNT branch)"
-          echo "=== readdir.c has no SUS_PATH hook ==="
-          grep -n "susfs_is_inode_sus_path" fs/readdir.c || echo "NOT FOUND (this is OK)"
-          echo "=== defconfig SUSFS state ==="
+          echo "=== fs/susfs.c exists? ==="
+          ls -la fs/susfs.c 2>&1 || echo "NOT FOUND"
+          echo "=== include/linux/susfs.h exists? ==="
+          ls -la include/linux/susfs.h 2>&1 || echo "NOT FOUND"
+          echo "=== fs/stat.c has ksu_handle_stat ==="
+          grep -n "ksu_handle_stat" fs/stat.c || echo "NOT FOUND"
+          echo "=== fs/open.c has ksu_handle_faccessat ==="
+          grep -n "ksu_handle_faccessat" fs/open.c || echo "NOT FOUND"
+          echo "=== fs/namei.c has susfs_is_inode_sus_path ==="
+          grep -n "susfs_is_inode_sus_path" fs/namei.c || echo "NOT FOUND"
+          echo "=== kernel/reboot.c has ksu_handle_sys_reboot ==="
+          grep -n "ksu_handle_sys_reboot" kernel/reboot.c || echo "NOT FOUND"
+          echo "=== defconfig KSU/SUSFS state ==="
           DEFCONFIG="./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}"
-          grep -i "susfs" "$DEFCONFIG" || echo "(no susfs line in defconfig)"
+          grep -iE "ksu|susfs" "$DEFCONFIG" || echo "(no ksu/susfs line in defconfig)"
 
       - name: 🔍 Debug - check kernelsu integration
         shell: bash
@@ -177,13 +179,9 @@ jobs:
           cd $GITHUB_WORKSPACE/device_kernel
           echo "=== drivers/kernelsu contents ==="
           ls -la drivers/kernelsu/ 2>&1 || echo "NOT FOUND"
-          echo "=== KernelSU symlink? ==="
-          ls -la drivers/kernelsu 2>&1 || echo "NOT FOUND"
-          echo "=== KernelSU dir? ==="
-          ls -la KernelSU/ 2>&1 | head -20 || echo "NOT FOUND"
           echo "=== check manual_hook_check.mk ==="
           cat drivers/kernelsu/kernel/tools/manual_hook_check.mk 2>/dev/null | head -100 || echo "NOT FOUND"
-   
+
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
 
@@ -254,11 +252,11 @@ jobs:
           body: |
             ## Xiaomi 11 Ultra Star HyperOS A16 内核刷机包
             - 适配 HyperOS A16 全版本
-            - SukiSU ResukiSU Root 完整适配
-            - SUSFS 隐藏文件系统免补丁
-            - NonGKI 通用免解boot补丁
+            - SukiSU ReSukiSU Root 完整适配
+            - SUSFS v2.3 隐藏文件系统
+            - NonGKI 通用免解 boot 补丁
             - Osm0sis Anykernel3 官方卡刷格式
-            - Clang 20 最新编译
+            - Clang 18.1.8 最新编译
           files: ${{ env.PACK_NAME }}
           draft: false
           prerelease: false
