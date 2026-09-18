@@ -103,12 +103,7 @@ jobs:
 
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs
-        
-      - name: Fix task_mmu.c reject
-        run: |
-          bash $GITHUB_WORKSPACE/.github/workflows/fix-task_mmu.sh $GITHUB_WORKSPACE/device_kernel
-         
-
+            
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
 
