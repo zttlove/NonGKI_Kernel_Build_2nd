@@ -124,25 +124,25 @@ jobs:
           set -euo pipefail
           cd $GITHUB_WORKSPACE/device_kernel
 
-          # 自动寻找补丁脚本，避免路径写死
-          PATCH_SCRIPT=""
-          for f in \
-            "$GITHUB_WORKSPACE/Patches/Patch/susfs_inline_hook_patches.sh" \
-            "$GITHUB_WORKSPACE/Patches/susfs_inline_hook_patches.sh" \
-            "$GITHUB_WORKSPACE/susfs_inline_hook_patches.sh"; do
-            if [ -f "$f" ]; then
-              PATCH_SCRIPT="$f"
-              break
-            fi
-          done
+          PATCH_SCRIPT="$GITHUB_WORKSPACE/susfs_inline_hook_patches.sh"
 
-          if [ -z "$PATCH_SCRIPT" ]; then
-            echo "::error::❌ 找不到 susfs_inline_hook_patches.sh，请检查路径！"
-            ls -la $GITHUB_WORKSPACE/Patches/ || true
+          if [ ! -f "$PATCH_SCRIPT" ]; then
+            echo "[-] Not found at root, try searching..."
+            PATCH_SCRIPT=$(find $GITHUB_WORKSPACE -maxdepth 3 -name "susfs_inline_hook_patches.sh" -print -quit)
+          fi
+
+          if [ -z "$PATCH_SCRIPT" ] || [ ! -f "$PATCH_SCRIPT" ]; then
+            echo "::error::❌ 找不到 susfs_inline_hook_patches.sh"
+            echo "=== 仓库根目录文件 ==="
+            ls -la $GITHUB_WORKSPACE/ | head -50
+            echo "=== Patches/ 目录 ==="
+            ls -la $GITHUB_WORKSPACE/Patches/ 2>&1 || true
+            echo "=== Patch/ 目录 ==="
+            ls -la $GITHUB_WORKSPACE/Patch/ 2>&1 || true
             exit 1
           fi
 
-          echo "=== Using patch script: $PATCH_SCRIPT ==="
+          echo "=== Using: $PATCH_SCRIPT ==="
           cp "$PATCH_SCRIPT" ./patch.sh
           chmod +x ./patch.sh
           bash ./patch.sh
@@ -151,7 +151,6 @@ jobs:
           grep -n "ksu_handle_stat" fs/stat.c || echo "NOT FOUND: ksu_handle_stat"
           grep -n "ksu_handle_faccessat" fs/open.c || echo "NOT FOUND: ksu_handle_faccessat"
           grep -n "ksu_handle_sys_reboot" kernel/reboot.c || echo "NOT FOUND: ksu_handle_sys_reboot"
-
       - name: 🛠️ Set KSU and SUSFS for DEFCONFIG
         if: env.SUSFS_ENABLE == 'true'
         shell: bash
