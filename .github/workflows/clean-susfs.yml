@@ -1,0 +1,111 @@
+name: Clean SUSFS 2.1 from Kernel
+
+on:
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  KERNEL_SOURCE : "https://github.com/zttlove/android_kernel_xiaomi_sm8350_miyume.git"
+  KERNEL_BRANCH : "fix-reboot"
+
+jobs:
+  clean-susfs:
+    name: Clean SUSFS 2.1 Code
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: ⏰ Checkout repository
+        uses: actions/checkout@v6
+
+      - name: 🧱 Clone device_kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          KERNEL_DIR="$GITHUB_WORKSPACE/device_kernel"
+          rm -rf "$KERNEL_DIR"
+          git clone "${{ env.KERNEL_SOURCE }}" \
+            -b "${{ env.KERNEL_BRANCH }}" \
+            "$KERNEL_DIR" --depth=1
+          echo "[+] device_kernel cloned."
+
+      - name: 🧹 Clean SUSFS 2.1 code
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd $GITHUB_WORKSPACE/device_kernel
+          cp $GITHUB_WORKSPACE/clean_susfs.py ./
+
+          echo "=== 清理前检查 ==="
+          grep -l "CONFIG_KSU_SUSFS" fs/*.c fs/proc/*.c include/linux/*.h 2>/dev/null || echo "(no susfs in main files)"
+
+          echo "=== 开始清理 SUSFS 代码块 ==="
+          python3 clean_susfs.py \
+            fs/stat.c \
+            fs/namei.c \
+            fs/namespace.c \
+            fs/readdir.c \
+            fs/statfs.c \
+            fs/super.c \
+            fs/exec.c \
+            fs/open.c \
+            fs/read_write.c \
+            fs/proc/base.c \
+            fs/proc/cmdline.c \
+            fs/proc/fd.c \
+            fs/proc/task_mmu.c \
+            fs/proc_namespace.c \
+            fs/notify/fdinfo.c \
+            kernel/kallsyms.c \
+            kernel/sys.c \
+            kernel/reboot.c \
+            mm/memory.c \
+            security/selinux/avc.c
+
+          echo "=== 删除 SUSFS 核心文件 ==="
+          rm -f fs/susfs.c
+          rm -f include/linux/susfs.h
+          rm -f include/linux/susfs_def.h
+
+          echo "=== 清理 fs/Makefile 中的 susfs.o 引用 ==="
+          sed -i '/CONFIG_KSU_SUSFS.*susfs.o/d' fs/Makefile
+
+          echo "=== 清理 KernelSU 中的 SUSFS 引用（如果存在）==="
+          if [ -d "drivers/kernelsu" ]; then
+            grep -rl "CONFIG_KSU_SUSFS" drivers/kernelsu/ 2>/dev/null | while read f; do
+              python3 clean_susfs.py "$f"
+            done
+          fi
+
+          echo "=== 验证清理结果 ==="
+          echo "--- fs/stat.c 是否还有 susfs_is_inode_sus_kstat ---"
+          grep -n "susfs_is_inode_sus_kstat" fs/stat.c || echo "已清除"
+          echo "--- fs/namei.c 是否还有 susfs_is_inode_sus_path ---"
+          grep -n "susfs_is_inode_sus_path" fs/namei.c || echo "已清除"
+          echo "--- fs/namespace.c 是否还有 susfs_alloc ---"
+          grep -n "susfs_alloc" fs/namespace.c || echo "已清除"
+          echo "--- fs/susfs.c 是否存在 ---"
+          ls -la fs/susfs.c 2>&1 || echo "已删除"
+          echo "--- include/linux/susfs.h 是否存在 ---"
+          ls -la include/linux/susfs.h 2>&1 || echo "已删除"
+
+          echo "[+] SUSFS 2.1 cleanup done."
+
+      - name: ✅ Check KSU Manual Hook intact
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd $GITHUB_WORKSPACE/device_kernel
+          echo "=== fs/stat.c 里是否还有 ksu_handle_stat ==="
+          grep -n "ksu_handle_stat" fs/stat.c || echo "NOT FOUND!"
+          echo "=== fs/open.c 里是否还有 ksu_handle_faccessat ==="
+          grep -n "ksu_handle_faccessat" fs/open.c || echo "NOT FOUND!"
+          echo "=== kernel/reboot.c 里是否还有 ksu_handle_sys_reboot ==="
+          grep -n "ksu_handle_sys_reboot" kernel/reboot.c || echo "NOT FOUND!"
+
+      - name: 📤 Upload cleaned kernel
+        uses: actions/upload-artifact@v4
+        with:
+          name: cleaned-kernel-source
+          path: |
+            device_kernel/
+          retention-days: 7
