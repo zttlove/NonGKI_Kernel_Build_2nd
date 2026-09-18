@@ -6,7 +6,7 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   KERNEL_SOURCE : "https://github.com/zttlove/android_kernel_xiaomi_sm8350_miyume.git"
-  KERNEL_BRANCH : "fix-reboot"
+  KERNEL_BRANCH : "fix-root2"
 
 jobs:
   clean-susfs:
