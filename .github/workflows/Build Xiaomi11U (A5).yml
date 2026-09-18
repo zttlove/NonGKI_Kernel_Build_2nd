@@ -123,9 +123,30 @@ jobs:
         run: |
           set -euo pipefail
           cd $GITHUB_WORKSPACE/device_kernel
-          cp $GITHUB_WORKSPACE/susfs_inline_hook_patches.sh ./patch.sh
+
+          # 自动寻找补丁脚本，避免路径写死
+          PATCH_SCRIPT=""
+          for f in \
+            "$GITHUB_WORKSPACE/Patches/Patch/susfs_inline_hook_patches.sh" \
+            "$GITHUB_WORKSPACE/Patches/susfs_inline_hook_patches.sh" \
+            "$GITHUB_WORKSPACE/susfs_inline_hook_patches.sh"; do
+            if [ -f "$f" ]; then
+              PATCH_SCRIPT="$f"
+              break
+            fi
+          done
+
+          if [ -z "$PATCH_SCRIPT" ]; then
+            echo "::error::❌ 找不到 susfs_inline_hook_patches.sh，请检查路径！"
+            ls -la $GITHUB_WORKSPACE/Patches/ || true
+            exit 1
+          fi
+
+          echo "=== Using patch script: $PATCH_SCRIPT ==="
+          cp "$PATCH_SCRIPT" ./patch.sh
           chmod +x ./patch.sh
           bash ./patch.sh
+
           echo "=== Verify hooks ==="
           grep -n "ksu_handle_stat" fs/stat.c || echo "NOT FOUND: ksu_handle_stat"
           grep -n "ksu_handle_faccessat" fs/open.c || echo "NOT FOUND: ksu_handle_faccessat"
@@ -135,8 +156,15 @@ jobs:
         if: env.SUSFS_ENABLE == 'true'
         shell: bash
         run: |
+          set -euo pipefail
           cd $GITHUB_WORKSPACE/device_kernel
           DEFCONFIG="./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}"
+
+          if [ ! -f "$DEFCONFIG" ]; then
+            echo "::error::❌ DEFCONFIG not found: $DEFCONFIG"
+            exit 1
+          fi
+
           for opt in \
             CONFIG_KSU \
             CONFIG_KSU_MANUAL_HOOK \
@@ -145,9 +173,20 @@ jobs:
             CONFIG_KSU_SUSFS_SUS_KSTAT \
             CONFIG_KSU_SUSFS_ENABLE_LOG
           do
-            grep -q "^$opt=y" "$DEFCONFIG" && sed -i "s|^$opt.*|$opt=y|" "$DEFCONFIG" || echo "$opt=y" >> "$DEFCONFIG"
+            if grep -q "^$opt=y" "$DEFCONFIG"; then
+              sed -i "s|^$opt.*|$opt=y|" "$DEFCONFIG"
+            else
+              # 先删掉可能存在的 "# CONFIG_XXX is not set"
+              sed -i "/^# $opt is not set/d" "$DEFCONFIG"
+              echo "$opt=y" >> "$DEFCONFIG"
+            fi
           done
-          echo "[+] defconfig updated."
+
+          # 关闭 tracepoint hook 避免与 manual hook 冲突
+          sed -i '/^CONFIG_KSU_TRACEPOINT_HOOK=y/d' "$DEFCONFIG"
+          grep -q "^# CONFIG_KSU_TRACEPOINT_HOOK is not set" "$DEFCONFIG" || \
+            echo "# CONFIG_KSU_TRACEPOINT_HOOK is not set" >> "$DEFCONFIG"
+
           echo "=== final defconfig KSU/SUSFS lines ==="
           grep -iE "ksu|susfs" "$DEFCONFIG" || echo "(no ksu/susfs line)"
 
@@ -159,14 +198,15 @@ jobs:
           ls -la fs/susfs.c 2>&1 || echo "NOT FOUND"
           echo "=== include/linux/susfs.h exists? ==="
           ls -la include/linux/susfs.h 2>&1 || echo "NOT FOUND"
-          echo "=== fs/stat.c has ksu_handle_stat ==="
-          grep -n "ksu_handle_stat" fs/stat.c || echo "NOT FOUND"
-          echo "=== fs/open.c has ksu_handle_faccessat ==="
-          grep -n "ksu_handle_faccessat" fs/open.c || echo "NOT FOUND"
-          echo "=== fs/namei.c has susfs_is_inode_sus_path ==="
-          grep -n "susfs_is_inode_sus_path" fs/namei.c || echo "NOT FOUND"
-          echo "=== kernel/reboot.c has ksu_handle_sys_reboot ==="
-          grep -n "ksu_handle_sys_reboot" kernel/reboot.c || echo "NOT FOUND"
+          echo "=== fs/stat.c hooks ==="
+          grep -n "ksu_handle_stat" fs/stat.c || echo "NOT FOUND: ksu_handle_stat"
+          grep -n "ksu_handle_newfstat_ret" fs/stat.c || echo "NOT FOUND: ksu_handle_newfstat_ret"
+          echo "=== fs/open.c hooks ==="
+          grep -n "ksu_handle_faccessat" fs/open.c || echo "NOT FOUND: ksu_handle_faccessat"
+          echo "=== fs/namei.c hooks ==="
+          grep -n "susfs_is_inode_sus_path" fs/namei.c || echo "NOT FOUND: susfs_is_inode_sus_path"
+          echo "=== kernel/reboot.c hooks ==="
+          grep -n "ksu_handle_sys_reboot" kernel/reboot.c || echo "NOT FOUND: ksu_handle_sys_reboot"
           echo "=== defconfig KSU/SUSFS state ==="
           DEFCONFIG="./arch/${{ env.KERNEL_ARCH }}/configs/${{ env.DEFCONFIG_NAME }}"
           grep -iE "ksu|susfs" "$DEFCONFIG" || echo "(no ksu/susfs line in defconfig)"
