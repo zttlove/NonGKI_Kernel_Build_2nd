@@ -51,7 +51,7 @@ env:
   PACK_METHOD: "Anykernel3"
   PACK_KMODULES: "false"
 
-  KERNELSU_METHOD: "shell"
+  KERNELSU_METHOD: "manual"
   KERNELSU_SUS_PATCH: "false"
 
   PATCHES_SOURCE: "JackA1ltman/NonGKI_Kernel_Patches"
