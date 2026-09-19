@@ -217,12 +217,27 @@ jobs:
       - name: 🚫 Force-disable SUS_MOUNT in fs/namespace.c
         shell: bash
         run: |
-         set -uo pipefail
-         cd $GITHUB_WORKSPACE
-         python3 scripts/disable_sus_mount.py device_kernel
-         echo "=== fs/namespace.c SUS_MOUNT check ==="
-         grep -n "CONFIG_KSU_SUSFS_SUS_MOUNT" device_kernel/fs/namespace.c | head -20 || echo "NONE"
+          cd $GITHUB_WORKSPACE/device_kernel
 
+          echo "=== Before ==="
+          grep -c "CONFIG_KSU_SUSFS_SUS_MOUNT" fs/namespace.c || true
+
+          awk '
+            /^#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT$/ { in_sus=1; found_else=0; buf=""; next }
+            in_sus==1 && /^#else$/ { in_sus=2; next }
+            in_sus==1 && /^#endif$/ { in_sus=0; next }
+            in_sus==2 && /^#endif$/ { in_sus=0; printf "%s", buf; buf=""; next }
+            in_sus==2 { buf = buf $0 "\n"; next }
+            in_sus { next }
+            { print }
+          ' fs/namespace.c > fs/namespace.c.new
+          mv fs/namespace.c.new fs/namespace.c
+
+          echo "=== After ==="
+          grep -c "CONFIG_KSU_SUSFS_SUS_MOUNT" fs/namespace.c || true
+          echo "=== lines 125-145 ==="
+          sed -n '125,145p' fs/namespace.c
+          
       - name: 🛠️ Set KSU and SUSFS for DEFCONFIG
         shell: bash
         run: |
