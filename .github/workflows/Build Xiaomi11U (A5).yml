@@ -213,7 +213,54 @@ jobs:
           sed -n '1,30p' device_kernel/fs/namei.c
           echo "=== extern line check ==="
           grep -n "extern bool susfs_is_inode_sus_path" device_kernel/fs/namei.c
-     
+
+      - name: 🚫 Force-disable SUS_MOUNT in fs/namespace.c
+        shell: bash
+        run: |
+          set -uo pipefail
+          cd $GITHUB_WORKSPACE
+
+          python3 - <<'PYEOF'
+          import re
+
+          path = "device_kernel/fs/namespace.c"
+          with open(path) as f:
+          content = f.read()
+
+          before_m = len(re.findall(r'CONFIG_KSU_SUSFS_SUS_MOUNT', content))
+          before_e = len(re.findall(r'^#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\s*$', content, re.M))
+          print(f"[before] SUS_MOUNT refs = {before_m}, #ifdef = {before_e}")
+
+          content = re.sub(
+          r'^#ifdef\s+CONFIG_KSU_SUSFS_SUS_MOUNT\s*$',
+          '#if 0', content, flags=re.MULTILINE
+          )
+          content = re.sub(
+          r'^#ifndef\s+CONFIG_KSU_SUSFS_SUS_MOUNT\s*$',          '#if 1', content, flags=re.MULTILINE
+          )
+          content = re.sub(
+          r'^#if\s+defined\s*\(\s*CONFIG_KSU_SUSFS_SUS_MOUNT\s*\)\s*\|\|.*$',
+          '#if 0', content, flags=re.MULTILINE
+          )
+          content = re.sub(
+          r'^#if\s+defined\s*\(\s*CONFIG_KSU_SUSFS_SUS_MOUNT\s*\)\s*$',
+          '#if 0', content, flags=re.MULTILINE
+          )
+          content = re.sub(
+          r'^#if\s+defined\s*\(\s*CONFIG_KSU_SUSFS_SUS_KSTAT\s*\)\s*\|\|\s*defined\s*\(\s*CONFIG_KSU_SUSFS_SUS_MOUNT\s*\)\s*$',
+          '#if 0', content, flags=re.MULTILINE
+          )
+
+          with open(path, "w") as f:
+          f.write(content)
+
+          after_e = len(re.findall(r'^#if 0\s*$', content, re.M))
+          print(f"[after] #if 0 count = {after_e}")
+          PYEOF
+
+          echo "=== fs/namespace.c SUS_MOUNT check ==="
+          grep -n "CONFIG_KSU_SUSFS_SUS_MOUNT" device_kernel/fs/namespace.c | head -20 || echo "NONE"
+          
       - name: Patch ReSukiSU inline hook check
         shell: bash
         run: |
