@@ -159,6 +159,23 @@ jobs:
 
           echo "[+] SUSFS 2.3 patch step done."
 
+      - name: 🔧 Re-inject fs/namei.c macros (post-patch fix)
+        shell: bash
+        run: |
+          set -uo pipefail
+          cd $GITHUB_WORKSPACE
+
+          echo "=== Before fix ==="
+          grep -c "ND_STATE_LOOKUP_LAST" device_kernel/fs/namei.c || true
+          grep -c "unsigned int	state" device_kernel/fs/namei.c || true
+
+          python3 scripts/fix_namei_macros.py device_kernel
+
+          echo "=== After fix ==="
+          grep -c "ND_STATE_LOOKUP_LAST" device_kernel/fs/namei.c || true
+          grep -c "unsigned int	state" device_kernel/fs/namei.c || true
+          echo "=== line 50-65 ==="
+          sed -n '50,65p' device_kernel/fs/namei.c
 
       - name: Patch ReSukiSU inline hook check
         shell: bash
