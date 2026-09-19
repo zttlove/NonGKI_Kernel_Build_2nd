@@ -16,27 +16,30 @@ def hard_inject(path):
     with open(path, "r") as f:
         content = f.read()
 
-    if "SUSFS HARD-INJECT" not in content:
-        header = (
-            "/* SUSFS HARD-INJECT - start */\n"
-            "#include <linux/susfs_def.h>\n"
-            "#include <uapi/linux/magic.h>\n"
-            "extern bool susfs_is_inode_sus_path(struct inode *inode);\n"
-            "extern const struct qstr susfs_fake_qstr_name;\n"
-            "/* SUSFS HARD-INJECT - end */\n\n"
-        )
-        m = re.search(r"^#include", content, re.MULTILINE)
-        if m:
-            content = content[:m.start()] + header + content[m.start():]
-            print("[+] Hard-injected at top of fs/namei.c")
-        else:
-            print("[!] No #include found, injection failed.")
-    else:
+    if "SUSFS HARD-INJECT" in content:
         print("[+] Header already injected, skip.")
+        return
+
+    header = (
+        "/* SUSFS HARD-INJECT - start */\n"
+        "#include <linux/susfs_def.h>\n"
+        "#include <uapi/linux/magic.h>\n"
+        "extern bool susfs_is_inode_sus_path(struct inode *inode);\n"
+        "extern const struct qstr susfs_fake_qstr_name;\n"
+        "/* SUSFS HARD-INJECT - end */\n\n"
+    )
+
+    m = re.search(r"^#include", content, re.MULTILINE)
+    if m:
+        content = content[:m.start()] + header + content[m.start():]
+        with open(path, "w") as f:
+            f.write(content)
+        print("[+] Hard-injected at top of fs/namei.c")
+    else:
+        print("[!] No #include found, injection failed.")
 
 
 def force_lookup_hash_locals(path):
-    """在 __lookup_hash 函数体里强制补 found_sus_path 声明和 retry: 标签"""
     with open(path, "r") as f:
         lines = f.readlines()
 
@@ -50,7 +53,6 @@ def force_lookup_hash_locals(path):
             in_func = True
 
         if in_func:
-            # 在 "struct inode *dir = base->d_inode;" 之后插入声明
             if ("struct inode *dir = base->d_inode;" in line
                     and not injected_decl):
                 out.append(line)
@@ -58,7 +60,6 @@ def force_lookup_hash_locals(path):
                 injected_decl = True
                 continue
 
-            # 在 "dentry = d_alloc(base, name);" 之后插入 retry: 标签
             if ("dentry = d_alloc(base, name);" in line
                     and not injected_label):
                 out.append(line)
@@ -68,7 +69,6 @@ def force_lookup_hash_locals(path):
 
         out.append(line)
 
-        # 函数结束
         if in_func and line.startswith("}"):
             in_func = False
 
