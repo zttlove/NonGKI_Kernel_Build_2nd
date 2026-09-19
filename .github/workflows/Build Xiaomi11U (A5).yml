@@ -197,11 +197,17 @@ jobs:
           DEFCONFIG="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
 
           # 先删掉所有旧的 CONFIG_KSU_SUSFS* 行
-          sed -i '/^CONFIG_KSU_SUSFS=/d' "$DEFCONFIG"
-          sed -i '/^CONFIG_KSU_SUSFS_SUS_PATH=/d' "$DEFCONFIG"
-          sed -i '/^CONFIG_KSU_SUSFS_SUS_KSTAT=/d' "$DEFCONFIG"
-          sed -i '/^CONFIG_KSU_SUSFS_ENABLE_LOG=/d' "$DEFCONFIG"
+          sed -i '/^CONFIG_KSU=/d' "$DEFCONFIG"
+          sed -i '/^# CONFIG_KSU is not set/d' "$DEFCONFIG"
+          sed -i '/^CONFIG_KSU_MANUAL_HOOK=/d' "$DEFCONFIG"
+          sed -i '/^# CONFIG_KSU_MANUAL_HOOK /d' "$DEFCONFIG"
+          sed -i '/^CONFIG_KSU_TRACEPOINT_HOOK=/d' "$DEFCONFIG"
+          sed -i '/^# CONFIG_KSU_TRACEPOINT_HOOK /d' "$DEFCONFIG"
+          sed -i '/^CONFIG_KSU_SUSFS/d' "$DEFCONFIG"
           sed -i '/^# CONFIG_KSU_SUSFS/d' "$DEFCONFIG"
+          sed -i '/^CONFIG_KSU_FULL_NAME_FORMAT/d' "$DEFCONFIG"
+          sed -i '/^CONFIG_KSU_MULTI_MANAGER_SUPPORT/d' "$DEFCONFIG"
+          sed -i '/^CONFIG_KSU_DISABLE_IN_RECOVERY/d' "$DEFCONFIG"
 
           # 再写干净的
           for opt in \
