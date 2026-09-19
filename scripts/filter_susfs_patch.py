@@ -21,6 +21,7 @@ DROP_FILES = {
     "fs/proc/task_mmu.c",
     "kernel/sys.c",
     "kernel/kallsyms.c",
+    "fs/notify/fdinfo.c"
 }
 
 # 逐 hunk 过滤
