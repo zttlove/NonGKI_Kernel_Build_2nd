@@ -143,48 +143,35 @@ jobs:
           echo "=== Cloning patches repository ==="
           git clone --depth=1 https://github.com/${{ env.PATCHES_SOURCE }}.git -b ${{ env.PATCHES_BRANCH }} patches_repo
 
-          echo "=== Locating SUSFS 2.3 BASE patch ==="
-          # 优先寻找标准的基础补丁路径
-          PATCH_FILE="patches_repo/Patches/Patch/susfs_patch_to_5.4.patch"
-    
-          if [ ! -f "$PATCH_FILE" ]; then
-          echo "⚠️ 标准路径不存在，正在全局搜索基础补丁..."
-          # 搜索名为 susfs_patch_to_5.4 或带 susfs 且不包含 fixed 的文件
-          PATCH_FILE=$(find patches_repo -type f -name "*susfs*5.4*.patch" | head -n 1 || true)
-          if [ -z "$PATCH_FILE" ]; then
-          PATCH_FILE=$(find patches_repo -type f -name "*.patch" | grep -i "susfs" | grep -v "fixed" | head -n 1 || true)
-          fi
-          fi
+          echo "=== Locating SUSFS 2.3 BASE patch by CONTENT ==="
+          # 核心改动：彻底放弃猜文件名，直接在整个仓库里找包含 fs/susfs.c 的补丁
+          PATCH_FILE=$(grep -rl "fs/susfs.c" patches_repo --include="*.patch" | head -n 1 || true)
 
           if [ -z "$PATCH_FILE" ] || [ ! -f "$PATCH_FILE" ]; then
-          echo "::error::❌ 找不到 SUSFS 基础补丁！"
-          find patches_repo -name "*.patch" | head -20
+          echo "::error::❌ 在补丁仓库里找不到包含 fs/susfs.c 的补丁！"
+          echo "=== 当前仓库所有可用的 .patch 文件（供排查） ==="
+          find patches_repo -name "*.patch" | head -30
           exit 1
           fi
-          echo "✅ 找到基础补丁: $PATCH_FILE"
-
-          echo "=== Verify patch content (Checking core files) ==="
-          # 严格验证补丁里是否真的包含我们需要的三个核心文件
-          if ! grep -q "fs/susfs.c" "$PATCH_FILE"; then
-          echo "::error::❌ 这个补丁里没有 fs/susfs.c，它依然是一个错误的补丁！"
-          exit 1
-          fi
-          echo "✅ 补丁内容验证通过，包含 SUSFS 核心文件。"
+          echo "✅ 成功定位到包含核心代码的补丁: $PATCH_FILE"
 
           echo "=== Applying patch ==="
-          # 直接应用整个补丁，不使用 --include 过滤
-          git apply "$PATCH_FILE" || true
+          # 应用整个补丁，如果失败则捕获错误，但不直接退出，以便后续检查文件
+          if ! git apply "$PATCH_FILE"; then
+          echo "::warning::git apply 遇到冲突，可能包含驱动不匹配，我们尝试继续检查核心文件..."
+          fi
 
           echo "=== Checking .rej files ==="
+          # 检查是否有冲突文件，并提示忽略它们
           REJ_FILES=$(find . -name "*.rej" -type f | grep -v "patches_repo" || true)
           if [ -n "$REJ_FILES" ]; then
-          echo "⚠️ 警告：产生冲突文件（通常是触摸屏等驱动不匹配导致）："
+          echo "⚠️ 警告：产生了 .rej 文件（通常是触摸屏等驱动不匹配）："
           echo "$REJ_FILES"
-          echo "忽略这些冲突，继续检查核心文件..."
+          echo "忽略这些冲突，继续检查核心文件是否生成..."
           fi
 
           echo "=== Verifying core files ==="
-          # 严格检查核心文件是否生成
+          # 验证核心文件是否真的生成
           if [ ! -f "fs/susfs.c" ] || [ ! -f "include/linux/susfs.h" ] || [ ! -f "include/linux/susfs_def.h" ]; then
           echo "::error::❌ 核心 SUSFS 文件缺失，补丁未正确应用！请检查补丁版本是否与内核5.4匹配。"
           exit 1
