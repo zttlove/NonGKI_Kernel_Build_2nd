@@ -114,26 +114,7 @@ jobs:
             "$KERNEL_DIR" --depth=1
           echo "[+] device_kernel cloned."
 
-      - name: 🧹 Clean SUSFS 2.1 from source
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd $GITHUB_WORKSPACE/device_kernel
-          cp $GITHUB_WORKSPACE/clean_susfs.py ./
-
-          python3 clean_susfs.py \
-            fs/stat.c fs/namei.c fs/namespace.c fs/readdir.c fs/statfs.c \
-            fs/super.c fs/exec.c fs/open.c fs/read_write.c \
-            fs/proc/base.c fs/proc/cmdline.c fs/proc/fd.c fs/proc/task_mmu.c \
-            fs/proc_namespace.c fs/notify/fdinfo.c \
-            kernel/kallsyms.c kernel/sys.c kernel/reboot.c \
-            mm/memory.c security/selinux/avc.c
-
-          rm -f fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h
-          sed -i '/CONFIG_KSU_SUSFS.*susfs.o/d' fs/Makefile
-
-          echo "[+] SUSFS 2.1 cleaned."
-
+      
       - name: 🪝 Patch SUSFS 2.3
         shell: bash
         run: |
@@ -141,7 +122,7 @@ jobs:
           cd $GITHUB_WORKSPACE/device_kernel
 
           echo "=== Copy SUSFS 2.3 patch from repo ==="
-          cp $GITHUB_WORKSPACE/Patches/Patch/susfs_patch_to_5.4.patch ./susfs_patch_to_5.4.patch
+          cp $GITHUB_WORKSPACE/Patches/susfs_patch_to_5.4.patch ./susfs_patch_to_5.4.patch
 
           echo "=== Verify patch file ==="
           head -5 susfs_patch_to_5.4.patch
