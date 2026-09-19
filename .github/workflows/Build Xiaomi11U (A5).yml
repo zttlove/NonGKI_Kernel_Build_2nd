@@ -217,61 +217,11 @@ jobs:
       - name: 🚫 Force-disable SUS_MOUNT in fs/namespace.c
         shell: bash
         run: |
-          set -uo pipefail
-          cd $GITHUB_WORKSPACE
-
-          python3 - <<'PYEOF'
-          import re
-
-          path = "device_kernel/fs/namespace.c"
-          with open(path) as f:
-          content = f.read()
-
-          before_m = len(re.findall(r'CONFIG_KSU_SUSFS_SUS_MOUNT', content))
-          before_e = len(re.findall(r'^#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\s*$', content, re.M))
-          print(f"[before] SUS_MOUNT refs = {before_m}, #ifdef = {before_e}")
-
-          content = re.sub(
-          r'^#ifdef\s+CONFIG_KSU_SUSFS_SUS_MOUNT\s*$',
-          '#if 0', content, flags=re.MULTILINE
-          )
-          content = re.sub(
-          r'^#ifndef\s+CONFIG_KSU_SUSFS_SUS_MOUNT\s*$',          '#if 1', content, flags=re.MULTILINE
-          )
-          content = re.sub(
-          r'^#if\s+defined\s*\(\s*CONFIG_KSU_SUSFS_SUS_MOUNT\s*\)\s*\|\|.*$',
-          '#if 0', content, flags=re.MULTILINE
-          )
-          content = re.sub(
-          r'^#if\s+defined\s*\(\s*CONFIG_KSU_SUSFS_SUS_MOUNT\s*\)\s*$',
-          '#if 0', content, flags=re.MULTILINE
-          )
-          content = re.sub(
-          r'^#if\s+defined\s*\(\s*CONFIG_KSU_SUSFS_SUS_KSTAT\s*\)\s*\|\|\s*defined\s*\(\s*CONFIG_KSU_SUSFS_SUS_MOUNT\s*\)\s*$',
-          '#if 0', content, flags=re.MULTILINE
-          )
-
-          with open(path, "w") as f:
-          f.write(content)
-
-          after_e = len(re.findall(r'^#if 0\s*$', content, re.M))
-          print(f"[after] #if 0 count = {after_e}")
-          PYEOF
-
-          echo "=== fs/namespace.c SUS_MOUNT check ==="
-          grep -n "CONFIG_KSU_SUSFS_SUS_MOUNT" device_kernel/fs/namespace.c | head -20 || echo "NONE"
-          
-      - name: Patch ReSukiSU inline hook check
-        shell: bash
-        run: |
-          cd $GITHUB_WORKSPACE/device_kernel
-          if [ -f KernelSU/kernel/tools/inline_hook_check.mk ]; then
-            echo "# Bypassed by user" > KernelSU/kernel/tools/inline_hook_check.mk
-            echo "[+] Bypassed inline_hook_check.mk"
-          else
-            echo "[!] inline_hook_check.mk not found, nothing to bypass"
-          fi
-
+         set -uo pipefail
+         cd $GITHUB_WORKSPACE
+         python3 scripts/disable_sus_mount.py device_kernel
+         echo "=== fs/namespace.c SUS_MOUNT check ==="
+         grep -n "CONFIG_KSU_SUSFS_SUS_MOUNT" device_kernel/fs/namespace.c | head -20 || echo "NONE"
 
       - name: 🛠️ Set KSU and SUSFS for DEFCONFIG
         shell: bash
@@ -280,15 +230,21 @@ jobs:
           cd $GITHUB_WORKSPACE/device_kernel
           DEFCONFIG="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
 
-          # 先删掉所有旧的 CONFIG_KSU_SUSFS* 行
-          # 写干净的
+          # 清理所有 KSU/SUSFS 行
+          sed -i '/^CONFIG_KSU=/d' "$DEFCONFIG"
+          sed -i '/^# CONFIG_KSU is not set/d' "$DEFCONFIG"
+          sed -i '/^CONFIG_KSU_/d' "$DEFCONFIG"
+          sed -i '/^# CONFIG_KSU_/d' "$DEFCONFIG"
+
+          # 写入我们要的
           for opt in \
           CONFIG_KSU=y \
           CONFIG_KSU_MANUAL_HOOK=y \
           CONFIG_KSU_SUSFS=y \
           CONFIG_KSU_SUSFS_SUS_PATH=y \
           CONFIG_KSU_SUSFS_SUS_KSTAT=y \
-          CONFIG_KSU_SUSFS_ENABLE_LOG=y
+          CONFIG_KSU_SUSFS_ENABLE_LOG=y \
+          "# CONFIG_KSU_TRACEPOINT_HOOK is not set"
           do
           echo "$opt" >> "$DEFCONFIG"
           done
@@ -305,13 +261,9 @@ jobs:
           do
           echo "# $opt is not set" >> "$DEFCONFIG"
           done
-          sed -i '/^CONFIG_KSU_TRACEPOINT_HOOK=y/d' "$DEFCONFIG"
-          grep -q "^# CONFIG_KSU_TRACEPOINT_HOOK is not set" "$DEFCONFIG" || \
-            echo "# CONFIG_KSU_TRACEPOINT_HOOK is not set" >> "$DEFCONFIG"
 
           echo "=== final defconfig KSU/SUSFS lines ==="
           grep -iE "ksu|susfs" "$DEFCONFIG" || echo "(no ksu/susfs line)"
-
 
       - name: 🔎 Verify Kconfig tree includes KSU
         shell: bash
