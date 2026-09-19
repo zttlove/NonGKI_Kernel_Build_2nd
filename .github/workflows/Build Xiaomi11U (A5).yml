@@ -134,50 +134,38 @@ jobs:
 
           echo "[+] SUSFS 2.1 cleaned."
 
-      - name: 🪝 Patch SUSFS 2.3
+            - name: 🪝 Patch SUSFS 2.3
         shell: bash
         run: |
           set -euo pipefail
           cd $GITHUB_WORKSPACE/device_kernel
 
-          echo "=== Cloning patches repository ==="
-          git clone --depth=1 https://github.com/${{ env.PATCHES_SOURCE }}.git -b ${{ env.PATCHES_BRANCH }} patches_repo
+          echo "=== Copy SUSFS 2.3 patch from repo ==="
+          cp $GITHUB_WORKSPACE/Patches/Patch/susfs_patch_to_5.4.patch ./susfs_patch_to_5.4.patch
 
-          echo "=== Locating SUSFS 2.3 BASE patch by CONTENT ==="
-          # 核心改动：彻底放弃猜文件名，直接在整个仓库里找包含 fs/susfs.c 的补丁
-          PATCH_FILE=$(grep -rl "fs/susfs.c" patches_repo --include="*.patch" | head -n 1 || true)
-
-          if [ -z "$PATCH_FILE" ] || [ ! -f "$PATCH_FILE" ]; then
-          echo "::error::❌ 在补丁仓库里找不到包含 fs/susfs.c 的补丁！"
-          echo "=== 当前仓库所有可用的 .patch 文件（供排查） ==="
-          find patches_repo -name "*.patch" | head -30
-          exit 1
-          fi
-          echo "✅ 成功定位到包含核心代码的补丁: $PATCH_FILE"
+          echo "=== Verify patch file ==="
+          head -5 susfs_patch_to_5.4.patch
+          wc -l susfs_patch_to_5.4.patch
 
           echo "=== Applying patch ==="
-          # 应用整个补丁，如果失败则捕获错误，但不直接退出，以便后续检查文件
-          if ! git apply "$PATCH_FILE"; then
-          echo "::warning::git apply 遇到冲突，可能包含驱动不匹配，我们尝试继续检查核心文件..."
-          fi
+          patch -p1 < susfs_patch_to_5.4.patch || true
 
           echo "=== Checking .rej files ==="
-          # 检查是否有冲突文件，并提示忽略它们
-          REJ_FILES=$(find . -name "*.rej" -type f | grep -v "patches_repo" || true)
+          REJ_FILES=$(find . -name "*.rej" -type f)
           if [ -n "$REJ_FILES" ]; then
-          echo "⚠️ 警告：产生了 .rej 文件（通常是触摸屏等驱动不匹配）："
-          echo "$REJ_FILES"
-          echo "忽略这些冲突，继续检查核心文件是否生成..."
+            echo "::error::❌ Patch created .rej files:"
+            echo "$REJ_FILES"
+            for f in $REJ_FILES; do
+              echo "--- $f ---"
+              cat "$f"
+            done
+            exit 1
           fi
 
           echo "=== Verifying core files ==="
-          # 验证核心文件是否真的生成
-          if [ ! -f "fs/susfs.c" ] || [ ! -f "include/linux/susfs.h" ] || [ ! -f "include/linux/susfs_def.h" ]; then
-          echo "::error::❌ 核心 SUSFS 文件缺失，补丁未正确应用！请检查补丁版本是否与内核5.4匹配。"
-          exit 1
-          fi
           ls -la fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h
-          echo "[+] SUSFS 2.3 core files patched successfully."
+
+          echo "[+] SUSFS 2.3 patch applied."
     
       - name: 🛠️ Set KSU and SUSFS for DEFCONFIG
         shell: bash
