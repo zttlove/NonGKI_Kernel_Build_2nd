@@ -107,7 +107,7 @@ jobs:
       - name: 🪝 Patch SUSFS 2.3
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
           cd $GITHUB_WORKSPACE/device_kernel
 
           echo "=== Copy SUSFS 2.3 patch from repo root ==="
@@ -123,25 +123,21 @@ jobs:
           echo "=== Checking .rej files ==="
           REJ_FILES=$(find . -name "*.rej" -type f || true)
           if [ -n "$REJ_FILES" ]; then
-            echo "::warning::⚠️ Patch created the following .rej files (not fatal):"
+            echo "::warning::Patch created .rej files (not fatal):"
             echo "$REJ_FILES"
-            for f in $REJ_FILES; do
-              echo "--- $f ---"
-              cat "$f"
-            done
-          else
-            echo "[+] No .rej files. Clean apply."
           fi
 
           echo "=== Verifying core files ==="
           ls -la fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h
 
-          echo "=== Sanity check: SUS_PATH hooks in fs/namei.c ==="
+          echo "=== SUS_PATH count in fs/namei.c ==="
           grep -c "susfs_is_inode_sus_path" fs/namei.c || true
 
-          echo "=== Sanity check: SUS_KSTAT hooks in fs/stat.c ==="
+          echo "=== SUS_KSTAT count in fs/stat.c ==="
           grep -c "susfs_is_inode_sus_kstat" fs/stat.c || true
-          echo "[+] SUSFS 2.3 patch step done.
+
+          echo "[+] SUSFS 2.3 patch step done."
+          
           
       - name: Patch ReSukiSU inline hook check
         shell: bash
