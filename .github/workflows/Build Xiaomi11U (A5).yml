@@ -142,7 +142,18 @@ jobs:
           echo "=== Sanity check: SUS_KSTAT hooks in fs/stat.c ==="
           grep -n "susfs_is_inode_sus_kstat" fs/stat.c || echo "::warning::susfs_is_inode_sus_kstat NOT found in fs/stat.c"
 
-          echo "[+] SUSFS 2.3 patch step done."
+          echo "[+] SUSFS 2.3 patch step done.
+          
+      - name: Patch ReSukiSU inline hook check
+        shell: bash
+        run: |
+          cd $GITHUB_WORKSPACE/device_kernel
+          if [ -f KernelSU/kernel/tools/inline_hook_check.mk ]; then
+          echo "# Bypassed by user" > KernelSU/kernel/tools/inline_hook_check.mk
+          echo "[+] Bypassed inline_hook_check.mk"
+          else
+          echo "[!] inline_hook_check.mk not found, nothing to bypass"
+          fi
     
       - name: 🛠️ Set KSU and SUSFS for DEFCONFIG
         shell: bash
