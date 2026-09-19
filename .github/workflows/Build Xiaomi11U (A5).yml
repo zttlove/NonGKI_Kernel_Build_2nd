@@ -121,8 +121,8 @@ jobs:
           set -euo pipefail
           cd $GITHUB_WORKSPACE/device_kernel
 
-          echo "=== Copy SUSFS 2.3 patch from repo ==="
-          cp $GITHUB_WORKSPACE/Patches/susfs_patch_to_5.4.patch ./susfs_patch_to_5.4.patch
+          echo "=== Copy SUSFS 2.3 patch from repo root ==="
+          cp $GITHUB_WORKSPACE/susfs_patch_to_5.4.patch ./susfs_patch_to_5.4.patch
 
           echo "=== Verify patch file ==="
           head -5 susfs_patch_to_5.4.patch
