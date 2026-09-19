@@ -134,7 +134,7 @@ jobs:
 
           echo "[+] SUSFS 2.1 cleaned."
 
-            - name: 🪝 Patch SUSFS 2.3
+      - name: 🪝 Patch SUSFS 2.3
         shell: bash
         run: |
           set -euo pipefail
