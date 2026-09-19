@@ -197,30 +197,30 @@ jobs:
           DEFCONFIG="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
 
           # 先删掉所有旧的 CONFIG_KSU_SUSFS* 行
-          sed -i '/^CONFIG_KSU=/d' "$DEFCONFIG"
-          sed -i '/^# CONFIG_KSU is not set/d' "$DEFCONFIG"
-          sed -i '/^CONFIG_KSU_MANUAL_HOOK=/d' "$DEFCONFIG"
-          sed -i '/^# CONFIG_KSU_MANUAL_HOOK /d' "$DEFCONFIG"
-          sed -i '/^CONFIG_KSU_TRACEPOINT_HOOK=/d' "$DEFCONFIG"
-          sed -i '/^# CONFIG_KSU_TRACEPOINT_HOOK /d' "$DEFCONFIG"
-          sed -i '/^CONFIG_KSU_SUSFS/d' "$DEFCONFIG"
-          sed -i '/^# CONFIG_KSU_SUSFS/d' "$DEFCONFIG"
-          sed -i '/^CONFIG_KSU_FULL_NAME_FORMAT/d' "$DEFCONFIG"
-          sed -i '/^CONFIG_KSU_MULTI_MANAGER_SUPPORT/d' "$DEFCONFIG"
-          sed -i '/^CONFIG_KSU_DISABLE_IN_RECOVERY/d' "$DEFCONFIG"
-
-          # 再写干净的
+          # 写干净的
           for opt in \
-            CONFIG_KSU=y \
-            CONFIG_KSU_MANUAL_HOOK=y \
-            CONFIG_KSU_SUSFS=y \
-            CONFIG_KSU_SUSFS_SUS_PATH=y \
-            CONFIG_KSU_SUSFS_SUS_KSTAT=y \
-            CONFIG_KSU_SUSFS_ENABLE_LOG=y
+          CONFIG_KSU=y \
+          CONFIG_KSU_MANUAL_HOOK=y \
+          CONFIG_KSU_SUSFS=y \
+          CONFIG_KSU_SUSFS_SUS_PATH=y \
+          CONFIG_KSU_SUSFS_SUS_KSTAT=y \
+          CONFIG_KSU_SUSFS_ENABLE_LOG=y
           do
-            echo "$opt" >> "$DEFCONFIG"
+          echo "$opt" >> "$DEFCONFIG"
           done
 
+          # 显式关掉未启用的 SUSFS 功能
+          for opt in \
+          CONFIG_KSU_SUSFS_SUS_MOUNT \
+          CONFIG_KSU_SUSFS_SPOOF_UNAME \
+          CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+          CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+          CONFIG_KSU_SUSFS_OPEN_REDIRECT \
+          CONFIG_KSU_SUSFS_SUS_MAP \
+          CONFIG_KSU_SUSFS_ENABLE_AVC_LOG_SPOOFING
+          do
+          echo "# $opt is not set" >> "$DEFCONFIG"
+          done
           sed -i '/^CONFIG_KSU_TRACEPOINT_HOOK=y/d' "$DEFCONFIG"
           grep -q "^# CONFIG_KSU_TRACEPOINT_HOOK is not set" "$DEFCONFIG" || \
             echo "# CONFIG_KSU_TRACEPOINT_HOOK is not set" >> "$DEFCONFIG"
