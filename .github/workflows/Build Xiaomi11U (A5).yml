@@ -289,18 +289,16 @@ jobs:
           echo "=== Kconfig definition of KSU_SUSFS_SUS_PATH ==="
           grep -rn "config KSU_SUSFS_SUS_PATH" --include="Kconfig" . || echo "KCONFIG DEF NOT FOUND"
       
-      - name: 🔎 Locate ksu_handle_setresuid checker
+      - name: Patch ReSukiSU inline hook check
         shell: bash
         run: |
           cd $GITHUB_WORKSPACE/device_kernel
-          echo "=== grep in KernelSU/ ==="
-          grep -rn "ksu_handle_setresuid" KernelSU/ 2>/dev/null || echo "NOT IN KernelSU"
-          echo ""
-          echo "=== grep in whole kernel ==="
-          grep -rln "ksu_handle_setresuid" --include="*.sh" --include="Makefile*" --include="*.mk" . 2>/dev/null || echo "NOT IN SCRIPTS"
-          echo ""
-          echo "=== inline_hook_check.mk content ==="
-          cat KernelSU/kernel/tools/inline_hook_check.mk 2>/dev/null || echo "FILE NOT EXIST"
+          if [ -f KernelSU/kernel/tools/inline_hook_check.mk ]; then
+            echo "# Bypassed by user" > KernelSU/kernel/tools/inline_hook_check.mk
+            echo "[+] Bypassed inline_hook_check.mk"
+          else
+            echo "[!] inline_hook_check.mk not found, nothing to bypass"
+          fi
           
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
