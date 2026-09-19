@@ -103,15 +103,32 @@ jobs:
       - name: ⚙️ Get neccssary tools
         uses: ./.github/workflows/build-ready
 
-      
+
+      - name: ✂️ Filter SUSFS patch (minimal config)
+        shell: bash
+        run: |
+          set -uo pipefail
+          cd $GITHUB_WORKSPACE
+
+          echo "=== Filtering susfs_patch_to_5.4.patch ==="
+          echo "Keep : SUS_PATH, SUS_KSTAT, ENABLE_LOG + core files"
+          echo "Drop : SUS_MOUNT, SUS_MAP, OPEN_REDIRECT, SPOOF_UNAME, HIDE_KSU_SUSFS_SYMBOLS"
+
+          python3 scripts/filter_susfs_patch.py \
+            susfs_patch_to_5.4.patch \
+            susfs_patch_to_5.4.minimal.patch
+
+          wc -l susfs_patch_to_5.4.minimal.patch
+
+
       - name: 🪝 Patch SUSFS 2.3
         shell: bash
         run: |
           set -uo pipefail
           cd $GITHUB_WORKSPACE/device_kernel
 
-          echo "=== Copy SUSFS 2.3 patch from repo root ==="
-          cp $GITHUB_WORKSPACE/susfs_patch_to_5.4.patch ./susfs_patch_to_5.4.patch
+          echo "=== Copy filtered SUSFS 2.3 patch ==="
+          cp $GITHUB_WORKSPACE/susfs_patch_to_5.4.minimal.patch ./susfs_patch_to_5.4.patch
 
           echo "=== Verify patch file ==="
           head -5 susfs_patch_to_5.4.patch
@@ -125,6 +142,10 @@ jobs:
           if [ -n "$REJ_FILES" ]; then
             echo "::warning::Patch created .rej files (not fatal):"
             echo "$REJ_FILES"
+            for f in $REJ_FILES; do
+              echo "--- $f ---"
+              cat "$f"
+            done
           fi
 
           echo "=== Verifying core files ==="
@@ -137,19 +158,20 @@ jobs:
           grep -c "susfs_is_inode_sus_kstat" fs/stat.c || true
 
           echo "[+] SUSFS 2.3 patch step done."
-          
-          
+
+
       - name: Patch ReSukiSU inline hook check
         shell: bash
         run: |
           cd $GITHUB_WORKSPACE/device_kernel
           if [ -f KernelSU/kernel/tools/inline_hook_check.mk ]; then
-          echo "# Bypassed by user" > KernelSU/kernel/tools/inline_hook_check.mk
-          echo "[+] Bypassed inline_hook_check.mk"
+            echo "# Bypassed by user" > KernelSU/kernel/tools/inline_hook_check.mk
+            echo "[+] Bypassed inline_hook_check.mk"
           else
-          echo "[!] inline_hook_check.mk not found, nothing to bypass"
+            echo "[!] inline_hook_check.mk not found, nothing to bypass"
           fi
-    
+
+
       - name: 🛠️ Set KSU and SUSFS for DEFCONFIG
         shell: bash
         run: |
@@ -179,7 +201,8 @@ jobs:
 
           echo "=== final defconfig KSU/SUSFS lines ==="
           grep -iE "ksu|susfs" "$DEFCONFIG" || echo "(no ksu/susfs line)"
-     
+
+
       - name: 🔍 Verify SUSFS symbols
         shell: bash
         run: |
@@ -198,7 +221,8 @@ jobs:
           grep -rn "ksu_handle_vfs_fstat" --include="*.c" --include="*.h" . || echo "MISSING"
           echo "=== fs/Makefile ==="
           grep -n "susfs" fs/Makefile || echo "MISSING"
-          
+
+
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
 
