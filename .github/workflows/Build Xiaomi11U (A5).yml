@@ -200,6 +200,48 @@ jobs:
           sed -n '50,70p' fs/namei.c
           echo "=== struct nameidata area ==="
           grep -n -A 10 "struct nameidata {" fs/namei.c | head -15
+         
+      - name: 🚨 Hard-inject SUSFS declarations at top of fs/namei.c
+        shell: bash
+        run: |
+          set -uo pipefail
+          cd $GITHUB_WORKSPACE/device_kernel
+
+          if grep -q "SUSFS HARD-INJECT" fs/namei.c; then
+            echo "[+] Already injected, skip."
+          else
+            python3 - <<'PYEOF'
+            import re
+            with open("fs/namei.c", "r") as f:
+            content = f.read()
+
+            header = (
+           "/* SUSFS HARD-INJECT - start */\n"
+           "#include <linux/susfs_def.h>\n"
+           "#include <uapi/linux/magic.h>\n"
+           "#define ND_STATE_LOOKUP_LAST\t0x00000008\n"
+           "#define ND_STATE_OPEN_LAST\t0x00000010\n"
+           "#define ND_FLAGS_LOOKUP_LAST\t0x00000001\n"
+           "extern bool susfs_is_inode_sus_path(struct inode *inode);\n"
+           "extern const struct qstr susfs_fake_qstr_name;\n"
+           "/* SUSFS HARD-INJECT - end */\n\n"
+           )
+
+           m = re.search(r'^#include', content, re.MULTILINE)
+           if m:
+           content = content[:m.start()] + header + content[m.start():]
+           with open("fs/namei.c", "w") as f:
+           f.write(content)
+           print("[+] Hard-injected at top of fs/namei.c")
+           else:
+           print("[!] No #include found, injection failed.")
+           PYEOF
+           fi
+
+          echo "=== top 30 lines of fs/namei.c ==="
+          sed -n '1,30p' fs/namei.c
+          echo "=== extern line check ==="
+          grep -n "extern bool susfs_is_inode_sus_path" fs/namei.c
     
       - name: Patch ReSukiSU inline hook check
         shell: bash
