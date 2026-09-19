@@ -103,17 +103,6 @@ jobs:
       - name: ⚙️ Get neccssary tools
         uses: ./.github/workflows/build-ready
 
-      - name: 🧱 Clone device_kernel
-        shell: bash
-        run: |
-          set -euo pipefail
-          KERNEL_DIR="$GITHUB_WORKSPACE/device_kernel"
-          rm -rf "$KERNEL_DIR"
-          git clone "${{ env.KERNEL_SOURCE }}" \
-            -b "${{ env.KERNEL_BRANCH }}" \
-            "$KERNEL_DIR" --depth=1
-          echo "[+] device_kernel cloned."
-
       
       - name: 🪝 Patch SUSFS 2.3
         shell: bash
