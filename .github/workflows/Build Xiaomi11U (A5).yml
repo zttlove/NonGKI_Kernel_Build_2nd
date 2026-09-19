@@ -257,7 +257,24 @@ jobs:
       
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
-
+        
+      - name: 🔎 Check out/.config after make
+        if: always()
+        shell: bash
+        run: |
+          cd $GITHUB_WORKSPACE/device_kernel
+          echo "=== out/.config exists? ==="
+          ls -la out/.config || echo "NO .config"
+          echo ""
+          echo "=== KSU/SUSFS in out/.config ==="
+          grep -E "KSU|SUSFS" out/.config 2>/dev/null || echo "NOT IN .config"
+          echo ""
+          echo "=== fs/Kconfig KSU_SUSFS_SUS_PATH definition ==="
+          sed -n '330,350p' fs/Kconfig
+          echo ""
+          echo "=== KernelSU/kernel/Kconfig KSU_SUSFS_SUS_PATH definition ==="
+          sed -n '165,180p' KernelSU/kernel/Kconfig
+          
       - name: 📦 Package Anykernel3 Flash Zip
         shell: bash
         run: |
