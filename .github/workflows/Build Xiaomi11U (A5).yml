@@ -196,6 +196,14 @@ jobs:
           cd $GITHUB_WORKSPACE/device_kernel
           DEFCONFIG="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
 
+          # 先删掉所有旧的 CONFIG_KSU_SUSFS* 行
+          sed -i '/^CONFIG_KSU_SUSFS=/d' "$DEFCONFIG"
+          sed -i '/^CONFIG_KSU_SUSFS_SUS_PATH=/d' "$DEFCONFIG"
+          sed -i '/^CONFIG_KSU_SUSFS_SUS_KSTAT=/d' "$DEFCONFIG"
+          sed -i '/^CONFIG_KSU_SUSFS_ENABLE_LOG=/d' "$DEFCONFIG"
+          sed -i '/^# CONFIG_KSU_SUSFS/d' "$DEFCONFIG"
+
+          # 再写干净的
           for opt in \
             CONFIG_KSU=y \
             CONFIG_KSU_MANUAL_HOOK=y \
@@ -204,12 +212,7 @@ jobs:
             CONFIG_KSU_SUSFS_SUS_KSTAT=y \
             CONFIG_KSU_SUSFS_ENABLE_LOG=y
           do
-            if grep -q "^$opt" "$DEFCONFIG"; then
-              sed -i "s|^$opt.*|$opt|" "$DEFCONFIG"
-            else
-              sed -i "/^# $opt is not set/d" "$DEFCONFIG"
-              echo "$opt" >> "$DEFCONFIG"
-            fi
+            echo "$opt" >> "$DEFCONFIG"
           done
 
           sed -i '/^CONFIG_KSU_TRACEPOINT_HOOK=y/d' "$DEFCONFIG"
