@@ -119,7 +119,20 @@ jobs:
 
       - name: 🔧 Patch Hide Stuff
         uses: ./.github/workflows/patch-hide-stuff
-
+        
+      - name: 🔎 Check cpufreq API in 5.4
+        shell: bash
+        run: |
+          cd $GITHUB_WORKSPACE/device_kernel
+          echo "=== cpufreq_table_find_index_* in cpufreq.h ==="
+          grep -n "cpufreq_table_find_index" include/linux/cpufreq.h || echo "NOT FOUND"
+          echo ""
+          echo "=== cpufreq_frequency_table_target ==="
+          grep -rn "cpufreq_frequency_table_target" include/ drivers/cpufreq/*.c 2>/dev/null | head -5 || echo "NOT FOUND ANYWHERE"
+          echo ""
+          echo "=== signature of verify for reference ==="
+          sed -n '695,705p' include/linux/cpufreq.h
+          
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
 
