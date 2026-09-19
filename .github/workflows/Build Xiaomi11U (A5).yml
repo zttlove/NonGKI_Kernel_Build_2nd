@@ -177,6 +177,30 @@ jobs:
           echo "=== line 50-65 ==="
           sed -n '50,65p' device_kernel/fs/namei.c
 
+      - name: 💪 Force-enable SUS_PATH in fs/namei.c
+        shell: bash
+        run: |
+          set -uo pipefail
+          cd $GITHUB_WORKSPACE/device_kernel
+
+          echo "=== Before force-enable ==="
+          grep -c "#ifdef CONFIG_KSU_SUSFS_SUS_PATH" fs/namei.c || true
+          grep -c "defined(CONFIG_KSU_SUSFS_SUS_PATH)" fs/namei.c || true
+
+          # 把所有对 SUS_PATH 的 ifdef 改成 #if 1
+          sed -i 's/^#ifdef CONFIG_KSU_SUSFS_SUS_PATH$/#if 1/' fs/namei.c
+          sed -i 's/^#if defined(CONFIG_KSU_SUSFS_SUS_PATH)$/#if 1/' fs/namei.c
+          sed -i 's/^#if defined(CONFIG_KSU_SUSFS_SUS_PATH) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)$/#if 1/' fs/namei.c
+
+          echo "=== After force-enable ==="
+          grep -c "#ifdef CONFIG_KSU_SUSFS_SUS_PATH" fs/namei.c || true
+          grep -c "^#if 1$" fs/namei.c || true
+
+          echo "=== line 50-70 ==="
+          sed -n '50,70p' fs/namei.c
+          echo "=== struct nameidata area ==="
+          grep -n -A 10 "struct nameidata {" fs/namei.c | head -15
+    
       - name: Patch ReSukiSU inline hook check
         shell: bash
         run: |
