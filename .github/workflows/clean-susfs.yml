@@ -8,6 +8,10 @@ env:
   KERNEL_SOURCE : "https://github.com/zttlove/android_kernel_xiaomi_sm8350_miyume.git"
   KERNEL_BRANCH : "fix-root2"
 
+# 关键修改 1：为工作流添加写权限，允许推送代码
+permissions:
+  contents: write
+
 jobs:
   clean-susfs:
     name: Clean SUSFS 2.1 Code
@@ -23,7 +27,8 @@ jobs:
           set -euo pipefail
           KERNEL_DIR="$GITHUB_WORKSPACE/device_kernel"
           rm -rf "$KERNEL_DIR"
-          git clone "${{ env.KERNEL_SOURCE }}" \
+          # 克隆源码时使用 KERNEL_PAT 令牌，确保拥有推送权限
+          git clone "https://x-access-token:${{ secrets.KERNEL_PAT }}@github.com/zttlove/android_kernel_xiaomi_sm8350_miyume.git" \
             -b "${{ env.KERNEL_BRANCH }}" \
             "$KERNEL_DIR" --depth=1
           echo "[+] device_kernel cloned."
@@ -40,26 +45,12 @@ jobs:
 
           echo "=== 开始清理 SUSFS 代码块 ==="
           python3 clean_susfs.py \
-            fs/stat.c \
-            fs/namei.c \
-            fs/namespace.c \
-            fs/readdir.c \
-            fs/statfs.c \
-            fs/super.c \
-            fs/exec.c \
-            fs/open.c \
-            fs/read_write.c \
-            fs/proc/base.c \
-            fs/proc/cmdline.c \
-            fs/proc/fd.c \
-            fs/proc/task_mmu.c \
-            fs/proc_namespace.c \
-            fs/notify/fdinfo.c \
-            kernel/kallsyms.c \
-            kernel/sys.c \
-            kernel/reboot.c \
-            mm/memory.c \
-            security/selinux/avc.c
+            fs/stat.c fs/namei.c fs/namespace.c fs/readdir.c fs/statfs.c \
+            fs/super.c fs/exec.c fs/open.c fs/read_write.c \
+            fs/proc/base.c fs/proc/cmdline.c fs/proc/fd.c fs/proc/task_mmu.c \
+            fs/proc_namespace.c fs/notify/fdinfo.c \
+            kernel/kallsyms.c kernel/sys.c kernel/reboot.c \
+            mm/memory.c security/selinux/avc.c
 
           echo "=== 删除 SUSFS 核心文件 ==="
           rm -f fs/susfs.c
@@ -102,7 +93,37 @@ jobs:
           echo "=== kernel/reboot.c 里是否还有 ksu_handle_sys_reboot ==="
           grep -n "ksu_handle_sys_reboot" kernel/reboot.c || echo "NOT FOUND!"
 
-      - name: 📤 Upload cleaned kernel
+      # 关键修改 2：添加提交并推送的步骤
+      - name: 📤 Commit and Push cleaned kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd $GITHUB_WORKSPACE/device_kernel
+
+          # 配置 Git 用户信息（使用 GitHub Actions 机器人身份）
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # 将清理后的所有文件变更暂存
+          git add -A
+
+          # 检查是否有实际变更，避免空提交
+          if git diff --cached --quiet; then
+            echo "⚠️ 没有检测到文件变更，跳过提交。"
+            exit 0
+          fi
+
+          # 提交变更
+          git commit -m "chore: clean SUSFS 2.1 code for SUSFS 2.3 upgrade [skip ci]"
+
+          # 推送到远程分支
+          # 使用 KERNEL_PAT 进行认证，避免默认 GITHUB_TOKEN 权限不足的问题
+          git push "https://x-access-token:${{ secrets.KERNEL_PAT }}@github.com/zttlove/android_kernel_xiaomi_sm8350_miyume.git" \
+            HEAD:${{ env.KERNEL_BRANCH }}
+
+          echo "✅ 清理后的内核源码已成功推送到 ${{ env.KERNEL_SOURCE }} 的 ${{ env.KERNEL_BRANCH }} 分支"
+
+      - name: 📤 Upload cleaned kernel (artifact)
         uses: actions/upload-artifact@v4
         with:
           name: cleaned-kernel-source
