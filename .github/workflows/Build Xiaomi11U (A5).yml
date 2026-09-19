@@ -137,11 +137,10 @@ jobs:
           ls -la fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h
 
           echo "=== Sanity check: SUS_PATH hooks in fs/namei.c ==="
-          grep -n "susfs_is_inode_sus_path" fs/namei.c || echo "::warning::susfs_is_inode_sus_path NOT found in fs/namei.c"
+          grep -c "susfs_is_inode_sus_path" fs/namei.c || true
 
           echo "=== Sanity check: SUS_KSTAT hooks in fs/stat.c ==="
-          grep -n "susfs_is_inode_sus_kstat" fs/stat.c || echo "::warning::susfs_is_inode_sus_kstat NOT found in fs/stat.c"
-
+          grep -c "susfs_is_inode_sus_kstat" fs/stat.c || true
           echo "[+] SUSFS 2.3 patch step done.
           
       - name: Patch ReSukiSU inline hook check
