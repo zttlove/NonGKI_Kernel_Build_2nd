@@ -277,9 +277,7 @@ jobs:
           echo ""
           echo "=== KSU_SUSFS_SUS_PATH definition ==="
           grep -rn "config KSU_SUSFS_SUS_PATH" --include="Kconfig" . || echo "NOT FOUND"
-          echo ""
-          echo "=== out/.config check ==="
-          grep -E "^CONFIG_KSU" out/.config || echo "NO CONFIG_KSU IN out/.config"
+          
 
       - name: 🔎 Check out/.config KSU/SUSFS state
         shell: bash
