@@ -248,7 +248,16 @@ jobs:
           echo "=== fs/Makefile ==="
           grep -n "susfs" fs/Makefile || echo "MISSING"
 
-
+      - name: 🔎 Check out/.config KSU/SUSFS state
+        shell: bash
+        run: |
+          cd $GITHUB_WORKSPACE/device_kernel
+          echo "=== out/.config KSU/SUSFS lines ==="
+          grep -E "KSU|SUSFS" out/.config || echo "NO KSU/SUSFS IN .config"
+          echo ""
+          echo "=== Kconfig definition of KSU_SUSFS_SUS_PATH ==="
+          grep -rn "config KSU_SUSFS_SUS_PATH" --include="Kconfig" . || echo "KCONFIG DEF NOT FOUND"
+      
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
 
