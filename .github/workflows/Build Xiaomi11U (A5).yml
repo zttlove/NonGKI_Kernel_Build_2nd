@@ -184,20 +184,26 @@ jobs:
 
           echo "=== final defconfig KSU/SUSFS lines ==="
           grep -iE "ksu|susfs" "$DEFCONFIG" || echo "(no ksu/susfs line)"
-
-      - name: 🔍 Verify hooks
+     
+      - name: 🔍 Verify SUSFS symbols
         shell: bash
         run: |
           cd $GITHUB_WORKSPACE/device_kernel
           echo "=== fs/susfs.c ==="
-          ls -la fs/susfs.c
-          echo "=== fs/stat.c ksu_handle_stat ==="
-          grep -n "ksu_handle_stat" fs/stat.c || echo "NOT FOUND"
-          echo "=== fs/open.c ksu_handle_faccessat ==="
-          grep -n "ksu_handle_faccessat" fs/open.c || echo "NOT FOUND"
-          echo "=== kernel/reboot.c ksu_handle_sys_reboot ==="
-          grep -n "ksu_handle_sys_reboot" kernel/reboot.c || echo "NOT FOUND"
-
+          ls -la fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h || true
+          echo "=== SUS_PATH ==="
+          grep -n "susfs_is_inode_sus_path" fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h || echo "MISSING"
+          grep -n "susfs_fake_qstr_name" fs/susfs.c include/linux/susfs.h || echo "MISSING"
+          echo "=== SUS_KSTAT ==="
+          grep -n "susfs_is_inode_sus_kstat" fs/susfs.c include/linux/susfs.h || echo "MISSING"
+          grep -n "susfs_sus_kstat_spoof_generic_fillattr" fs/susfs.c include/linux/susfs.h || echo "MISSING"
+          grep -n "STATX_SUS_KSTAT" include/linux/susfs_def.h include/uapi/linux/stat.h || echo "MISSING"
+          echo "=== ReSukiSU hooks ==="
+          grep -rn "ksu_is_init_rc_hook_enabled" --include="*.c" --include="*.h" . || echo "MISSING"
+          grep -rn "ksu_handle_vfs_fstat" --include="*.c" --include="*.h" . || echo "MISSING"
+          echo "=== fs/Makefile ==="
+          grep -n "susfs" fs/Makefile || echo "MISSING"
+          
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
 
