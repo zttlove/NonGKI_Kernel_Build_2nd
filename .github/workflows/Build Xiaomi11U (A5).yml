@@ -86,7 +86,7 @@ env:
 
 jobs:
   build-kernel:
-    name: Xiaomi11U (hyper A16)
+    name: Build Xiaomi11U with SUSFS 2.3（A5）
     runs-on: ubuntu-latest
     env:
       CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
