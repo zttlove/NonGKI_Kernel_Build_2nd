@@ -121,8 +121,8 @@ jobs:
             --enable KSU \
             --enable INIT_ON_ALLOC_DEFAULT_ON \
             --disable KSU_HOOK_INLINE \
-            --enable KSU_HOOK_TRACEPOINT \   # 此选项对 5.4 内核无效
-            --disable KSU_HOOK_MANUAL \       # 必须启用！
+            --enable KSU_HOOK_TRACEPOINT \
+            --disable KSU_HOOK_MANUAL \
             --enable KSU_SELINUX \
             --enable KSU_ZYGISK \
             --enable KPROBES \
