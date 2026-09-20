@@ -110,8 +110,9 @@ jobs:
             exit 1
           fi
 
-          echo "=== 用 patch --fuzz=3 应用 fs/namespace.c ==="
-          patch -p1 --fuzz=3 --no-backup-if-mismatch < /tmp/namespace.patch
+          echo "=== 用 patch --fuzz=3 应用 fs/namespace.c（允许部分 hunk 已存在） ==="
+          patch -p1 --fuzz=3 --no-backup-if-mismatch < /tmp/namespace.patch || true
+          rm -f fs/namespace.c.rej
 
           echo ""
           echo "=== 验证 fs/namespace.c 里两个函数定义 ==="
