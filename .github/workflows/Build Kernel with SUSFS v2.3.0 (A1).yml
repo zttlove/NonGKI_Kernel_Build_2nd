@@ -141,7 +141,27 @@ jobs:
               echo "❌ MISSING: $sym in $file"
             fi
           done
+          
+      - name: Inspect SUSFS namespace symbols
+        working-directory: kernel
+        run: |
+          echo "=== 1. namespace.c 里的 susfs include ==="
+          grep -n "linux/susfs" fs/namespace.c || echo "(无)"
 
+          echo ""
+          echo "=== 2. susfs.h 里的声明 ==="
+          grep -n "susfs_alloc_non_unshare_ksu_vfsmnt\|susfs_alloc_unshare_ksu_vfsmnt" \
+            include/linux/susfs.h || echo "(无)"
+
+          echo ""
+          echo "=== 3. susfs.c 里的实现 ==="
+          grep -n "susfs_alloc_non_unshare_ksu_vfsmnt\|susfs_alloc_unshare_ksu_vfsmnt" \
+            fs/susfs.c || echo "(无)"
+
+          echo ""
+          echo "=== 4. namespace.c 用到这两个函数的位置 ==="
+          grep -n "susfs_alloc_non_unshare_ksu_vfsmnt\|susfs_alloc_unshare_ksu_vfsmnt" \
+            fs/namespace.c || echo "(无)"
      
 
       # ============================================================
