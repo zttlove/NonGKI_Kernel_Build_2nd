@@ -75,25 +75,31 @@ jobs:
       # ============================================================
       # 4. 删除旧文件 + 用补丁重新生成三个文件
       # ============================================================
-      - name: Extract and overwrite three files
+      - name: Extract and overwrite files
         working-directory: kernel
         run: |
           set -e
           PATCH="${{ steps.locate.outputs.patch_file }}"
 
-          echo "=== 删除旧文件 ==="
+          echo "=== 删除旧文件（工作区 + 索引） ==="
+          git rm -f --ignore-unmatch \
+            fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h || true
           rm -f fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h
 
-          echo "=== git apply 只应用这三个文件 ==="
+          echo "=== 恢复 namespace.c 到原始版本（避免手动改动冲突） ==="
+          git checkout -- fs/namespace.c || true
+
+          echo "=== git apply 应用四个文件 ==="
           git apply \
             --include='fs/susfs.c' \
             --include='include/linux/susfs.h' \
             --include='include/linux/susfs_def.h' \
+            --include='fs/namespace.c' \
             "$PATCH"
 
           echo ""
           echo "=== 验证文件已生成 ==="
-          for f in fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h; do
+          for f in fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h fs/namespace.c; do
             if [ ! -f "$f" ]; then
               echo "::error::缺失 $f"
               exit 1
@@ -102,19 +108,11 @@ jobs:
           done
 
           echo ""
-          echo "=== 验证关键函数/宏 ==="
-          echo -n "susfs_is_inode_sus_kstat:             "
-          grep -c "susfs_is_inode_sus_kstat" fs/susfs.c || true
-          echo -n "susfs_sus_kstat_spoof_vfs_statfs:     "
-          grep -c "susfs_sus_kstat_spoof_vfs_statfs" fs/susfs.c || true
-          echo -n "susfs_get_non_sus_vfsmnt_from_vfsmnt: "
-          grep -c "susfs_get_non_sus_vfsmnt_from_vfsmnt" fs/susfs.c || true
-          echo -n "susfs_get_non_sus_mnt_id_from_mnt:    "
-          grep -c "susfs_get_non_sus_mnt_id_from_mnt" fs/susfs.c || true
-          echo -n "STATX_SUS_KSTAT (def.h):              "
-          grep -c "STATX_SUS_KSTAT" include/linux/susfs_def.h || true
-          echo -n "VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT:  "
-          grep -c "VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT" include/linux/susfs_def.h || true
+          echo "=== 验证 namespace.c 里两个函数定义 ==="
+          grep -n "static struct mount \*susfs_alloc_unshare_ksu_vfsmnt\|static struct mount \*susfs_alloc_non_unshare_ksu_vfsmnt" fs/namespace.c || {
+            echo "::error::namespace.c 里缺 susfs_alloc_* 函数定义"
+            exit 1
+          }
 
       # ============================================================
       # 5. 提交并推送到内核仓库
@@ -126,7 +124,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h
+          git add fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h fs/namespace.c
 
           if git diff --cached --quiet; then
             echo "无变化，跳过提交"
