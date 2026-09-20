@@ -102,9 +102,8 @@ jobs:
               print
               next
             }
-            in_susfs && /^[ \t]+depends on THREAD_INFO_IN_TASK/ {
-              sub(/THREAD_INFO_IN_TASK/, "KSU && THREAD_INFO_IN_TASK")
-              print
+            in_susfs && /^[[:space:]]+depends on .*THREAD_INFO_IN_TASK/ {
+              print "\tdepends on KSU && THREAD_INFO_IN_TASK && 64BIT"
               next
             }
             in_susfs && /^endchoice$/ && !skipped {
@@ -117,6 +116,9 @@ jobs:
 
           echo "=== 修改后的 choice / config 结构 ==="
           grep -nE "^(choice|endchoice|config KSU_(TRACEPOINT|MANUAL|SUSFS))" "$KCONFIG"
+
+          echo "=== KSU_SUSFS 块前 8 行 ==="
+          grep -A7 "^config KSU_SUSFS$" "$KCONFIG" | head -8
 
       - name: Inspect kernel hooks
         working-directory: kernel
