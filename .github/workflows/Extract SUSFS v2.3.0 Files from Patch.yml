@@ -81,9 +81,6 @@ jobs:
           set -e
           PATCH="${{ steps.locate.outputs.patch_file }}"
 
-          echo "=== 安装 patchutils（提供 filterdiff） ==="
-          sudo apt-get install -y patchutils
-
           echo "=== 删除三个新文件 ==="
           git rm -f --ignore-unmatch \
             fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h || true
@@ -96,9 +93,24 @@ jobs:
             --include='include/linux/susfs_def.h' \
             "$PATCH"
 
-          echo "=== 用 patch --fuzz=3 应用 fs/namespace.c ==="
-          filterdiff -i 'fs/namespace.c' "$PATCH" > /tmp/namespace.patch
+          echo "=== 用 awk 从补丁中提取 fs/namespace.c 段 ==="
+          awk '
+            /^diff --git / {
+              if (in_ns) exit
+              in_ns = ($0 ~ /a\/fs\/namespace\.c /)
+            }
+            in_ns { print }
+          ' "$PATCH" > /tmp/namespace.patch
+
+          echo "提取行数:"
           wc -l /tmp/namespace.patch
+
+          if [ ! -s /tmp/namespace.patch ]; then
+            echo "::error::未能从补丁中提取 fs/namespace.c 段"
+            exit 1
+          fi
+
+          echo "=== 用 patch --fuzz=3 应用 fs/namespace.c ==="
           patch -p1 --fuzz=3 --no-backup-if-mismatch < /tmp/namespace.patch
 
           echo ""
@@ -107,7 +119,6 @@ jobs:
             echo "::error::namespace.c 里缺 susfs_alloc_* 函数定义"
             exit 1
           }
-
       # ============================================================
       # 5. 提交并推送到内核仓库
       # ============================================================
