@@ -80,6 +80,44 @@ jobs:
           echo "source \"drivers/kernelsu/Kconfig\"" >> drivers/Kconfig
           echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
 
+      - name: Patch ReSukiSU Kconfig (move KSU_SUSFS out of choice)
+        working-directory: kernel
+        run: |
+          set -e
+          KCONFIG=drivers/kernelsu/kernel/Kconfig
+
+          if ! grep -q "^config KSU_SUSFS$" "$KCONFIG"; then
+            echo "::error::Kconfig 中没有找到 config KSU_SUSFS"
+            exit 1
+          fi
+
+          cp "$KCONFIG" "$KCONFIG.orig"
+
+          awk '
+            BEGIN { in_susfs=0; skipped=0 }
+            /^config KSU_SUSFS$/ && !in_susfs {
+              print "endchoice"
+              print ""
+              in_susfs=1
+              print
+              next
+            }
+            in_susfs && /^[ \t]+depends on THREAD_INFO_IN_TASK/ {
+              sub(/THREAD_INFO_IN_TASK/, "KSU && THREAD_INFO_IN_TASK")
+              print
+              next
+            }
+            in_susfs && /^endchoice$/ && !skipped {
+              skipped=1
+              in_susfs=0
+              next
+            }
+            { print }
+          ' "$KCONFIG.orig" > "$KCONFIG"
+
+          echo "=== 修改后的 choice / config 结构 ==="
+          grep -nE "^(choice|endchoice|config KSU_(TRACEPOINT|MANUAL|SUSFS))" "$KCONFIG"
+
       - name: Inspect kernel hooks
         working-directory: kernel
         run: |
@@ -151,6 +189,9 @@ jobs:
             --enable CPU_FREQ \
             --enable ENERGY_MODEL \
             --enable CPU_IDLE \
+            --disable KSU_MANUAL_HOOK_AUTO_SETUID_HOOK \
+            --disable KSU_MANUAL_HOOK_AUTO_INITRC_HOOK \
+            --disable KSU_MANUAL_HOOK_AUTO_INPUT_HOOK \
             --set-val FRAME_WARN 3072
           make olddefconfig O=${{ env.OUTPUT_DIR }}
           grep -E 'CONFIG_(KSU|KSU_SUSFS|KPROBES|KALLSYMS|MODULES)' ${{ env.OUTPUT_DIR }}/.config || true
@@ -159,6 +200,15 @@ jobs:
           
           echo "=== KSU MANUAL HOOK Kconfig 上下文 ==="
           sed -n '90,130p' drivers/kernelsu/kernel/Kconfig
+
+          if ! grep -q '^CONFIG_KSU_MANUAL_HOOK=y' ${{ env.OUTPUT_DIR }}/.config; then
+            echo "::error::CONFIG_KSU_MANUAL_HOOK 未启用，会导致无限重启！"
+            exit 1
+          fi
+          if ! grep -q '^CONFIG_KSU_SUSFS=y' ${{ env.OUTPUT_DIR }}/.config; then
+            echo "::error::CONFIG_KSU_SUSFS 未启用"
+            exit 1
+          fi
 
       # ============================================================
       # 6. 编译（输出 build.log 便于排查）
