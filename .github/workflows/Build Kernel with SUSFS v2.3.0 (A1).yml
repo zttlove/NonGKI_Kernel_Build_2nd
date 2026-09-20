@@ -155,8 +155,14 @@ jobs:
           make olddefconfig O=${{ env.OUTPUT_DIR }}
           grep -E 'CONFIG_(KSU|KSU_SUSFS|KPROBES|KALLSYMS|MODULES)' ${{ env.OUTPUT_DIR }}/.config || true
           grep -E 'CONFIG_(CPU_FREQ|ENERGY_MODEL|CPU_IDLE)' ${{ env.OUTPUT_DIR }}/.config
-
           grep -nE "config KSU.*HOOK" drivers/kernelsu/kernel/Kconfig
+          
+          echo "=== KSU Hook 模式检查 ==="
+          grep -E 'CONFIG_KSU_(TRACEPOINT|MANUAL)_HOOK=' ${{ env.OUTPUT_DIR }}/.config || true
+          if ! grep -q 'CONFIG_KSU_MANUAL_HOOK=y' ${{ env.OUTPUT_DIR }}/.config; then
+            echo "::error::CONFIG_KSU_MANUAL_HOOK 未启用，会导致无限重启！"
+            exit 1
+          fi
 
       # ============================================================
       # 6. 编译（输出 build.log 便于排查）
