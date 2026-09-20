@@ -249,6 +249,26 @@ jobs:
           echo ""
           echo "=== 检查是否有别的 xarray.c ==="
           find . -name "xarray.c" -not -path "./out/*"
+      
+      - name: Check SUSFS integration coverage
+        working-directory: kernel
+        run: |
+          echo "=== 有 SUSFS 改动的文件 ==="
+          for f in fs/namei.c fs/readdir.c fs/stat.c fs/statfs.c fs/super.c \
+                   fs/proc/base.c fs/proc/fd.c fs/proc/cmdline.c fs/proc/task_mmu.c \
+                   fs/proc_namespace.c fs/notify/fdinfo.c kernel/kallsyms.c \
+                   kernel/sys.c mm/memory.c security/selinux/avc.c; do
+            if grep -q "susfs_\|SUSFS_" "$f" 2>/dev/null; then
+              echo "✅ $f"
+            else
+              echo "❌ $f"
+            fi
+          done
+
+          echo ""
+          echo "=== namespace.c 的 SUSFS 改动行数 ==="
+          grep -c "susfs_\|SUSFS_" fs/namespace.c || echo 0
+          
       # ============================================================
       # 6. 编译（输出 build.log 便于排查）
       # ============================================================
