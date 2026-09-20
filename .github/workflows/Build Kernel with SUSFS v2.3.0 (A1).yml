@@ -8,7 +8,7 @@ env:
   DEVICE_CODENAME: "star"
   KERNEL_ARCH: "arm64"
   KERNEL_REPO: "zttlove/android_kernel_xiaomi_sm8350_miyume"
-  KERNEL_BRANCH: "main"
+  KERNEL_BRANCH: "fix-root2"
   DEFCONFIG_NAME: "star_defconfig"
   OUTPUT_DIR: "out"
   CLANG_DIR: "${{ github.workspace }}/clang"
