@@ -122,9 +122,8 @@ jobs:
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
             --enable KSU \
             --enable INIT_ON_ALLOC_DEFAULT_ON \
-            --disable KSU_HOOK_INLINE \
-            --disable KSU_HOOK_TRACEPOINT \
-            --enable KSU_HOOK_MANUAL \
+            --disable KSU_TRACEPOINT_HOOK \
+            --enable  KSU_MANUAL_HOOK \
             --enable KSU_SELINUX \
             --enable KSU_ZYGISK \
             --enable KPROBES \
