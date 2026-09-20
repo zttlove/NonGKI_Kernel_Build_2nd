@@ -231,7 +231,20 @@ jobs:
             echo "::error::CONFIG_KSU_SUSFS 未启用"
             exit 1
           fi
+      
+      - name: Locate cpu_limits_set_level
+        working-directory: kernel
+        run: |
+          echo "=== 全内核搜索 cpu_limits_set_level ==="
+          grep -rn "cpu_limits_set_level" --include="*.c" --include="*.h" . 2>/dev/null | head -30 || echo "(未找到)"
 
+          echo ""
+          echo "=== 检查 lib/xarray.c 顶部 include ==="
+          head -40 lib/xarray.c
+
+          echo ""
+          echo "=== 检查是否有别的 xarray.c ==="
+          find . -name "xarray.c" -not -path "./out/*"
       # ============================================================
       # 6. 编译（输出 build.log 便于排查）
       # ============================================================
