@@ -146,6 +146,8 @@ jobs:
             --enable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
             --enable KSU_SUSFS_ENABLE_LOG \
             --enable KSU_SUSFS_SUS_SU \
+            --disable STATIC_USERMODEHELPER \
+            --enable CPU_FREQ \
             --set-val FRAME_WARN 3072
           make olddefconfig O=${{ env.OUTPUT_DIR }}
           grep -E 'CONFIG_(KSU|KSU_SUSFS|KPROBES|KALLSYMS|MODULES)' ${OUTPUT_DIR}/.config
