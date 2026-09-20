@@ -214,6 +214,10 @@ jobs:
             --disable KSU_MANUAL_HOOK_AUTO_SETUID_HOOK \
             --disable KSU_MANUAL_HOOK_AUTO_INITRC_HOOK \
             --disable KSU_MANUAL_HOOK_AUTO_INPUT_HOOK \
+            --enable CPU_THERMAL \
+            --enable THERMAL \
+            --enable THERMAL_GOV_POWER_ALLOCATOR \
+            --enable THERMAL_GOV_USER_SPACE \
             --set-val FRAME_WARN 3072
           make olddefconfig O=${{ env.OUTPUT_DIR }}
           grep -E 'CONFIG_(KSU|KSU_SUSFS|KPROBES|KALLSYMS|MODULES)' ${{ env.OUTPUT_DIR }}/.config || true
