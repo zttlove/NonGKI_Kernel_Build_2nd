@@ -150,9 +150,12 @@ jobs:
             --enable KSU_SUSFS_SUS_SU \
             --disable STATIC_USERMODEHELPER \
             --enable CPU_FREQ \
+            --enable ENERGY_MODEL \
+            --enable CPU_IDLE \
             --set-val FRAME_WARN 3072
           make olddefconfig O=${{ env.OUTPUT_DIR }}
           grep -E 'CONFIG_(KSU|KSU_SUSFS|KPROBES|KALLSYMS|MODULES)' ${{ env.OUTPUT_DIR }}/.config || true
+          grep -E 'CONFIG_(CPU_FREQ|ENERGY_MODEL|CPU_IDLE)' ${{ env.OUTPUT_DIR }}/.config
          
 
       # ============================================================
