@@ -5,7 +5,7 @@ on:
 
 env:
   KERNEL_REPO: "zttlove/android_kernel_xiaomi_sm8350_miyume"
-  KERNEL_BRANCH: "main"
+  KERNEL_BRANCH: "fix-root2"
   PATCH_PATH: "Patches/Patch/susfs_patch_to_5.4.patch"
 
 jobs:
