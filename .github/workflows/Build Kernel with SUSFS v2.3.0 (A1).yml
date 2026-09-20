@@ -121,8 +121,8 @@ jobs:
             --enable KSU \
             --enable INIT_ON_ALLOC_DEFAULT_ON \
             --disable KSU_HOOK_INLINE \
-            --enable KSU_HOOK_TRACEPOINT \
-            --disable KSU_HOOK_MANUAL \
+            --disable KSU_HOOK_TRACEPOINT \
+            --enable KSU_HOOK_MANUAL \
             --enable KSU_SELINUX \
             --enable KSU_ZYGISK \
             --enable KPROBES \
