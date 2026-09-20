@@ -156,7 +156,8 @@ jobs:
           make olddefconfig O=${{ env.OUTPUT_DIR }}
           grep -E 'CONFIG_(KSU|KSU_SUSFS|KPROBES|KALLSYMS|MODULES)' ${{ env.OUTPUT_DIR }}/.config || true
           grep -E 'CONFIG_(CPU_FREQ|ENERGY_MODEL|CPU_IDLE)' ${{ env.OUTPUT_DIR }}/.config
-         
+
+          grep -nE "config KSU.*HOOK" drivers/kernelsu/kernel/Kconfig
 
       # ============================================================
       # 6. 编译（输出 build.log 便于排查）
