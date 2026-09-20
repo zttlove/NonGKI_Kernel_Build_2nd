@@ -172,7 +172,7 @@ jobs:
             --enable CPU_FREQ \
             --set-val FRAME_WARN 3072
           make olddefconfig O=${{ env.OUTPUT_DIR }}
-          grep -E 'CONFIG_(KSU|KSU_SUSFS|KPROBES|KALLSYMS|MODULES)' ${OUTPUT_DIR}/.config
+          grep -E 'CONFIG_(KSU|KSU_SUSFS|KPROBES|KALLSYMS|MODULES)' ${{ env.OUTPUT_DIR }}/.config || true
          
 
       # ============================================================
