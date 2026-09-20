@@ -80,13 +80,27 @@ jobs:
           echo "source \"drivers/kernelsu/Kconfig\"" >> drivers/Kconfig
           echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
 
-      - name: Inspect ReSukiSU main branch
-        working-directory: kernel/drivers/kernelsu
+      - name: Inspect kernel hooks
+        working-directory: kernel
         run: |
-          echo "=== Kconfig hook 相关 ==="
-          grep -nE "KSU_HOOK|MANUAL|TRACEPOINT|INLINE" kernel/Kconfig || true
-          echo "=== inline_hook_check.mk 全文 ==="
-          cat kernel/tools/inline_hook_check.mk
+          echo "=== 旧版 Hook（不该有） ==="
+          grep -rn "ksu_vfs_read_hook\|ksu_input_hook\|ksu_execveat_hook\|ksu_init_rc_hook" \
+            fs/read_write.c fs/exec.c fs/stat.c drivers/input/input.c || echo "(无)"
+          echo "=== 新版 Hook（必须有） ==="
+          for f in "kernel/sys.c:ksu_handle_setresuid" \
+                   "fs/exec.c:ksu_handle_execveat" \
+                   "fs/open.c:ksu_handle_faccessat" \
+                   "fs/read_write.c:ksu_handle_sys_read" \
+                   "fs/stat.c:ksu_handle_stat" \
+                   "kernel/reboot.c:ksu_handle_sys_reboot" \
+                   "drivers/input/input.c:ksu_handle_input_handle_event"; do
+            file="${f%%:*}"; sym="${f##*:}"
+            if grep -qw "$sym" "$file"; then
+              echo "✅ $sym in $file"
+            else
+              echo "❌ MISSING: $sym in $file"
+            fi
+          done
 
       # ============================================================
       # 3. 绕过 inline_hook_check.mk（强制跳过 hook 检查）
