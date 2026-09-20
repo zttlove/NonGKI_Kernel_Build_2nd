@@ -80,6 +80,14 @@ jobs:
           echo "source \"drivers/kernelsu/Kconfig\"" >> drivers/Kconfig
           echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
 
+      - name: Inspect ReSukiSU main branch
+        working-directory: kernel/drivers/kernelsu
+        run: |
+          echo "=== Kconfig hook 相关 ==="
+          grep -nE "KSU_HOOK|MANUAL|TRACEPOINT|INLINE" kernel/Kconfig || true
+          echo "=== inline_hook_check.mk 全文 ==="
+          cat kernel/tools/inline_hook_check.mk
+
       # ============================================================
       # 3. 绕过 inline_hook_check.mk（强制跳过 hook 检查）
       # ============================================================
