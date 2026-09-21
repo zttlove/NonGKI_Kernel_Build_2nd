@@ -106,7 +106,7 @@ jobs:
         uses: ./.github/workflows/patch-susfs
   
       - name: 🔎 Check failed hunks coverage
-        working-directory: kernel
+        working-directory: device_kernel
         run: |
           echo "=== namespace.c ==="
           grep -c "susfs_get_non_sus_mnt_id_from_mnt\|VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT" fs/namespace.c || echo 0
