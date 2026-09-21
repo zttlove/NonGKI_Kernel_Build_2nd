@@ -163,7 +163,16 @@ jobs:
           grep -n "susfs_alloc_non_unshare_ksu_vfsmnt\|susfs_alloc_unshare_ksu_vfsmnt" \
             fs/namespace.c || echo "(无)"
      
+      - name: Verify susfs.o build condition
+        working-directory: kernel
+        run: |
+          echo "=== fs/Makefile 里 susfs 相关的行 ==="
+          grep -n "susfs" fs/Makefile || echo "(无)"
 
+          echo ""
+          echo "=== 期望看到 obj-\$(CONFIG_KSU_SUSFS) += susfs.o ==="
+          echo "=== 如果是 obj-y += susfs.o，那么禁 CONFIG 也会编译它 ==="
+      
       # ============================================================
       # 5. 配置内核
       # ============================================================
