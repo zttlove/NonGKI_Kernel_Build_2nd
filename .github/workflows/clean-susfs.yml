@@ -6,7 +6,7 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   KERNEL_SOURCE : "https://github.com/zttlove/android_kernel_xiaomi_sm8350_miyume.git"
-  KERNEL_BRANCH : "fix-root2"
+  KERNEL_BRANCH : "fox-boot-clean"
 
 # 关键修改 1：为工作流添加写权限，允许推送代码
 permissions:
