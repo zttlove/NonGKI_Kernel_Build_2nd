@@ -14,7 +14,7 @@ env:
   EXTRA_CMDS : 'LD=ld.lld LLVM=1 LLVM_IAS=1 EXTRA_CFLAGS="-Wno-unused-function -Wno-frame-larger-than"'
 
   KERNEL_SOURCE : "https://github.com/zttlove/android_kernel_xiaomi_sm8350_miyume.git"
-  KERNEL_BRANCH : "fix-root2"
+  KERNEL_BRANCH : "fox-boot-clean"
 
   CLANG_SOURCE : "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-18.04.tar.xz"
   CLANG_BRANCH : ""
