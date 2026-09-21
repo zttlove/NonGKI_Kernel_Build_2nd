@@ -104,6 +104,26 @@ jobs:
 
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs
+  
+      - name: 🔎 Check failed hunks coverage
+        working-directory: kernel
+        run: |
+          echo "=== namespace.c ==="
+          grep -c "susfs_get_non_sus_mnt_id_from_mnt\|VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT" fs/namespace.c || echo 0
+          echo "=== proc/fd.c ==="
+          grep -c "susfs_get_non_sus_mnt_id_from_mnt\|susfs_is_inode_sus_kstat" fs/proc/fd.c || echo 0
+          echo "=== task_mmu.c ==="
+          grep -c "struct vm_area_struct \*vma" fs/proc/task_mmu.c || echo 0
+          echo "=== kernel/sys.c ==="
+          grep -c "susfs_spoof_uname" kernel/sys.c || echo 0
+          echo "=== stat.c ==="
+          grep -c "susfs_sus_kstat_spoof_generic_fillattr" fs/stat.c || echo 0
+          echo "=== statfs.c ==="
+          grep -c "susfs_statfs_by_dentry\|susfs_get_non_sus_vfsmnt" fs/statfs.c || echo 0
+          echo "=== proc_namespace.c ==="
+          grep -c "susfs_show_vfsmnt\|susfs_is_hide_sus_mnts" fs/proc_namespace.c || echo 0
+          echo "=== readdir.c ==="
+          grep -c "susfs_is_inode_sus_path" fs/readdir.c || echo 0
             
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
