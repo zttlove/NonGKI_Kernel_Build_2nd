@@ -242,6 +242,7 @@ jobs:
             fi
           done
           echo "✅ 基础配置正确"
+          grep -E "CONFIG_KSU_SUSFS" out/.config | head -20
       
       - name: Locate cpu_limits_set_level
         working-directory: kernel
