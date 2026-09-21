@@ -104,7 +104,38 @@ jobs:
 
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs
-  
+
+      - name: ♻️ Drop SUSFS patches on fs/namespace.c
+        working-directory: device_kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=== 丢弃 patch 对 fs/namespace.c 的修改 ==="
+          git checkout -- fs/namespace.c
+          rm -f fs/namespace.c.rej
+
+          echo ""
+          echo "=== 恢复后 susfs_ 出现次数（期望 0）==="
+          grep -c "susfs_" fs/namespace.c || echo 0
+
+          echo ""
+          echo "=== 确认 mnt_alloc_group_id 结构完整 ==="
+          sed -n '/^static int mnt_alloc_group_id/,/^}/p' fs/namespace.c
+
+          echo ""
+          echo "=== 确认 susfs_alloc_* 没被误引入 ==="
+          grep -c "susfs_alloc" fs/namespace.c || echo 0
+          echo "（期望 0）"
+
+      - name: Check namespace functions used elsewhere
+        working-directory: device_kernel
+        shell: bash
+        run: |
+          echo "=== 谁引用了 susfs_get_non_sus_* ==="
+          grep -rn "susfs_get_non_sus_mnt_id_from_mnt\|susfs_get_non_sus_vfsmnt_from_vfsmnt" \
+            fs/ include/ --include="*.c" --include="*.h" | grep -v "namespace.c" || echo "(无)"
+            
       - name: 🔎 Check failed hunks coverage
         working-directory: device_kernel
         run: |
