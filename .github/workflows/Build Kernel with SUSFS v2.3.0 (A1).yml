@@ -224,17 +224,24 @@ jobs:
           grep -E 'CONFIG_(CPU_FREQ|ENERGY_MODEL|CPU_IDLE)' ${{ env.OUTPUT_DIR }}/.config
           grep -nE "config KSU.*HOOK" drivers/kernelsu/kernel/Kconfig
           
-          echo "=== KSU MANUAL HOOK Kconfig 上下文 ==="
-          sed -n '90,130p' drivers/kernelsu/kernel/Kconfig
+          echo "=== SUSFS 配置校验（应全部为 n） ==="
+          if grep -q "CONFIG_KSU_SUSFS.*=y" ${{ env.OUTPUT_DIR }}/.config; then
+            echo "::error::仍有 SUSFS 配置被启用"
+            grep "CONFIG_KSU_SUSFS.*=y" ${{ env.OUTPUT_DIR }}/.config
+            exit 1
+          fi
+          echo "✅ SUSFS 全部禁用"
 
-          if ! grep -q '^CONFIG_KSU_MANUAL_HOOK=y' ${{ env.OUTPUT_DIR }}/.config; then
-            echo "::error::CONFIG_KSU_MANUAL_HOOK 未启用，会导致无限重启！"
-            exit 1
-          fi
-          if ! grep -q '^CONFIG_KSU_SUSFS=y' ${{ env.OUTPUT_DIR }}/.config; then
-            echo "::error::CONFIG_KSU_SUSFS 未启用"
-            exit 1
-          fi
+          echo "=== 基础配置校验 ==="
+          for sym in CONFIG_KSU CONFIG_KSU_MANUAL_HOOK; do
+            if grep -q "^${sym}=y" ${{ env.OUTPUT_DIR }}/.config; then
+              echo "✅ ${sym}=y"
+            else
+              echo "::error::${sym} 未启用"
+              exit 1
+            fi
+          done
+          echo "✅ 基础配置正确"
       
       - name: Locate cpu_limits_set_level
         working-directory: kernel
