@@ -76,23 +76,19 @@ index fd6caf2..0185e6c 100644
  	return dentry;
  }
  
-@@ -1609,14 +1635,27 @@ static struct dentry *__lookup_hash(const struct qstr *name,
+@@ -1610,8 +1635,12 @@ static struct dentry *__lookup_hash(const struct qstr *name,
  	struct dentry *old;
  	struct inode *dir = base->d_inode;
+ 
  
 +#ifdef CONFIG_KSU_SUSFS_SUS_PATH
 +	bool found_sus_path = false;
 +#endif
 +
-+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
-+	if (dentry) {
-+		return dentry;	
-+	}
-+#else
- 	if (dentry)
+ 	if (dentry) {
  		return dentry;
-+#endif
- 
+ 	}
+  
  	/* Don't create child dentry for a dead directory. */
  	if (unlikely(IS_DEADDIR(dir)))
  		return ERR_PTR(-ENOENT);
