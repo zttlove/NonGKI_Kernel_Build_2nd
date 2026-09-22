@@ -152,7 +152,7 @@ jobs:
           git submodule update --init --recursive
 
           echo ""
-          echo "=== 确认 KernelSU 当前 commit（应该是 tree 锁定的 a9216b04） ==="
+          echo "=== 确认 KernelSU 当前 commit ==="
           cd KernelSU
           git log -1 --oneline
           git rev-parse HEAD
@@ -165,6 +165,113 @@ jobs:
           echo ""
           echo "=== 验证 drivers/kernelsu/Kconfig 存在 ==="
           ls -la drivers/kernelsu/Kconfig
+
+      - name: 🔄 Update KernelSU to latest
+        working-directory: device_kernel/KernelSU
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main --depth=1
+          git checkout origin/main
+          git log -1 --oneline
+
+      - name: 🔧 Convert susfs proc_no_su helpers to non-inline symbols
+        working-directory: device_kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PYEOF'
+          import re
+
+          funcs = [
+            "susfs_is_current_proc_no_su",
+            "susfs_set_current_proc_no_su",
+            "susfs_clear_current_proc_no_su",
+            "susfs_is_current_proc_umounted_for_zygote_next",
+            "susfs_set_current_proc_umounted_for_zygote_next",
+            "susfs_clear_current_proc_umounted_for_zygote_next",
+          ]
+
+          # 1. 从 susfs_def.h 删掉 static inline 定义
+          path = "include/linux/susfs_def.h"
+          with open(path) as f:
+              content = f.read()
+
+          removed = 0
+          for fn in funcs:
+              pat = r'static\s+inline\s+[A-Za-z_]+\s+' + fn + r'\s*\(void\)\s*\{[^}]*\}\s*\n'
+              content, n = re.subn(pat, '', content)
+              removed += n
+
+          with open(path, "w") as f:
+              f.write(content)
+          print(f"[+] susfs_def.h: removed {removed} static inline defs")
+
+          # 2. 在 susfs.h 里加 extern 声明
+          path = "include/linux/susfs.h"
+          with open(path) as f:
+              content = f.read()
+
+          decl = (
+            "\n/* proc_no_su helpers (non-inline) */\n"
+            "bool susfs_is_current_proc_no_su(void);\n"
+            "void susfs_set_current_proc_no_su(void);\n"
+            "void susfs_clear_current_proc_no_su(void);\n"
+            "bool susfs_is_current_proc_umounted_for_zygote_next(void);\n"
+            "void susfs_set_current_proc_umounted_for_zygote_next(void);\n"
+            "void susfs_clear_current_proc_umounted_for_zygote_next(void);\n"
+          )
+
+          if "susfs_is_current_proc_no_su" not in content:
+              idx = content.rfind("#endif")
+              content = content[:idx] + decl + "\n" + content[idx:]
+              with open(path, "w") as f:
+                  f.write(content)
+              print("[+] susfs.h: added extern decls")
+
+          # 3. 在 fs/susfs.c 里加实现
+          path = "fs/susfs.c"
+          with open(path) as f:
+              content = f.read()
+
+          impl = (
+            "\n/* proc_no_su helpers (non-inline) */\n"
+            "bool susfs_is_current_proc_no_su(void) {\n"
+            "\treturn (likely(test_thread_flag(TIF_PROC_NO_SU)));\n"
+            "}\n\n"
+            "void susfs_set_current_proc_no_su(void) {\n"
+            "\tset_thread_flag(TIF_PROC_NO_SU);\n"
+            "}\n\n"
+            "void susfs_clear_current_proc_no_su(void) {\n"
+            "\tclear_thread_flag(TIF_PROC_NO_SU);\n"
+            "}\n\n"
+            "bool susfs_is_current_proc_umounted_for_zygote_next(void) {\n"
+            "\treturn (likely(test_thread_flag(TIF_PROC_UMOUNTED_FOR_ZYGOTE_NEXT)));\n"
+            "}\n\n"
+            "void susfs_set_current_proc_umounted_for_zygote_next(void) {\n"
+            "\tset_thread_flag(TIF_PROC_UMOUNTED_FOR_ZYGOTE_NEXT);\n"
+            "}\n\n"
+            "void susfs_clear_current_proc_umounted_for_zygote_next(void) {\n"
+            "\tclear_thread_flag(TIF_PROC_UMOUNTED_FOR_ZYGOTE_NEXT);\n"
+            "}\n"
+          )
+
+          if "susfs_is_current_proc_no_su(void) {" not in content:
+              content = content.rstrip() + "\n" + impl
+              with open(path, "w") as f:
+                  f.write(content)
+              print("[+] fs/susfs.c: added non-inline impls")
+          PYEOF
+
+          echo ""
+          echo "=== 验证 ==="
+          echo "--- susfs_def.h 剩余 static inline (期望 0) ---"
+          grep -c "static inline.*susfs_is_current_proc_no_su" include/linux/susfs_def.h || echo 0
+          echo "--- susfs.h extern 声明 (期望 >=1) ---"
+          grep -c "^bool susfs_is_current_proc_no_su" include/linux/susfs.h || echo 0
+          echo "--- fs/susfs.c 实现 (期望 >=1) ---"
+          grep -c "^bool susfs_is_current_proc_no_su" fs/susfs.c || echo 0
 
       - name: 🔧 Setup Clang to clang-custom
         shell: bash
@@ -309,7 +416,7 @@ jobs:
           body: |
             ## Xiaomi 11 Ultra Star HyperOS A16 内核刷机包
             - 适配 HyperOS A16 全版本
-            - ReSukiSU v4.2.0-rc1 + SuSFS v2.1.0（源码内置）
+            - ReSukiSU 最新版 + SuSFS v2.1.0（源码内置）
             - NonGKI 通用免解boot补丁
             - Osm0sis Anykernel3 官方卡刷格式
           files: ${{ env.PACK_NAME }}
