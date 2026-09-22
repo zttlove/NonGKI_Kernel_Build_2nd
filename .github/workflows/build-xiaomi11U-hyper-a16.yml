@@ -102,6 +102,28 @@ jobs:
       - name: ⚙️ Get neccssary tools
         uses: ./.github/workflows/build-ready
 
+      - name: 🔧 Setup Clang to clang-custom
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEST="$GITHUB_WORKSPACE/clang-custom"
+          # 清理旧目录（build-ready 可能放了个不对的进去）
+          rm -rf "$DEST"
+          # 克隆 thenoppy12 的固定版本 Clang
+          git clone --depth=1 \
+          https://github.com/thenoppy12/clang-r416183b.git \
+          "$DEST"
+          # 校验关键二进制
+          if [[ ! -x "$DEST/bin/clang" || ! -x "$DEST/bin/ld.lld" ]]; then
+          echo "::error::❌ clang 或 ld.lld 缺失"
+          ls -la "$DEST/bin" | head -20
+          exit 1
+          fi
+
+          "$DEST/bin/clang" --version | head -1
+          "$DEST/bin/ld.lld" --version | head -1
+          echo "✅ Clang 已就绪: $DEST/bin"
+
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs
 
