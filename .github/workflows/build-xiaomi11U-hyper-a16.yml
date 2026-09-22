@@ -106,12 +106,12 @@ jobs:
       - name: 🔧 Manually clone kernel source
         shell: bash
         run: |
-         set -euo pipefail
-         DEST="$GITHUB_WORKSPACE/device_kernel"
-         rm -rf "$DEST"
-         git clone "${{ env.KERNEL_SOURCE }}" \
-         -b "${{ env.KERNEL_BRANCH }}" \
-         --depth=1 \
+          set -euo pipefail
+          DEST="$GITHUB_WORKSPACE/device_kernel"
+          rm -rf "$DEST"
+          git clone "${{ env.KERNEL_SOURCE }}" \
+          -b "${{ env.KERNEL_BRANCH }}" \
+          --depth=1 \
           "$DEST"
           cd "$DEST"
           echo "=== 源码已 clone ==="
