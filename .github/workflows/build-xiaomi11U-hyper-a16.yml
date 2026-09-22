@@ -103,6 +103,21 @@ jobs:
       - name: ⚙️ Get neccssary tools
         uses: ./.github/workflows/build-ready
 
+      - name: 🔧 Manually clone kernel source
+        shell: bash
+        run: |
+         set -euo pipefail
+         DEST="$GITHUB_WORKSPACE/device_kernel"
+         rm -rf "$DEST"
+         git clone "${{ env.KERNEL_SOURCE }}" \
+         -b "${{ env.KERNEL_BRANCH }}" \
+         --depth=1 \
+          "$DEST"
+          cd "$DEST"
+          echo "=== 源码已 clone ==="
+          ls include/linux/susfs.h
+          grep "SUSFS_VERSION" include/linux/susfs.h
+
       - name: 🔧 Setup Clang to clang-custom
         shell: bash
         run: |
