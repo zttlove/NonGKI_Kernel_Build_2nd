@@ -7,46 +7,46 @@ on:
 env:
   # Device env
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  DEVICE_NAME : "xiaomi_11U"
-  DEVICE_CODENAME : "star"
+  DEVICE_NAME: "xiaomi_11U"
+  DEVICE_CODENAME: "star"
 
-  CUSTOM_CMDS : "CLANG_TRIPLE=aarch64-linux-gnu-"
-  EXTRA_CMDS :  "LD=ld.lld LLVM=1 LLVM_IAS=1"
-  KCFLAGS_EXTRA : "-Wframe-larger-than=4096 -Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-array-parameter -Wno-declaration-after-statement -fno-stack-protector"
+  CUSTOM_CMDS: "CLANG_TRIPLE=aarch64-linux-gnu-"
+  EXTRA_CMDS: "LD=ld.lld LLVM=1 LLVM_IAS=1"
+  KCFLAGS_EXTRA: "-Wframe-larger-than=4096 -Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-array-parameter -Wno-declaration-after-statement -fno-stack-protector"
 
-  KERNEL_SOURCE : "https://github.com/zttlove/android_kernel_xiaomi_sm8350_miyume.git"
-  KERNEL_BRANCH : "fox-boot-clean"
+  KERNEL_SOURCE: "https://github.com/zttlove/android_kernel_xiaomi_sm8350_miyume.git"
+  KERNEL_BRANCH: "fox-boot-clean"
 
-  CLANG_SOURCE : "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-18.04.tar.xz"
-  CLANG_BRANCH : ""
+  CLANG_SOURCE: "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-18.04.tar.xz"
+  CLANG_BRANCH: ""
 
-  GCC_GNU : false
-  GCC_64_SOURCE : "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9.git"
-  GCC_64_BRANCH : "android12L-release"
-  GCC_32_SOURCE : "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9.git"
-  GCC_32_BRANCH : "android12L-release"
+  GCC_GNU: false
+  GCC_64_SOURCE: "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9.git"
+  GCC_64_BRANCH: "android12L-release"
+  GCC_32_SOURCE: "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9.git"
+  GCC_32_BRANCH: "android12L-release"
 
   DEFCONFIG_SOURCE: ""
-  DEFCONFIG_NAME : "star_defconfig"
+  DEFCONFIG_NAME: "star_defconfig"
   DEFCONFIG_ORIGIN_IMAGE: ""
   DEFCONFIG_FROM_BOOT: false
 
-  KERNELSU_SOURCE : ""
-  KERNELSU_BRANCH : ""
+  KERNELSU_SOURCE: ""
+  KERNELSU_BRANCH: ""
 
-  KERNELSU_AUTO_GET : "true"
-  KERNELSU_AUTO_FORK : "resukisu"
+  KERNELSU_AUTO_GET: "true"
+  KERNELSU_AUTO_FORK: "resukisu"
 
-  SUSFS_ENABLE : true
-  SUSFS_FIXED : true
+  SUSFS_ENABLE: true
+  SUSFS_FIXED: true
 
-  AK3_SOURCE : "https://github.com/osm0sis/Anykernel3.git"
-  AK3_BRANCH : "master"
+  AK3_SOURCE: "https://github.com/osm0sis/Anykernel3.git"
+  AK3_BRANCH: "master"
 
-  BOOT_SOURCE : ""
-  NEED_DTBO : false
-  NEED_SAFE_DTBO : false
-  ROM_TEXT : "Xiaomi11U-HyperA16"
+  BOOT_SOURCE: ""
+  NEED_DTBO: false
+  NEED_SAFE_DTBO: false
+  ROM_TEXT: "Xiaomi11U-HyperA16"
 
   PYTHON_VERSION: "3"
   PACK_METHOD: "Anykernel3"
@@ -128,14 +128,70 @@ jobs:
           grep -c "susfs_alloc" fs/namespace.c || echo 0
           echo "（期望 0）"
 
-      - name: Check namespace functions used elsewhere
+      - name: 🔧 Append missing SUSFS mount helpers to fs/susfs.c
+        working-directory: device_kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # 检查是否已经存在
+          if grep -q "^int susfs_get_non_sus_mnt_id_from_mnt" fs/susfs.c; then
+            echo "[+] fs/susfs.c 里已有定义，跳过"
+            exit 0
+          fi
+
+          echo "[+] 向 fs/susfs.c 末尾追加两个 helper 函数"
+
+          cat >> fs/susfs.c <<'EOF'
+
+          /* - To retrieve the non sus mnt_id from mount */
+          int susfs_get_non_sus_mnt_id_from_mnt(struct mount *orig_mnt) {
+          struct mount *mnt = orig_mnt;
+          int mnt_id;
+
+          if (mnt->mnt_id < DEFAULT_KSU_MNT_ID)
+          return mnt->mnt_id;
+          lock_mount_hash();
+          for (; mnt && mnt->mnt_parent && mnt != mnt->mnt_parent && mnt->mnt_id >= DEFAULT_KSU_MNT_ID; mnt = mnt->mnt_parent) { }
+          mnt_id = mnt->mnt_id;
+          unlock_mount_hash();
+          return mnt_id;
+          }
+          /* - To retrieve the non sus vfsmount from vfsmount, takes a reference on &mnt->mnt and mnt->mnt.mnt_root */
+          struct vfsmount *susfs_get_non_sus_vfsmnt_from_vfsmnt(struct vfsmount *vfsmnt) {
+          struct mount *mnt = real_mount(vfsmnt);
+
+          if (mnt->mnt_id < DEFAULT_KSU_MNT_ID) {
+          mntget(&mnt->mnt);
+          dget(mnt->mnt.mnt_root);
+          return &mnt->mnt;
+          }
+          lock_mount_hash();
+          for (; mnt && mnt->mnt_parent && mnt != mnt->mnt_parent && mnt->mnt_id >= DEFAULT_KSU_MNT_ID; mnt = mnt->mnt_parent) { }
+          mntget(&mnt->mnt);
+          if (!mnt->mnt.mnt_root || IS_ERR(mnt->mnt.mnt_root)) {
+          mntput(&mnt->mnt);
+          unlock_mount_hash();
+          return vfsmnt;
+          }
+          dget(mnt->mnt.mnt_root);
+          unlock_mount_hash();
+          return &mnt->mnt;
+          }
+          EOF
+
+          echo ""
+          echo "=== 验证 ==="
+          grep -n "^int susfs_get_non_sus_mnt_id_from_mnt\|^struct vfsmount \*susfs_get_non_sus_vfsmnt_from_vfsmnt" fs/susfs.c
+
+      - name: 🔎 Check namespace functions used elsewhere
         working-directory: device_kernel
         shell: bash
         run: |
           echo "=== 谁引用了 susfs_get_non_sus_* ==="
           grep -rn "susfs_get_non_sus_mnt_id_from_mnt\|susfs_get_non_sus_vfsmnt_from_vfsmnt" \
             fs/ include/ --include="*.c" --include="*.h" | grep -v "namespace.c" || echo "(无)"
-            
+
       - name: 🔎 Check failed hunks coverage
         working-directory: device_kernel
         run: |
@@ -155,7 +211,7 @@ jobs:
           grep -c "susfs_show_vfsmnt\|susfs_is_hide_sus_mnts" fs/proc_namespace.c || echo 0
           echo "=== readdir.c ==="
           grep -c "susfs_is_inode_sus_path" fs/readdir.c || echo 0
-            
+
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
 
@@ -171,7 +227,7 @@ jobs:
 
       - name: 🔧 Patch Hide Stuff
         uses: ./.github/workflows/patch-hide-stuff
-        
+
       - name: 🔎 Check cpufreq API in 5.4
         shell: bash
         run: |
@@ -184,7 +240,7 @@ jobs:
           echo ""
           echo "=== signature of verify for reference ==="
           sed -n '695,705p' include/linux/cpufreq.h
-          
+
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
 
@@ -225,8 +281,8 @@ jobs:
               -e 's/^IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=1/' \
               -e 's/^BLOCK=.*/BLOCK=boot/' \
               "${AK3_DIR}/anykernel.sh"
-              curl -L https://raw.githubusercontent.com/zttlove/NonGKI_Kernel_Build_2nd/mainline/Patches/anykernel.sh -o Anykernel3/anykernel.sh
-              chmod +x Anykernel3/anykernel.sh
+            curl -L https://raw.githubusercontent.com/zttlove/NonGKI_Kernel_Build_2nd/mainline/Patches/anykernel.sh -o Anykernel3/anykernel.sh
+            chmod +x Anykernel3/anykernel.sh
           fi
 
           # 复制内核主镜像
@@ -261,7 +317,7 @@ jobs:
           # 彻底清理临时垃圾文件
           rm -rf "${TMP_DIR}"
 
-         # 自动发布到GitHub Releases页面（动态标签永不重复报错）
+      # 自动发布到GitHub Releases页面（动态标签永不重复报错）
       - name: 🚀 Auto Upload To Github Release
         if: env.PACK_METHOD == 'Anykernel3'
         uses: softprops/action-gh-release@v3
