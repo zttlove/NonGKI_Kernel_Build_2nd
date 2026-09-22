@@ -105,6 +105,20 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs
 
+      - name: 🔍 Diagnose fs/namespace.c damage
+        working-directory: device_kernel
+        shell: bash
+        run: |
+          echo "=== 150~230 行 ==="
+          sed -n '150,230p' fs/namespace.c
+          echo ""
+          echo "=== 未匹配的 #ifdef / #endif 检查 ==="
+          grep -c "#ifdef CONFIG_KSU_SUSFS" fs/namespace.c || echo 0
+          grep -c "#endif" fs/namespace.c || echo 0
+          echo ""
+          echo "=== susfs_ 残留 ==="
+          grep -n "susfs_" fs/namespace.c | head -20
+
       - name: ♻️ Drop SUSFS patches on fs/namespace.c
         working-directory: device_kernel
         shell: bash
