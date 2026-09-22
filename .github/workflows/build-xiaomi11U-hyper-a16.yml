@@ -118,6 +118,27 @@ jobs:
           ls include/linux/susfs.h
           grep "SUSFS_VERSION" include/linux/susfs.h
           
+      - name: 🔍 Diagnose KernelSU submodule
+        working-directory: device_kernel
+        shell: bash
+        run: |
+          echo "=== .gitmodules ==="
+          cat .gitmodules || echo "(无)"
+
+          echo ""
+          echo "=== drivers/kernelsu 是什么 ==="
+          ls -la drivers/kernelsu 2>&1 || echo "(不存在)"
+          ls -la drivers/ | grep -i ksu || echo "(drivers 下无 ksu 相关)"
+
+          echo ""
+          echo "=== 是否有 KernelSU 子目录 ==="
+          find . -maxdepth 2 -type d -name "*KernelSU*" -o -maxdepth 2 -type d -name "*kernelsu*" 2>/dev/null | head
+
+          echo ""
+          echo "=== drivers/Kconfig 第 235-245 行 ==="
+          sed -n '235,245p' drivers/Kconfig
+    
+          
       - name: 📦 Init KernelSU submodule
         working-directory: device_kernel
         shell: bash
