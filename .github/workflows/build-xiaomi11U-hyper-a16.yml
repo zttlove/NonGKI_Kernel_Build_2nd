@@ -230,8 +230,24 @@ jobs:
                   f.write(content)
               print("[+] susfs.h: added extern decls")
 
-          # 3. 在 fs/susfs.c 里加实现
+          # 3. 在 fs/susfs.c 顶部确保 include <linux/susfs_def.h>
           path = "fs/susfs.c"
+          with open(path) as f:
+              content = f.read()
+
+          if "#include <linux/susfs_def.h>" not in content:
+              m = re.search(r'(#include\s+<[^>]+>\n)', content)
+              if m:
+                  insert_pos = m.end()
+                  content = content[:insert_pos] + "#include <linux/susfs_def.h>\n" + content[insert_pos:]
+                  with open(path, "w") as f:
+                      f.write(content)
+                  print("[+] fs/susfs.c: added #include <linux/susfs_def.h>")
+              else:
+                  print("::error::fs/susfs.c 找不到 #include 位置")
+                  raise SystemExit(1)
+
+          # 4. 追加实现
           with open(path) as f:
               content = f.read()
 
@@ -262,16 +278,40 @@ jobs:
               with open(path, "w") as f:
                   f.write(content)
               print("[+] fs/susfs.c: added non-inline impls")
+
+          # 5. 兜底：确保 TIF_PROC_* 宏存在
+          path = "include/linux/susfs_def.h"
+          with open(path) as f:
+              content = f.read()
+
+          if "TIF_PROC_NO_SU" not in content:
+              macros = (
+                "\n/* proc_no_su TIF macros */\n"
+                "#ifndef TIF_PROC_UMOUNTED\n"
+                "#define TIF_PROC_UMOUNTED 33\n"
+                "#endif\n"
+                "#ifndef TIF_PROC_NO_SU\n"
+                "#define TIF_PROC_NO_SU 34\n"
+                "#endif\n"
+                "#ifndef TIF_PROC_UMOUNTED_FOR_ZYGOTE_NEXT\n"
+                "#define TIF_PROC_UMOUNTED_FOR_ZYGOTE_NEXT 35\n"
+                "#endif\n"
+              )
+              idx = content.rfind("#endif")
+              content = content[:idx] + macros + "\n" + content[idx:]
+              with open(path, "w") as f:
+                  f.write(content)
+              print("[+] susfs_def.h: added TIF_PROC_* macros")
           PYEOF
 
           echo ""
           echo "=== 验证 ==="
-          echo "--- susfs_def.h 剩余 static inline (期望 0) ---"
-          grep -c "static inline.*susfs_is_current_proc_no_su" include/linux/susfs_def.h || echo 0
-          echo "--- susfs.h extern 声明 (期望 >=1) ---"
-          grep -c "^bool susfs_is_current_proc_no_su" include/linux/susfs.h || echo 0
-          echo "--- fs/susfs.c 实现 (期望 >=1) ---"
+          echo "--- fs/susfs.c include ---"
+          grep -n "linux/susfs_def.h" fs/susfs.c || echo "(无)"
+          echo "--- fs/susfs.c 实现 ---"
           grep -c "^bool susfs_is_current_proc_no_su" fs/susfs.c || echo 0
+          echo "--- susfs_def.h 宏定义 ---"
+          grep -c "TIF_PROC_NO_SU\|TIF_PROC_UMOUNTED_FOR_ZYGOTE_NEXT" include/linux/susfs_def.h || echo 0
 
       - name: 🔧 Setup Clang to clang-custom
         shell: bash
