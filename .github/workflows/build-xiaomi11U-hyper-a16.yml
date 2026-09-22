@@ -302,6 +302,68 @@ jobs:
           echo "=== 验证 ==="
           grep -n "^int susfs_get_non_sus_mnt_id_from_mnt\|^struct vfsmount \*susfs_get_non_sus_vfsmnt_from_vfsmnt" fs/susfs.c
 
+      - name: 🔧 Fix missing includes in fs/proc_namespace.c
+        working-directory: device_kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # 检查 include 是否已在
+          if grep -q "linux/susfs_def.h" fs/proc_namespace.c; then
+            echo "[+] include 已在，跳过"
+          else
+            echo "[+] 补 include <linux/susfs_def.h>"
+            python3 - <<'PYEOF'
+          path = "fs/proc_namespace.c"
+          with open(path) as f:
+              content = f.read()
+
+          marker = "#include <linux/sched/task.h>\n"
+          add = marker + "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n#include <linux/susfs_def.h>\n#endif\n"
+
+          if marker not in content:
+              print("::error::找不到 #include <linux/sched/task.h>")
+              raise SystemExit(1)
+
+          content = content.replace(marker, add, 1)
+          with open(path, "w") as f:
+              f.write(content)
+          print("[+] include 已补")
+          PYEOF
+          fi
+
+          # 检查 extern 声明是否已在
+          if grep -q "extern bool susfs_is_current_ksu_domain" fs/proc_namespace.c; then
+            echo "[+] extern 已在，跳过"
+          else
+            echo "[+] 补 extern 声明"
+            python3 - <<'PYEOF'
+          path = "fs/proc_namespace.c"
+          with open(path) as f:
+              content = f.read()
+
+          marker = '#include "internal.h"\n'
+          add = marker + '''#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+          extern bool susfs_is_current_ksu_domain(void);
+          extern struct static_key_false susfs_is_hide_sus_mnts_for_non_su_procs_enabled;
+          #endif
+          '''
+          
+          if marker not in content:
+              print("::error::找不到 #include \\"internal.h\\"")
+              raise SystemExit(1)
+
+          content = content.replace(marker, add, 1)
+          with open(path, "w") as f:
+              f.write(content)
+          print("[+] extern 已补")
+          PYEOF
+          fi
+
+          echo ""
+          echo "=== 验证 ==="
+          grep -n "linux/susfs_def.h\|susfs_is_current_ksu_domain\|susfs_is_hide_sus_mnts_for_non_su_procs_enabled" fs/proc_namespace.c | head -10
+
       - name: 🔎 Check namespace functions used elsewhere
         working-directory: device_kernel
         shell: bash
