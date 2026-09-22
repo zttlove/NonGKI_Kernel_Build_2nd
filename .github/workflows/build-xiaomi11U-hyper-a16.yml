@@ -311,40 +311,45 @@ jobs:
           python3 - <<'PYEOF'
           import sys
 
+          # (path, marker, add, check_pattern)
           fixes = [
             (
               "fs/proc_namespace.c",
               "#include <linux/sched/task.h>\n",
               "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n#include <linux/susfs_def.h>\n#endif\n",
+              "linux/susfs_def.h",
             ),
             (
               "fs/proc_namespace.c",
               '#include "internal.h"\n',
-              '''#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+              '''
+              #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
               extern bool susfs_is_current_ksu_domain(void);
               extern struct static_key_false susfs_is_hide_sus_mnts_for_non_su_procs_enabled;
               #endif
-
               ''',
+              "extern bool susfs_is_current_ksu_domain",
             ),
             (
               "fs/statfs.c",
               "#include <linux/compat.h>\n",
               "#ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs_def.h>\n#include \"mount.h\"\n#endif\n",
+              "linux/susfs_def.h",
             ),
             (
               "fs/proc/fd.c",
               "#include <linux/proc_fs.h>\n",
               "#ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs_def.h>\n#endif\n",
+              "linux/susfs_def.h",
             ),
           ]
 
-          for path, marker, add in fixes:
+          for path, marker, add, check in fixes:
               with open(path) as f:
                   content = f.read()
 
-              if "susfs_def.h" in content:
-                  print(f"[+] {path} 已有 include，跳过")
+              if check in content:
+                  print(f"[+] {path}: 已有 {check}，跳过")
                   continue
 
               if marker not in content:
@@ -354,17 +359,15 @@ jobs:
               content = content.replace(marker, marker + add, 1)
               with open(path, "w") as f:
                   f.write(content)
-              print(f"[+] {path} 已修复")
+              print(f"[+] {path}: 已补 {check}")
 
           print("[+] 全部修复完成")
           PYEOF
 
           echo ""
-          echo "=== 验证 ==="
-          for f in fs/proc_namespace.c fs/statfs.c fs/proc/fd.c; do
-            echo "--- $f ---"
-            grep -c "susfs_def.h" "$f" || echo "0 (缺 include)"
-          done
+          echo "=== 验证 extern 声明 ==="
+          grep -n "susfs_is_current_ksu_domain\|susfs_is_hide_sus_mnts_for_non_su_procs_enabled" fs/proc_namespace.c || echo "❌ 未找到"
+          
       - name: 🔎 Check namespace functions used elsewhere
         working-directory: device_kernel
         shell: bash
