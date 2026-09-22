@@ -26,7 +26,8 @@ env:
   GCC_32_SOURCE: "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9.git"
   GCC_32_BRANCH: "android12L-release"
 
-  DEFCONFIG_SOURCE: ""
+  # ============ 修改点 1：指定 defconfig 来源 ============
+  DEFCONFIG_SOURCE: "https://raw.githubusercontent.com/zttlove/NonGKI_Kernel_Build_2nd/mainline/scripts/star_defconfig"
   DEFCONFIG_NAME: "star_defconfig"
   DEFCONFIG_ORIGIN_IMAGE: ""
   DEFCONFIG_FROM_BOOT: false
@@ -117,6 +118,34 @@ jobs:
           echo "=== 源码已 clone ==="
           ls include/linux/susfs.h
           grep "SUSFS_VERSION" include/linux/susfs.h
+
+      # ============ 修改点 2：新增覆盖 star_defconfig 步骤 ============
+      - name: 🔄 Override star_defconfig from NonGKI_Kernel_Build_2nd
+        working-directory: device_kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "正在从指定仓库下载并覆盖 star_defconfig..."
+          
+          # 确保目录存在
+          mkdir -p arch/arm64/configs
+          
+          # 下载并覆盖
+          curl -L --fail --retry 3 --retry-delay 5 \
+            -o arch/arm64/configs/star_defconfig \
+            "${{ env.DEFCONFIG_SOURCE }}"
+          
+          # 验证下载结果
+          if [ ! -s arch/arm64/configs/star_defconfig ]; then
+            echo "::error::❌ 覆盖失败，目标文件为空或不存在"
+            exit 1
+          fi
+          
+          echo "✅ star_defconfig 已成功覆盖"
+          echo "=== 覆盖后的文件前 5 行 ==="
+          head -5 arch/arm64/configs/star_defconfig
+          echo "=== 检查 LOCALVERSION ==="
+          grep "CONFIG_LOCALVERSION" arch/arm64/configs/star_defconfig || true
 
       - name: 🔍 Diagnose KernelSU submodule
         working-directory: device_kernel
