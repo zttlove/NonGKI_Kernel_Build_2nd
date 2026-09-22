@@ -149,7 +149,8 @@ jobs:
           ls -la fs/susfs.c
 
           echo "=== star_defconfig 存在 ==="
-          ls -la arch/arm64/configs/star_defconfig arch/arm64/configs/vendor/star_defconfig 2>&1
+          ls -la arch/arm64/configs/star_defconfig 2>/dev/null || echo "(不在 arch/arm64/configs/)"
+          ls -la arch/arm64/configs/vendor/star_defconfig 2>/dev/null || echo "(不在 arch/arm64/configs/vendor/)"
 
           echo "=== KSU hook 是否已内置 ==="
           grep -c "ksu_handle_setresuid" kernel/sys.c || echo 0
