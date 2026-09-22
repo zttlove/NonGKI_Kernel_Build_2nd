@@ -128,6 +128,48 @@ jobs:
           grep -c "susfs_alloc" fs/namespace.c || echo 0
           echo "（期望 0）"
 
+      - name: 🔧 Fix broken mnt_alloc_group_id
+        working-directory: device_kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=== 当前 mnt_alloc_group_id ==="
+          sed -n '/^static int mnt_alloc_group_id/,/^}/p' fs/namespace.c
+
+          # 检查 res 是否已声明
+          if sed -n '/^static int mnt_alloc_group_id/,/^}/p' fs/namespace.c | grep -q "int res"; then
+            echo "[+] 已有 res 声明，跳过"
+            exit 0
+          fi
+
+          echo "[+] 缺失 res 声明，正在修复"
+
+          python3 - <<'PYEOF'
+          import re
+
+          with open("fs/namespace.c") as f:
+              content = f.read()
+
+          # 在 mnt_alloc_group_id 函数体的第一个 "if (res < 0)" 前插入 res 声明
+          pattern = r'(static int mnt_alloc_group_id\(struct mount \*mnt\)\s*\{\s*\n)(\s*)(if \(res < 0\))'
+          replacement = r'\1\tint res = ida_alloc_min(&mnt_group_ida, 1, GFP_KERNEL);\n\n\2\3'
+
+          new_content, n = re.subn(pattern, replacement, content, count=1)
+          if n != 1:
+              print(f"::error::匹配失败 (n={n})，请手动检查")
+              raise SystemExit(1)
+
+          with open("fs/namespace.c", "w") as f:
+              f.write(new_content)
+
+          print("[+] 修复成功")
+          PYEOF
+
+          echo ""
+          echo "=== 修复后 ==="
+          sed -n '/^static int mnt_alloc_group_id/,/^}/p' fs/namespace.c
+
       - name: 🔧 Append missing SUSFS mount helpers to fs/susfs.c
         working-directory: device_kernel
         shell: bash
