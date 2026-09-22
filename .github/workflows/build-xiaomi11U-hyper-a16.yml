@@ -152,6 +152,13 @@ jobs:
           git submodule update --init --recursive
 
           echo ""
+          echo "=== 确认 KernelSU 当前 commit（应该是 tree 锁定的 a9216b04） ==="
+          cd KernelSU
+          git log -1 --oneline
+          git rev-parse HEAD
+          cd ..
+
+          echo ""
           echo "=== 验证 drivers/kernelsu ==="
           ls -la drivers/kernelsu/ | head -20
 
@@ -159,15 +166,6 @@ jobs:
           echo "=== 验证 drivers/kernelsu/Kconfig 存在 ==="
           ls -la drivers/kernelsu/Kconfig
 
-      - name: 🔄 Update KernelSU to latest
-        working-directory: device_kernel/KernelSU
-        shell: bash
-        run: |
-          set -euo pipefail
-          git fetch origin main --depth=1
-          git checkout origin/main
-          git log -1 --oneline
-          
       - name: 🔧 Setup Clang to clang-custom
         shell: bash
         run: |
@@ -185,25 +183,6 @@ jobs:
           "$DEST/bin/clang" --version | head -1
           "$DEST/bin/ld.lld" --version | head -1
           echo "✅ Clang 已就绪: $DEST/bin"
-      
-      - name: 🔧 Add susfs_def.h include to ReSukiSU driver
-        working-directory: device_kernel
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "=== 检查 KernelSU 目录结构 ==="
-          ls -la KernelSU/
-          ls -la KernelSU/kernel/ | head -20
-
-          echo ""
-          echo "=== 搜索 susfs_def.h 被谁引用 ==="
-          grep -rln "susfs_def.h" KernelSU/kernel/ || echo "(无)"
-
-          echo ""
-          echo "=== 搜索调用 susfs_is_current_proc_no_su 的文件 ==="
-          grep -rln "susfs_is_current_proc_no_su\|susfs_set_current_proc_no_su" KernelSU/kernel/ || echo "(无)"
-          
 
       - name: 🔎 Verify source completeness
         working-directory: device_kernel
