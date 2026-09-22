@@ -144,26 +144,14 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "=== .gitmodules 内容 ==="
-          cat .gitmodules || echo "(无 .gitmodules)"
-
-          echo ""
-          echo "=== 初始化 submodule ==="
           git submodule update --init --recursive
 
-          echo ""
-          echo "=== 确认 KernelSU 当前 commit ==="
           cd KernelSU
+          git fetch origin main --depth=200
+          git checkout 3576e6a5
           git log -1 --oneline
-          git rev-parse HEAD
           cd ..
 
-          echo ""
-          echo "=== 验证 drivers/kernelsu ==="
-          ls -la drivers/kernelsu/ | head -20
-
-          echo ""
-          echo "=== 验证 drivers/kernelsu/Kconfig 存在 ==="
           ls -la drivers/kernelsu/Kconfig
 
       - name: 🔄 Update KernelSU to latest
