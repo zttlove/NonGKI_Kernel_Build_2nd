@@ -17,8 +17,8 @@ env:
   KERNEL_SOURCE: "https://github.com/zttlove/android_kernel_xiaomi_sm8350_miyume.git"
   KERNEL_BRANCH: "fox-boot-clean"
 
-  CLANG_SOURCE: "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-18.04.tar.xz"
-  CLANG_BRANCH: ""
+  CLANG_SOURCE: "https://github.com/AICP/prebuilts_clang_host_linux-x86.git"
+  CLANG_BRANCH: "master"
 
   GCC_GNU: false
   GCC_64_SOURCE: "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9.git"
@@ -515,7 +515,7 @@ jobs:
             - SUSFS 隐藏文件系统免补丁
             - NonGKI 通用免解boot补丁
             - Osm0sis Anykernel3 官方卡刷格式
-            - Clang 20 最新编译
+            - Clang 12 编译
           files: ${{ env.PACK_NAME }}
           draft: false
           prerelease: false
