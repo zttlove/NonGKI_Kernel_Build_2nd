@@ -35,7 +35,6 @@ env:
   KERNELSU_AUTO_GET: "true"
   KERNELSU_AUTO_FORK: "resukisu"
 
-  # 源码自带 SUSFS 2.1.0，启用 SUSFS 和错误修补
   SUSFS_ENABLE: "true"
   SUSFS_FIXED: "true"
 
@@ -133,7 +132,6 @@ jobs:
           # 4. 用纯 awk 精确定位 vfs_fstat 函数体、查找 return 并插入钩子
           echo "=== 开始定位并注入 vfs_fstat 钩子 ==="
           awk '
-            # 保存当前行原始内容（避免后续 gsub 修改 $0）
             { line = $0 }
 
             # 匹配 vfs_fstat 函数定义（支持 int/static int/long vfs_fstat）
