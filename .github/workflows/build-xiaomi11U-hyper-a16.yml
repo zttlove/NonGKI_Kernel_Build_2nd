@@ -100,6 +100,28 @@ jobs:
 
       - name: ⚙️ Get neccssary tools
         uses: ./.github/workflows/build-ready
+      
+      - name: 🩹 Restore SUSFS headers
+        working-directory: device_kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p include/linux
+
+          echo "=== 从源码仓库恢复 SUSFS 头文件 ==="
+          curl -L --fail --retry 3 \
+            -o include/linux/susfs.h \
+            "https://raw.githubusercontent.com/MiYume0721/android_kernel_xiaomi_sm8350_miyume/main/include/linux/susfs.h"
+
+          curl -L --fail --retry 3 \
+            -o include/linux/susfs_def.h \
+            "https://raw.githubusercontent.com/MiYume0721/android_kernel_xiaomi_sm8350_miyume/main/include/linux/susfs_def.h"
+
+          echo ""
+          echo "=== 验证 ==="
+          ls -la include/linux/susfs.h include/linux/susfs_def.h
+          grep "SUSFS_VERSION" include/linux/susfs.h
+          grep -c "TIF_PROC_NO_SU\|AS_FLAGS_SUS" include/linux/susfs_def.h || echo 0
 
       - name: 🔧 Setup Clang to clang-custom
         shell: bash
