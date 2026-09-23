@@ -26,8 +26,8 @@ env:
   GCC_32_SOURCE: "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9.git"
   GCC_32_BRANCH: "android12L-release"
 
-  # ============ 修改点 1：指定 defconfig 来源 ============
-  DEFCONFIG_SOURCE: "https://raw.githubusercontent.com/zttlove/NonGKI_Kernel_Build_2nd/mainline/scripts/star_defconfig"
+  # ============ 修改点 1：禁用自动拉取，防止 build-ready 报错 ============
+  DEFCONFIG_SOURCE: ""
   DEFCONFIG_NAME: "star_defconfig"
   DEFCONFIG_ORIGIN_IMAGE: ""
   DEFCONFIG_FROM_BOOT: false
@@ -101,9 +101,7 @@ jobs:
       - name: ⌛️ Compilation environment preparation
         uses: ./.github/workflows/build-env
 
-      - name: ⚙️ Get neccssary tools
-        uses: ./.github/workflows/build-ready
-
+      # ============ 修改点 2：把克隆源码提到最前面 ============
       - name: 🔧 Manually clone kernel source
         shell: bash
         run: |
@@ -119,7 +117,7 @@ jobs:
           ls include/linux/susfs.h
           grep "SUSFS_VERSION" include/linux/susfs.h
 
-      # ============ 修改点 2：新增覆盖 star_defconfig 步骤 ============
+      # ============ 修改点 3：手动下载并覆盖 star_defconfig ============
       - name: 🔄 Override star_defconfig from NonGKI_Kernel_Build_2nd
         working-directory: device_kernel
         shell: bash
@@ -133,7 +131,7 @@ jobs:
           # 下载并覆盖
           curl -L --fail --retry 3 --retry-delay 5 \
             -o arch/arm64/configs/star_defconfig \
-            "${{ env.DEFCONFIG_SOURCE }}"
+            "https://raw.githubusercontent.com/zttlove/NonGKI_Kernel_Build_2nd/mainline/scripts/star_defconfig"
           
           # 验证下载结果
           if [ ! -s arch/arm64/configs/star_defconfig ]; then
@@ -146,6 +144,10 @@ jobs:
           head -5 arch/arm64/configs/star_defconfig
           echo "=== 检查 LOCALVERSION ==="
           grep "CONFIG_LOCALVERSION" arch/arm64/configs/star_defconfig || true
+
+      # ============ 修改点 4：此时再获取工具（DEFCONFIG 已就位） ============
+      - name: ⚙️ Get neccssary tools
+        uses: ./.github/workflows/build-ready
 
       - name: 🔍 Diagnose KernelSU submodule
         working-directory: device_kernel
