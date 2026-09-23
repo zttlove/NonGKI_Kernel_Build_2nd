@@ -101,6 +101,11 @@ jobs:
       - name: ⚙️ Get neccssary tools
         uses: ./.github/workflows/build-ready
 
+      - name: ⚙️ Install Coccinelle
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y coccinelle
+
       - name: ⚙️ Ensure Manual Hook and apply patches
         working-directory: device_kernel
         shell: bash
@@ -115,15 +120,14 @@ jobs:
             echo "[*] CONFIG_KSU_MANUAL_HOOK=y already present"
           fi
 
-          # 2. 克隆并应用官方推荐的语义补丁
+          # 2. 克隆并应用语义补丁
           PATCH_DIR="/tmp/kernelsu-coccinelle"
           rm -rf "$PATCH_DIR"
           git clone --depth=1 https://github.com/devnoname120/kernelsu-coccinelle.git "$PATCH_DIR"
-          cd "$PATCH_DIR"
           
-          # 执行补丁脚本，自动将 Manual Hook 代码注入到内核源码
-          bash setup.sh "$GITHUB_WORKSPACE/device_kernel" || {
-            echo "[-] 自动补丁应用失败，尝试手动应用..."
+          cd "$PATCH_DIR/classic-hooks"
+          ./apply.sh "$GITHUB_WORKSPACE/device_kernel" || {
+            echo "[-] 自动补丁应用失败"
             exit 1
           }
           echo "[+] 手动 Hook 补丁应用完成"
