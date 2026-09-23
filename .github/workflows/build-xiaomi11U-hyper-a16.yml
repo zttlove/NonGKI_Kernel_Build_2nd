@@ -119,6 +119,7 @@ jobs:
           # 2. clean_hook.sh 会碰的所有 .c 文件
           FILES="
             fs/proc/task_mmu.c
+            fs/namespace.c
             kernel/kallsyms.c
             kernel/sys.c
             kernel/reboot.c
