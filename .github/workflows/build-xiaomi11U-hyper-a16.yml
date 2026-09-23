@@ -100,7 +100,7 @@ jobs:
       - name: ⚙️ Get neccssary tools
         uses: ./.github/workflows/build-ready
 
-      - name: ⚙️ Ensure Manual Hook and inject newfstat hook
+      - name: ⚙️ Ensure Manual Hook and inject stat hooks
         working-directory: device_kernel
         shell: bash
         run: |
@@ -123,14 +123,13 @@ jobs:
             echo "[*] #include <linux/ksu.h> already present"
           fi
 
-          # 3. 检查是否已经注入
-          if grep -q "ksu_handle_newfstat_ret" "$STAT_FILE"; then
-            echo "[*] ksu_handle_newfstat_ret hook already present"
-            exit 0
-          fi
+          # 3. 检查两个钩子的当前状态
+          echo "=== 注入前检查 ==="
+          grep -c "ksu_handle_stat" "$STAT_FILE" || true
+          grep -c "ksu_handle_newfstat_ret" "$STAT_FILE" || true
 
-          # 4. 在 SYSCALL_DEFINE2(newfstat, ...) 中注入钩子
-          echo "=== 开始定位并注入 newfstat 钩子 ==="
+          # 4. 用 awk 注入缺失的钩子
+          echo "=== 开始注入 stat 相关钩子 ==="
           awk '
             { line = $0 }
 
@@ -153,27 +152,30 @@ jobs:
               }
             }
 
-            # 在函数体内查找第一个 return error; 语句
-            in_func && started && !inserted && line ~ /return[ \t]+error;/ {
-              hook_line = NR
-              inserted = 1
-              print "[*] 找到 return error; 语句，行号: " NR > "/dev/stderr"
+            # 在 cp_new_stat 调用之前插入 ksu_handle_stat
+            in_func && started && !stat_inserted && line ~ /cp_new_stat\(/ {
+              print "\t#ifdef CONFIG_KSU_MANUAL_HOOK"
+              print "\tksu_handle_stat(&fd, &statbuf);"
+              print "\t#endif"
+              stat_inserted = 1
+              print "[*] 已插入 ksu_handle_stat，行号: " NR > "/dev/stderr"
             }
 
-            # 输出：在 return 行之前插入钩子
-            {
-              if (NR == hook_line) {
-                print "\t#ifdef CONFIG_KSU_MANUAL_HOOK"
-                print "\tksu_handle_newfstat_ret(&fd, &statbuf);"
-                print "\t#endif"
-              }
-              print line
+            # 在 return error; 之前插入 ksu_handle_newfstat_ret
+            in_func && started && !newfstat_inserted && line ~ /return[ \t]+error;/ {
+              print "\t#ifdef CONFIG_KSU_MANUAL_HOOK"
+              print "\tksu_handle_newfstat_ret(&fd, &statbuf);"
+              print "\t#endif"
+              newfstat_inserted = 1
+              print "[*] 已插入 ksu_handle_newfstat_ret，行号: " NR > "/dev/stderr"
             }
+
+            { print line }
           ' "$STAT_FILE" > "${STAT_FILE}.tmp"
 
-          # 5. 如果钩子未插入，打印 newfstat 函数体便于诊断
-          if ! grep -q "ksu_handle_newfstat_ret" "${STAT_FILE}.tmp"; then
-            echo "[-] 钩子未成功插入，输出 newfstat 函数体用于诊断："
+          # 5. 如果注入失败，打印 newfstat 函数体
+          if ! grep -q "ksu_handle_stat" "${STAT_FILE}.tmp"; then
+            echo "[-] ksu_handle_stat 未成功插入，输出 newfstat 函数体用于诊断："
             awk '
               { line = $0 }
               line ~ /SYSCALL_DEFINE2\(newfstat,/ && !in_func {
@@ -196,8 +198,9 @@ jobs:
           mv "${STAT_FILE}.tmp" "$STAT_FILE"
 
           # 6. 验证注入结果
-          echo "=== 验证 newfstat 钩子注入 ==="
-          grep -n -B5 -A5 "ksu_handle_newfstat_ret" "$STAT_FILE"
+          echo "=== 验证注入结果 ==="
+          grep -n -B2 -A2 "ksu_handle_stat" "$STAT_FILE" || true
+          grep -n -B2 -A2 "ksu_handle_newfstat_ret" "$STAT_FILE" || true
 
       - name: 🔧 Setup Clang to clang-custom
         shell: bash
@@ -221,6 +224,7 @@ jobs:
           echo "=== KSU hook 检查 ==="
           grep -c "ksu_handle_setresuid" kernel/sys.c || echo 0
           grep -c "ksu_handle_sys_read" fs/read_write.c || echo 0
+          grep -c "ksu_handle_stat" fs/stat.c || echo 0
           grep -c "ksu_handle_newfstat_ret" fs/stat.c || echo 0
 
       - name: 🔗 Patch for no-kprobe
