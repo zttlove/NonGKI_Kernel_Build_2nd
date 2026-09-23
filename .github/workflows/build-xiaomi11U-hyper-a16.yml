@@ -35,8 +35,9 @@ env:
   KERNELSU_AUTO_GET: "true"
   KERNELSU_AUTO_FORK: "resukisu"
 
+  # 源码自带 SUSFS 2.1.0，启用 SUSFS 但关闭外部修补
   SUSFS_ENABLE: "true"
-  SUSFS_FIXED: "true"
+  SUSFS_FIXED: "false"
 
   AK3_SOURCE: "https://github.com/osm0sis/Anykernel3.git"
   AK3_BRANCH: "master"
@@ -100,13 +101,13 @@ jobs:
       - name: ⚙️ Get neccssary tools
         uses: ./.github/workflows/build-ready
 
-      - name: ⚙️ Ensure Manual Hook and inject stat hooks
+      - name: ⚙️ Ensure Manual Hook, SUSFS config and inject stat hooks
         working-directory: device_kernel
         shell: bash
         run: |
           set -euo pipefail
 
-          # 1. 确保 defconfig 中启用了 Manual Hook
+          # 1. 确保 defconfig 中启用了 Manual Hook 和 SUSFS
           if ! grep -q "CONFIG_KSU_MANUAL_HOOK=y" arch/arm64/configs/star_defconfig; then
             echo "CONFIG_KSU_MANUAL_HOOK=y" >> arch/arm64/configs/star_defconfig
             echo "[+] Added CONFIG_KSU_MANUAL_HOOK=y to star_defconfig"
@@ -114,7 +115,22 @@ jobs:
             echo "[*] CONFIG_KSU_MANUAL_HOOK=y already present"
           fi
 
-          # 2. 确保 fs/stat.c 包含必要的头文件
+          if ! grep -q "CONFIG_KSU_SUSFS=y" arch/arm64/configs/star_defconfig; then
+            echo "CONFIG_KSU_SUSFS=y" >> arch/arm64/configs/star_defconfig
+            echo "[+] Added CONFIG_KSU_SUSFS=y to star_defconfig"
+          else
+            echo "[*] CONFIG_KSU_SUSFS=y already present"
+          fi
+
+          # 2. 检查 SUSFS 源码是否存在
+          echo "=== 检查 SUSFS 源码 ==="
+          if [ -f "include/linux/susfs.h" ]; then
+            grep "SUSFS_VERSION" include/linux/susfs.h || true
+          else
+            echo "[-] 警告：include/linux/susfs.h 不存在！源码可能没有 SUSFS 代码。"
+          fi
+
+          # 3. 确保 fs/stat.c 包含必要的头文件
           STAT_FILE="fs/stat.c"
           if ! grep -q "#include <linux/ksu.h>" "$STAT_FILE"; then
             sed -i '1i #include <linux/ksu.h>' "$STAT_FILE"
@@ -123,17 +139,15 @@ jobs:
             echo "[*] #include <linux/ksu.h> already present"
           fi
 
-          # 3. 注入 ksu_handle_stat 到 SYSCALL_DEFINE4(newfstatat)
+          # 4. 注入 ksu_handle_stat 到 SYSCALL_DEFINE4(newfstatat)
           if ! grep -q "ksu_handle_stat" "$STAT_FILE"; then
             echo "=== 注入 ksu_handle_stat 到 SYSCALL_DEFINE4(newfstatat) ==="
             awk '
               { line = $0 }
-
               line ~ /SYSCALL_DEFINE4\(newfstatat,/ && !in_func && !done {
                 in_func = 1
                 print "[*] 找到 SYSCALL_DEFINE4(newfstatat)，起始行: " NR > "/dev/stderr"
               }
-
               in_func {
                 tmp = line
                 brace += gsub(/\{/, "", tmp)
@@ -146,7 +160,6 @@ jobs:
                   done = 1
                 }
               }
-
               in_func && started && !inserted && line ~ /vfs_fstatat\(/ {
                 print "\t#ifdef CONFIG_KSU_MANUAL_HOOK"
                 print "\tksu_handle_stat(&dfd, &filename, &flag);"
@@ -154,10 +167,8 @@ jobs:
                 inserted = 1
                 print "[*] 已插入 ksu_handle_stat，行号: " NR > "/dev/stderr"
               }
-
               { print line }
             ' "$STAT_FILE" > "${STAT_FILE}.tmp"
-
             if grep -q "ksu_handle_stat" "${STAT_FILE}.tmp"; then
               mv "${STAT_FILE}.tmp" "$STAT_FILE"
               echo "[+] ksu_handle_stat 注入成功"
@@ -183,17 +194,15 @@ jobs:
             echo "[*] ksu_handle_stat 已存在，跳过"
           fi
 
-          # 4. 注入 ksu_handle_newfstat_ret 到 SYSCALL_DEFINE2(newfstat)
+          # 5. 注入 ksu_handle_newfstat_ret 到 SYSCALL_DEFINE2(newfstat)
           if ! grep -q "ksu_handle_newfstat_ret" "$STAT_FILE"; then
             echo "=== 注入 ksu_handle_newfstat_ret 到 SYSCALL_DEFINE2(newfstat) ==="
             awk '
               { line = $0 }
-
               line ~ /SYSCALL_DEFINE2\(newfstat,/ && !in_func && !done {
                 in_func = 1
                 print "[*] 找到 SYSCALL_DEFINE2(newfstat)，起始行: " NR > "/dev/stderr"
               }
-
               in_func {
                 tmp = line
                 brace += gsub(/\{/, "", tmp)
@@ -206,7 +215,6 @@ jobs:
                   done = 1
                 }
               }
-
               in_func && started && !inserted && line ~ /return[ \t]+error;/ {
                 print "\t#ifdef CONFIG_KSU_MANUAL_HOOK"
                 print "\tksu_handle_newfstat_ret(&fd, &statbuf);"
@@ -214,10 +222,8 @@ jobs:
                 inserted = 1
                 print "[*] 已插入 ksu_handle_newfstat_ret，行号: " NR > "/dev/stderr"
               }
-
               { print line }
             ' "$STAT_FILE" > "${STAT_FILE}.tmp"
-
             if grep -q "ksu_handle_newfstat_ret" "${STAT_FILE}.tmp"; then
               mv "${STAT_FILE}.tmp" "$STAT_FILE"
               echo "[+] ksu_handle_newfstat_ret 注入成功"
@@ -243,17 +249,15 @@ jobs:
             echo "[*] ksu_handle_newfstat_ret 已存在，跳过"
           fi
 
-          # 5. 注入 ksu_handle_fstat64_ret 到 SYSCALL_DEFINE2(fstat64)
+          # 6. 注入 ksu_handle_fstat64_ret 到 SYSCALL_DEFINE2(fstat64)
           if ! grep -q "ksu_handle_fstat64_ret" "$STAT_FILE"; then
             echo "=== 注入 ksu_handle_fstat64_ret 到 SYSCALL_DEFINE2(fstat64) ==="
             awk '
               { line = $0 }
-
               line ~ /SYSCALL_DEFINE2\(fstat64,/ && !in_func && !done {
                 in_func = 1
                 print "[*] 找到 SYSCALL_DEFINE2(fstat64)，起始行: " NR > "/dev/stderr"
               }
-
               in_func {
                 tmp = line
                 brace += gsub(/\{/, "", tmp)
@@ -266,7 +270,6 @@ jobs:
                   done = 1
                 }
               }
-
               in_func && started && !inserted && line ~ /return[ \t]+error;/ {
                 print "\t#ifdef CONFIG_KSU_MANUAL_HOOK"
                 print "\tksu_handle_fstat64_ret(&fd, &statbuf);"
@@ -274,10 +277,8 @@ jobs:
                 inserted = 1
                 print "[*] 已插入 ksu_handle_fstat64_ret，行号: " NR > "/dev/stderr"
               }
-
               { print line }
             ' "$STAT_FILE" > "${STAT_FILE}.tmp"
-
             if grep -q "ksu_handle_fstat64_ret" "${STAT_FILE}.tmp"; then
               mv "${STAT_FILE}.tmp" "$STAT_FILE"
               echo "[+] ksu_handle_fstat64_ret 注入成功"
@@ -303,7 +304,7 @@ jobs:
             echo "[*] ksu_handle_fstat64_ret 已存在，跳过"
           fi
 
-          # 6. 最终验证
+          # 7. 最终验证
           echo "=== 最终验证 ==="
           grep -n -B2 -A2 "ksu_handle_stat" "$STAT_FILE" || true
           grep -n -B2 -A2 "ksu_handle_newfstat_ret" "$STAT_FILE" || true
@@ -334,6 +335,8 @@ jobs:
           grep -c "ksu_handle_stat" fs/stat.c || echo 0
           grep -c "ksu_handle_newfstat_ret" fs/stat.c || echo 0
           grep -c "ksu_handle_fstat64_ret" fs/stat.c || echo 0
+          echo "=== SUSFS 配置检查 ==="
+          grep -c "CONFIG_KSU_SUSFS=y" arch/arm64/configs/star_defconfig || echo 0
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
