@@ -106,7 +106,142 @@ jobs:
         run: |
           set -euo pipefail
 
-          # ... (前面注入 ksu_handle_stat 和 ksu_handle_newfstat_ret 的代码保持不变) ...
+          # 1. 确保 defconfig 中启用了 Manual Hook
+          if ! grep -q "CONFIG_KSU_MANUAL_HOOK=y" arch/arm64/configs/star_defconfig; then
+            echo "CONFIG_KSU_MANUAL_HOOK=y" >> arch/arm64/configs/star_defconfig
+            echo "[+] Added CONFIG_KSU_MANUAL_HOOK=y to star_defconfig"
+          else
+            echo "[*] CONFIG_KSU_MANUAL_HOOK=y already present"
+          fi
+
+          # 2. 确保 fs/stat.c 包含必要的头文件
+          STAT_FILE="fs/stat.c"
+          if ! grep -q "#include <linux/ksu.h>" "$STAT_FILE"; then
+            sed -i '1i #include <linux/ksu.h>' "$STAT_FILE"
+            echo "[+] Added #include <linux/ksu.h> to $STAT_FILE"
+          else
+            echo "[*] #include <linux/ksu.h> already present"
+          fi
+
+          # 3. 注入 ksu_handle_stat 到 SYSCALL_DEFINE4(newfstatat)
+          if ! grep -q "ksu_handle_stat" "$STAT_FILE"; then
+            echo "=== 注入 ksu_handle_stat 到 SYSCALL_DEFINE4(newfstatat) ==="
+            awk '
+              { line = $0 }
+
+              line ~ /SYSCALL_DEFINE4\(newfstatat,/ && !in_func && !done {
+                in_func = 1
+                print "[*] 找到 SYSCALL_DEFINE4(newfstatat)，起始行: " NR > "/dev/stderr"
+              }
+
+              in_func {
+                tmp = line
+                brace += gsub(/\{/, "", tmp)
+                tmp = line
+                brace -= gsub(/\}/, "", tmp)
+                if (!started && brace > 0) started = 1
+                if (started && brace == 0) {
+                  print "[*] newfstatat 函数结束行: " NR > "/dev/stderr"
+                  in_func = 0
+                  done = 1
+                }
+              }
+
+              in_func && started && !inserted && line ~ /vfs_fstatat\(/ {
+                print "\t#ifdef CONFIG_KSU_MANUAL_HOOK"
+                print "\tksu_handle_stat(&dfd, &filename, &flag);"
+                print "\t#endif"
+                inserted = 1
+                print "[*] 已插入 ksu_handle_stat，行号: " NR > "/dev/stderr"
+              }
+
+              { print line }
+            ' "$STAT_FILE" > "${STAT_FILE}.tmp"
+
+            if grep -q "ksu_handle_stat" "${STAT_FILE}.tmp"; then
+              mv "${STAT_FILE}.tmp" "$STAT_FILE"
+              echo "[+] ksu_handle_stat 注入成功"
+            else
+              echo "[-] ksu_handle_stat 注入失败，输出 newfstatat 函数体："
+              awk '
+                { line = $0 }
+                line ~ /SYSCALL_DEFINE4\(newfstatat,/ && !in_func { in_func = 1 }
+                in_func { print NR ": " line }
+                in_func {
+                  tmp = line
+                  brace += gsub(/\{/, "", tmp)
+                  tmp = line
+                  brace -= gsub(/\}/, "", tmp)
+                  if (!started && brace > 0) started = 1
+                  if (started && brace == 0) exit
+                }
+              ' "$STAT_FILE"
+              rm -f "${STAT_FILE}.tmp"
+              exit 1
+            fi
+          else
+            echo "[*] ksu_handle_stat 已存在，跳过"
+          fi
+
+          # 4. 注入 ksu_handle_newfstat_ret 到 SYSCALL_DEFINE2(newfstat)
+          if ! grep -q "ksu_handle_newfstat_ret" "$STAT_FILE"; then
+            echo "=== 注入 ksu_handle_newfstat_ret 到 SYSCALL_DEFINE2(newfstat) ==="
+            awk '
+              { line = $0 }
+
+              line ~ /SYSCALL_DEFINE2\(newfstat,/ && !in_func && !done {
+                in_func = 1
+                print "[*] 找到 SYSCALL_DEFINE2(newfstat)，起始行: " NR > "/dev/stderr"
+              }
+
+              in_func {
+                tmp = line
+                brace += gsub(/\{/, "", tmp)
+                tmp = line
+                brace -= gsub(/\}/, "", tmp)
+                if (!started && brace > 0) started = 1
+                if (started && brace == 0) {
+                  print "[*] newfstat 函数结束行: " NR > "/dev/stderr"
+                  in_func = 0
+                  done = 1
+                }
+              }
+
+              in_func && started && !inserted && line ~ /return[ \t]+error;/ {
+                print "\t#ifdef CONFIG_KSU_MANUAL_HOOK"
+                print "\tksu_handle_newfstat_ret(&fd, &statbuf);"
+                print "\t#endif"
+                inserted = 1
+                print "[*] 已插入 ksu_handle_newfstat_ret，行号: " NR > "/dev/stderr"
+              }
+
+              { print line }
+            ' "$STAT_FILE" > "${STAT_FILE}.tmp"
+
+            if grep -q "ksu_handle_newfstat_ret" "${STAT_FILE}.tmp"; then
+              mv "${STAT_FILE}.tmp" "$STAT_FILE"
+              echo "[+] ksu_handle_newfstat_ret 注入成功"
+            else
+              echo "[-] ksu_handle_newfstat_ret 注入失败，输出 newfstat 函数体："
+              awk '
+                { line = $0 }
+                line ~ /SYSCALL_DEFINE2\(newfstat,/ && !in_func { in_func = 1 }
+                in_func { print NR ": " line }
+                in_func {
+                  tmp = line
+                  brace += gsub(/\{/, "", tmp)
+                  tmp = line
+                  brace -= gsub(/\}/, "", tmp)
+                  if (!started && brace > 0) started = 1
+                  if (started && brace == 0) exit
+                }
+              ' "$STAT_FILE"
+              rm -f "${STAT_FILE}.tmp"
+              exit 1
+            fi
+          else
+            echo "[*] ksu_handle_newfstat_ret 已存在，跳过"
+          fi
 
           # 5. 注入 ksu_handle_fstat64_ret 到 SYSCALL_DEFINE2(fstat64)
           if ! grep -q "ksu_handle_fstat64_ret" "$STAT_FILE"; then
@@ -114,7 +249,6 @@ jobs:
             awk '
               { line = $0 }
 
-              # 匹配 SYSCALL_DEFINE2(fstat64, ...)
               line ~ /SYSCALL_DEFINE2\(fstat64,/ && !in_func && !done {
                 in_func = 1
                 print "[*] 找到 SYSCALL_DEFINE2(fstat64)，起始行: " NR > "/dev/stderr"
@@ -133,7 +267,6 @@ jobs:
                 }
               }
 
-              # 在 return error; 之前插入钩子
               in_func && started && !inserted && line ~ /return[ \t]+error;/ {
                 print "\t#ifdef CONFIG_KSU_MANUAL_HOOK"
                 print "\tksu_handle_fstat64_ret(&fd, &statbuf);"
@@ -200,6 +333,7 @@ jobs:
           grep -c "ksu_handle_sys_read" fs/read_write.c || echo 0
           grep -c "ksu_handle_stat" fs/stat.c || echo 0
           grep -c "ksu_handle_newfstat_ret" fs/stat.c || echo 0
+          grep -c "ksu_handle_fstat64_ret" fs/stat.c || echo 0
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
