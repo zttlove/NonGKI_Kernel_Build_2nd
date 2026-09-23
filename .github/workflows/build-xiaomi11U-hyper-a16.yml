@@ -146,7 +146,22 @@ jobs:
           echo "=== 检查 SUSFS 是否已全部禁用 ==="
           grep "SUSFS" arch/arm64/configs/star_defconfig || echo "✅ 所有 SUSFS 配置已成功移除/禁用"
 
-      # ============ 3. 获取工具 ============
+      # ============ 3. 清理源码中所有 SUSFS 头文件引用（解决当前报错） ============
+      - name: 🧹 Remove missing SUSFS includes
+        working-directory: device_kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "正在扫描并移除对缺失 SUSFS 头文件的引用..."
+          find . -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i \
+            -e '/#include <linux\/susfs\.h>/d' \
+            -e '/#include <linux\/susfs_def\.h>/d' \
+            {} +
+          echo "✅ 已清理所有 SUSFS 头文件引用。"
+          echo "=== 验证是否还有残留引用 ==="
+          grep -r "linux/susfs" . --include="*.c" --include="*.h" | head -20 || echo "✅ 没有残留引用"
+
+      # ============ 4. 获取工具 ============
       - name: ⚙️ Get neccssary tools
         uses: ./.github/workflows/build-ready
 
@@ -209,7 +224,7 @@ jobs:
           "$DEST/bin/ld.lld" --version | head -1
           echo "✅ Clang 已就绪: $DEST/bin"
 
-      # ============ 4. 验证源码完整性（加入容错，避免因为缺少 SUSFS 而报错） ============
+      # ============ 5. 验证源码完整性（加入容错） ============
       - name: 🔎 Verify source completeness
         working-directory: device_kernel
         run: |
