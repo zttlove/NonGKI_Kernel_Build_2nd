@@ -123,21 +123,16 @@ jobs:
             echo "[*] #include <linux/ksu.h> already present"
           fi
 
-          # 3. 检查两个钩子的当前状态
-          echo "=== 注入前检查 ==="
-          grep -c "ksu_handle_stat" "$STAT_FILE" || true
-          grep -c "ksu_handle_newfstat_ret" "$STAT_FILE" || true
-
-          # 4. 注入 ksu_handle_stat 到 vfs_fstatat
+          # 3. 注入 ksu_handle_stat 到 SYSCALL_DEFINE4(newfstatat)
           if ! grep -q "ksu_handle_stat" "$STAT_FILE"; then
-            echo "=== 注入 ksu_handle_stat 到 vfs_fstatat ==="
+            echo "=== 注入 ksu_handle_stat 到 SYSCALL_DEFINE4(newfstatat) ==="
             awk '
               { line = $0 }
 
-              # 匹配 vfs_fstatat 函数定义
-              line ~ /^[ \t]*(static[ \t]+)?int[ \t]+vfs_fstatat[ \t]*\(/ && !in_func {
+              # 匹配 SYSCALL_DEFINE4(newfstatat, ...)
+              line ~ /SYSCALL_DEFINE4\(newfstatat,/ && !in_func && !done {
                 in_func = 1
-                print "[*] 找到 vfs_fstatat 函数，起始行: " NR > "/dev/stderr"
+                print "[*] 找到 SYSCALL_DEFINE4(newfstatat)，起始行: " NR > "/dev/stderr"
               }
 
               in_func {
@@ -147,13 +142,14 @@ jobs:
                 brace -= gsub(/\}/, "", tmp)
                 if (!started && brace > 0) started = 1
                 if (started && brace == 0) {
-                  print "[*] vfs_fstatat 函数结束行: " NR > "/dev/stderr"
+                  print "[*] newfstatat 函数结束行: " NR > "/dev/stderr"
                   in_func = 0
+                  done = 1
                 }
               }
 
-              # 在 lookup_flags 初始化之前插入钩子
-              in_func && started && !inserted && line ~ /unsigned int lookup_flags/ {
+              # 在 vfs_fstatat 调用之前插入 ksu_handle_stat
+              in_func && started && !inserted && line ~ /vfs_fstatat\(/ {
                 print "\t#ifdef CONFIG_KSU_MANUAL_HOOK"
                 print "\tksu_handle_stat(&dfd, &filename, &flag);"
                 print "\t#endif"
@@ -168,10 +164,10 @@ jobs:
               mv "${STAT_FILE}.tmp" "$STAT_FILE"
               echo "[+] ksu_handle_stat 注入成功"
             else
-              echo "[-] ksu_handle_stat 注入失败，输出 vfs_fstatat 函数体："
+              echo "[-] ksu_handle_stat 注入失败，输出 newfstatat 函数体："
               awk '
                 { line = $0 }
-                line ~ /^[ \t]*(static[ \t]+)?int[ \t]+vfs_fstatat[ \t]*\(/ && !in_func { in_func = 1 }
+                line ~ /SYSCALL_DEFINE4\(newfstatat,/ && !in_func { in_func = 1 }
                 in_func { print NR ": " line }
                 in_func {
                   tmp = line
@@ -189,13 +185,12 @@ jobs:
             echo "[*] ksu_handle_stat 已存在，跳过"
           fi
 
-          # 5. 注入 ksu_handle_newfstat_ret 到 SYSCALL_DEFINE2(newfstat)
+          # 4. 注入 ksu_handle_newfstat_ret 到 SYSCALL_DEFINE2(newfstat)
           if ! grep -q "ksu_handle_newfstat_ret" "$STAT_FILE"; then
-            echo "=== 注入 ksu_handle_newfstat_ret 到 newfstat ==="
+            echo "=== 注入 ksu_handle_newfstat_ret 到 SYSCALL_DEFINE2(newfstat) ==="
             awk '
               { line = $0 }
 
-              # 匹配 SYSCALL_DEFINE2(newfstat, ...)
               line ~ /SYSCALL_DEFINE2\(newfstat,/ && !in_func && !done {
                 in_func = 1
                 print "[*] 找到 SYSCALL_DEFINE2(newfstat)，起始行: " NR > "/dev/stderr"
@@ -214,7 +209,6 @@ jobs:
                 }
               }
 
-              # 在 return error; 之前插入钩子
               in_func && started && !inserted && line ~ /return[ \t]+error;/ {
                 print "\t#ifdef CONFIG_KSU_MANUAL_HOOK"
                 print "\tksu_handle_newfstat_ret(&fd, &statbuf);"
@@ -251,7 +245,7 @@ jobs:
             echo "[*] ksu_handle_newfstat_ret 已存在，跳过"
           fi
 
-          # 6. 验证注入结果
+          # 5. 最终验证
           echo "=== 最终验证 ==="
           grep -n -B2 -A2 "ksu_handle_stat" "$STAT_FILE" || true
           grep -n -B2 -A2 "ksu_handle_newfstat_ret" "$STAT_FILE" || true
