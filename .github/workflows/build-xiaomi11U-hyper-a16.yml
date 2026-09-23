@@ -35,9 +35,9 @@ env:
   KERNELSU_AUTO_GET: "true"
   KERNELSU_AUTO_FORK: "resukisu"
 
-  # 源码自带 SUSFS 2.1.0
+  # 源码自带 SUSFS 2.1.0，启用 SUSFS 和错误修补
   SUSFS_ENABLE: "true"
-  SUSFS_FIXED: "false"
+  SUSFS_FIXED: "true"
 
   AK3_SOURCE: "https://github.com/osm0sis/Anykernel3.git"
   AK3_BRANCH: "master"
@@ -77,7 +77,7 @@ env:
   GENERATE_CHIP: "qcom"
 
   BUILD_DEBUGGER: "false"
-  SKIP_PATCH: "true"
+  SKIP_PATCH: "false"
   BUILD_OTHER_CONFIG: "false"
   MERGE_CONFIG_FILES: "vendor/venus_QGKI.config,vendor/xiaomi_QGKI.config"
   FREE_MORE_SPACE: "false"
@@ -101,37 +101,17 @@ jobs:
       - name: ⚙️ Get neccssary tools
         uses: ./.github/workflows/build-ready
 
-      - name: ⚙️ Install Coccinelle
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y coccinelle
-
-      - name: ⚙️ Ensure Manual Hook and apply patches
+      - name: ⚙️ Ensure Manual Hook in defconfig
         working-directory: device_kernel
         shell: bash
         run: |
           set -euo pipefail
-
-          # 1. 确保 defconfig 中启用了 Manual Hook
           if ! grep -q "CONFIG_KSU_MANUAL_HOOK=y" arch/arm64/configs/star_defconfig; then
             echo "CONFIG_KSU_MANUAL_HOOK=y" >> arch/arm64/configs/star_defconfig
             echo "[+] Added CONFIG_KSU_MANUAL_HOOK=y to star_defconfig"
           else
             echo "[*] CONFIG_KSU_MANUAL_HOOK=y already present"
           fi
-
-          # 2. 克隆并应用语义补丁
-          PATCH_DIR="/tmp/kernelsu-coccinelle"
-          rm -rf "$PATCH_DIR"
-          git clone --depth=1 https://github.com/devnoname120/kernelsu-coccinelle.git "$PATCH_DIR"
-          
-          cd "$PATCH_DIR/classic-hooks"
-          ./apply.sh "$GITHUB_WORKSPACE/device_kernel" || {
-            echo "[-] 自动补丁应用失败"
-            exit 1
-          }
-          echo "[+] 手动 Hook 补丁应用完成"
-          cd "$GITHUB_WORKSPACE/device_kernel"
 
       - name: 🔧 Setup Clang to clang-custom
         shell: bash
@@ -155,8 +135,6 @@ jobs:
           echo "=== KSU hook 检查 ==="
           grep -c "ksu_handle_setresuid" kernel/sys.c || echo 0
           grep -c "ksu_handle_sys_read" fs/read_write.c || echo 0
-          grep -c "ksu_handle_stat" fs/stat.c || echo 0
-          grep -c "ksu_handle_newfstat_ret" fs/stat.c || echo 0
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
