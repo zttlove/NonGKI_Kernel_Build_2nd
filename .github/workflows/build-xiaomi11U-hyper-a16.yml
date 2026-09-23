@@ -35,9 +35,9 @@ env:
   KERNELSU_AUTO_GET: "true"
   KERNELSU_AUTO_FORK: "resukisu"
 
-  # 源码自带 SUSFS 2.1.0，启用 SUSFS 但关闭外部修补
+  # 源码无 SUSFS，必须通过补丁流程注入
   SUSFS_ENABLE: "true"
-  SUSFS_FIXED: "false"
+  SUSFS_FIXED: "true"
 
   AK3_SOURCE: "https://github.com/osm0sis/Anykernel3.git"
   AK3_BRANCH: "master"
@@ -101,13 +101,13 @@ jobs:
       - name: ⚙️ Get neccssary tools
         uses: ./.github/workflows/build-ready
 
-      - name: ⚙️ Ensure Manual Hook, SUSFS config and inject stat hooks
+      - name: 🩹 Ensure Manual Hook in defconfig
         working-directory: device_kernel
         shell: bash
         run: |
           set -euo pipefail
 
-          # 1. 确保 defconfig 中启用了 Manual Hook 和 SUSFS
+          # 确保 Manual Hook 启用（SUSFS 补丁不会自动处理此配置）
           if ! grep -q "CONFIG_KSU_MANUAL_HOOK=y" arch/arm64/configs/star_defconfig; then
             echo "CONFIG_KSU_MANUAL_HOOK=y" >> arch/arm64/configs/star_defconfig
             echo "[+] Added CONFIG_KSU_MANUAL_HOOK=y to star_defconfig"
@@ -115,200 +115,12 @@ jobs:
             echo "[*] CONFIG_KSU_MANUAL_HOOK=y already present"
           fi
 
-          if ! grep -q "CONFIG_KSU_SUSFS=y" arch/arm64/configs/star_defconfig; then
-            echo "CONFIG_KSU_SUSFS=y" >> arch/arm64/configs/star_defconfig
-            echo "[+] Added CONFIG_KSU_SUSFS=y to star_defconfig"
-          else
-            echo "[*] CONFIG_KSU_SUSFS=y already present"
-          fi
-
-          # 2. 检查 SUSFS 源码是否存在
-          echo "=== 检查 SUSFS 源码 ==="
-          if [ -f "include/linux/susfs.h" ]; then
-            grep "SUSFS_VERSION" include/linux/susfs.h || true
-          else
-            echo "[-] 警告：include/linux/susfs.h 不存在！源码可能没有 SUSFS 代码。"
-          fi
-
-          # 3. 确保 fs/stat.c 包含必要的头文件
-          STAT_FILE="fs/stat.c"
-          if ! grep -q "#include <linux/ksu.h>" "$STAT_FILE"; then
-            sed -i '1i #include <linux/ksu.h>' "$STAT_FILE"
-            echo "[+] Added #include <linux/ksu.h> to $STAT_FILE"
-          else
-            echo "[*] #include <linux/ksu.h> already present"
-          fi
-
-          # 4. 注入 ksu_handle_stat 到 SYSCALL_DEFINE4(newfstatat)
-          if ! grep -q "ksu_handle_stat" "$STAT_FILE"; then
-            echo "=== 注入 ksu_handle_stat 到 SYSCALL_DEFINE4(newfstatat) ==="
-            awk '
-              { line = $0 }
-              line ~ /SYSCALL_DEFINE4\(newfstatat,/ && !in_func && !done {
-                in_func = 1
-                print "[*] 找到 SYSCALL_DEFINE4(newfstatat)，起始行: " NR > "/dev/stderr"
-              }
-              in_func {
-                tmp = line
-                brace += gsub(/\{/, "", tmp)
-                tmp = line
-                brace -= gsub(/\}/, "", tmp)
-                if (!started && brace > 0) started = 1
-                if (started && brace == 0) {
-                  print "[*] newfstatat 函数结束行: " NR > "/dev/stderr"
-                  in_func = 0
-                  done = 1
-                }
-              }
-              in_func && started && !inserted && line ~ /vfs_fstatat\(/ {
-                print "\t#ifdef CONFIG_KSU_MANUAL_HOOK"
-                print "\tksu_handle_stat(&dfd, &filename, &flag);"
-                print "\t#endif"
-                inserted = 1
-                print "[*] 已插入 ksu_handle_stat，行号: " NR > "/dev/stderr"
-              }
-              { print line }
-            ' "$STAT_FILE" > "${STAT_FILE}.tmp"
-            if grep -q "ksu_handle_stat" "${STAT_FILE}.tmp"; then
-              mv "${STAT_FILE}.tmp" "$STAT_FILE"
-              echo "[+] ksu_handle_stat 注入成功"
-            else
-              echo "[-] ksu_handle_stat 注入失败，输出 newfstatat 函数体："
-              awk '
-                { line = $0 }
-                line ~ /SYSCALL_DEFINE4\(newfstatat,/ && !in_func { in_func = 1 }
-                in_func { print NR ": " line }
-                in_func {
-                  tmp = line
-                  brace += gsub(/\{/, "", tmp)
-                  tmp = line
-                  brace -= gsub(/\}/, "", tmp)
-                  if (!started && brace > 0) started = 1
-                  if (started && brace == 0) exit
-                }
-              ' "$STAT_FILE"
-              rm -f "${STAT_FILE}.tmp"
-              exit 1
-            fi
-          else
-            echo "[*] ksu_handle_stat 已存在，跳过"
-          fi
-
-          # 5. 注入 ksu_handle_newfstat_ret 到 SYSCALL_DEFINE2(newfstat)
-          if ! grep -q "ksu_handle_newfstat_ret" "$STAT_FILE"; then
-            echo "=== 注入 ksu_handle_newfstat_ret 到 SYSCALL_DEFINE2(newfstat) ==="
-            awk '
-              { line = $0 }
-              line ~ /SYSCALL_DEFINE2\(newfstat,/ && !in_func && !done {
-                in_func = 1
-                print "[*] 找到 SYSCALL_DEFINE2(newfstat)，起始行: " NR > "/dev/stderr"
-              }
-              in_func {
-                tmp = line
-                brace += gsub(/\{/, "", tmp)
-                tmp = line
-                brace -= gsub(/\}/, "", tmp)
-                if (!started && brace > 0) started = 1
-                if (started && brace == 0) {
-                  print "[*] newfstat 函数结束行: " NR > "/dev/stderr"
-                  in_func = 0
-                  done = 1
-                }
-              }
-              in_func && started && !inserted && line ~ /return[ \t]+error;/ {
-                print "\t#ifdef CONFIG_KSU_MANUAL_HOOK"
-                print "\tksu_handle_newfstat_ret(&fd, &statbuf);"
-                print "\t#endif"
-                inserted = 1
-                print "[*] 已插入 ksu_handle_newfstat_ret，行号: " NR > "/dev/stderr"
-              }
-              { print line }
-            ' "$STAT_FILE" > "${STAT_FILE}.tmp"
-            if grep -q "ksu_handle_newfstat_ret" "${STAT_FILE}.tmp"; then
-              mv "${STAT_FILE}.tmp" "$STAT_FILE"
-              echo "[+] ksu_handle_newfstat_ret 注入成功"
-            else
-              echo "[-] ksu_handle_newfstat_ret 注入失败，输出 newfstat 函数体："
-              awk '
-                { line = $0 }
-                line ~ /SYSCALL_DEFINE2\(newfstat,/ && !in_func { in_func = 1 }
-                in_func { print NR ": " line }
-                in_func {
-                  tmp = line
-                  brace += gsub(/\{/, "", tmp)
-                  tmp = line
-                  brace -= gsub(/\}/, "", tmp)
-                  if (!started && brace > 0) started = 1
-                  if (started && brace == 0) exit
-                }
-              ' "$STAT_FILE"
-              rm -f "${STAT_FILE}.tmp"
-              exit 1
-            fi
-          else
-            echo "[*] ksu_handle_newfstat_ret 已存在，跳过"
-          fi
-
-          # 6. 注入 ksu_handle_fstat64_ret 到 SYSCALL_DEFINE2(fstat64)
-          if ! grep -q "ksu_handle_fstat64_ret" "$STAT_FILE"; then
-            echo "=== 注入 ksu_handle_fstat64_ret 到 SYSCALL_DEFINE2(fstat64) ==="
-            awk '
-              { line = $0 }
-              line ~ /SYSCALL_DEFINE2\(fstat64,/ && !in_func && !done {
-                in_func = 1
-                print "[*] 找到 SYSCALL_DEFINE2(fstat64)，起始行: " NR > "/dev/stderr"
-              }
-              in_func {
-                tmp = line
-                brace += gsub(/\{/, "", tmp)
-                tmp = line
-                brace -= gsub(/\}/, "", tmp)
-                if (!started && brace > 0) started = 1
-                if (started && brace == 0) {
-                  print "[*] fstat64 函数结束行: " NR > "/dev/stderr"
-                  in_func = 0
-                  done = 1
-                }
-              }
-              in_func && started && !inserted && line ~ /return[ \t]+error;/ {
-                print "\t#ifdef CONFIG_KSU_MANUAL_HOOK"
-                print "\tksu_handle_fstat64_ret(&fd, &statbuf);"
-                print "\t#endif"
-                inserted = 1
-                print "[*] 已插入 ksu_handle_fstat64_ret，行号: " NR > "/dev/stderr"
-              }
-              { print line }
-            ' "$STAT_FILE" > "${STAT_FILE}.tmp"
-            if grep -q "ksu_handle_fstat64_ret" "${STAT_FILE}.tmp"; then
-              mv "${STAT_FILE}.tmp" "$STAT_FILE"
-              echo "[+] ksu_handle_fstat64_ret 注入成功"
-            else
-              echo "[-] ksu_handle_fstat64_ret 注入失败，输出 fstat64 函数体："
-              awk '
-                { line = $0 }
-                line ~ /SYSCALL_DEFINE2\(fstat64,/ && !in_func { in_func = 1 }
-                in_func { print NR ": " line }
-                in_func {
-                  tmp = line
-                  brace += gsub(/\{/, "", tmp)
-                  tmp = line
-                  brace -= gsub(/\}/, "", tmp)
-                  if (!started && brace > 0) started = 1
-                  if (started && brace == 0) exit
-                }
-              ' "$STAT_FILE"
-              rm -f "${STAT_FILE}.tmp"
-              exit 1
-            fi
-          else
-            echo "[*] ksu_handle_fstat64_ret 已存在，跳过"
-          fi
-
-          # 7. 最终验证
-          echo "=== 最终验证 ==="
-          grep -n -B2 -A2 "ksu_handle_stat" "$STAT_FILE" || true
-          grep -n -B2 -A2 "ksu_handle_newfstat_ret" "$STAT_FILE" || true
-          grep -n -B2 -A2 "ksu_handle_fstat64_ret" "$STAT_FILE" || true
+          # 检查并输出 SUSFS 补丁前的源码状态
+          echo "=== 补丁前状态检查 ==="
+          echo "--- fs/stat.c 中现有 ksu_ 相关行 ---"
+          grep -n "ksu_" fs/stat.c || echo "(无)"
+          echo "--- 现有 SUSFS 头文件 ---"
+          ls -la include/linux/susfs*.h 2>/dev/null || echo "(无 SUSFS 头文件，将由补丁注入)"
 
       - name: 🔧 Setup Clang to clang-custom
         shell: bash
@@ -320,29 +132,42 @@ jobs:
           "$DEST/bin/clang" --version | head -1
           echo "✅ Clang 已就绪: $DEST/bin"
 
-      - name: 🔎 Verify source completeness
+      - name: 🔎 Verify source completeness (补丁前)
         working-directory: device_kernel
         run: |
-          echo "=== SUSFS 版本 ==="
-          grep "SUSFS_VERSION" include/linux/susfs.h || echo "(无)"
           echo "=== ReSukiSU 版本 ==="
           grep -rn "KSU_VERSION" drivers/kernelsu/ 2>/dev/null | head -3 || echo "(无)"
           echo "=== star_defconfig 存在 ==="
           ls -la arch/arm64/configs/star_defconfig 2>/dev/null || echo "(无)"
-          echo "=== KSU hook 检查 ==="
-          grep -c "ksu_handle_setresuid" kernel/sys.c || echo 0
-          grep -c "ksu_handle_sys_read" fs/read_write.c || echo 0
-          grep -c "ksu_handle_stat" fs/stat.c || echo 0
-          grep -c "ksu_handle_newfstat_ret" fs/stat.c || echo 0
-          grep -c "ksu_handle_fstat64_ret" fs/stat.c || echo 0
-          echo "=== SUSFS 配置检查 ==="
-          grep -c "CONFIG_KSU_SUSFS=y" arch/arm64/configs/star_defconfig || echo 0
+          echo "=== defconfig 中 KSU 相关配置 ==="
+          grep -n "KSU" arch/arm64/configs/star_defconfig || echo "(无)"
+          echo "=== defconfig 中 SUSFS 相关配置 ==="
+          grep -n "SUSFS" arch/arm64/configs/star_defconfig || echo "(无)"
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
 
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
+
+      - name: ✅ Verify SUSFS injection result
+        working-directory: device_kernel
+        if: always()
+        shell: bash
+        run: |
+          echo "=== 编译后验证 ==="
+          echo "--- SUSFS 头文件 ---"
+          ls -la include/linux/susfs*.h 2>/dev/null || echo "[-] SUSFS 头文件仍不存在"
+          echo "--- SUSFS 版本 ---"
+          grep "SUSFS_VERSION" include/linux/susfs.h 2>/dev/null || echo "[-] 无法读取 SUSFS 版本"
+          echo "--- fs/stat.c 中 SUSFS/ksu 钩子 ---"
+          grep -n "ksu_handle_stat\|ksu_handle_newfstat_ret\|ksu_handle_fstat64_ret" fs/stat.c 2>/dev/null || echo "[-] 未找到 ReSukiSU 钩子"
+          echo "--- 编译输出中的 SUSFS 关键行 ---"
+          if [ -f out/.config ]; then
+            grep -i "SUSFS" out/.config || echo "(out/.config 中无 SUSFS 配置)"
+          else
+            echo "(out/.config 不存在，编译可能未生成)"
+          fi
 
       - name: 📦 Package Anykernel3 Flash Zip
         if: env.PACK_METHOD == 'AnyKernel3'
@@ -386,7 +211,7 @@ jobs:
           name: Xiaomi 11 Ultra Star HyperOS A16 NonGKI Kernel
           body: |
             ## Xiaomi 11 Ultra Star HyperOS A16
-            - ReSukiSU + SuSFS 2.1.0（源码自带）
+            - ReSukiSU + SuSFS 2.1.0（补丁注入）
           files: ${{ env.PACK_NAME }}
           draft: false
           prerelease: false
