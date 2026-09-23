@@ -99,6 +99,32 @@ jobs:
 
       - name: ⚙️ Get neccssary tools
         uses: ./.github/workflows/build-ready
+      
+      - name: 🔍 Diagnose fs/stat.c function structure
+        working-directory: device_kernel
+        run: |
+          echo "===== fs/stat.c 中所有函数定义 ====="
+          grep -nE '^[a-zA-Z_].*\(.*\)[[:space:]]*$' fs/stat.c | head -80
+
+          echo ""
+          echo "===== fs/stat.c 中含 fstat 的行 ====="
+          grep -n "fstat" fs/stat.c
+
+          echo ""
+          echo "===== fs/stat.c 中含 getattr 的行 ====="
+          grep -n "getattr" fs/stat.c
+
+          echo ""
+          echo "===== fs/stat.c 中含 ksu_ 的行 ====="
+          grep -n "ksu_" fs/stat.c || echo "(无)"
+
+          echo ""
+          echo "===== ReSukiSU 检查脚本里关于 newfstat 的判定逻辑 ====="
+          grep -n -B5 -A5 "newfstat" KernelSU/kernel/tools/manual_hook_check.mk || true
+
+          echo ""
+          echo "===== ReSukiSU 源码里 ksu_handle_newfstat_ret 的定义位置 ====="
+          grep -rn "ksu_handle_newfstat_ret" KernelSU/ | head -20 || true
 
       - name: ⚙️ Ensure Manual Hook and inject vfs_fstat hook
         working-directory: device_kernel
