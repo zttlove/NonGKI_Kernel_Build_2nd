@@ -26,7 +26,7 @@ env:
   GCC_32_SOURCE: "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9.git"
   GCC_32_BRANCH: "android12L-release"
 
-  # ============ 修改点 1：禁用自动拉取，防止 build-ready 报错 ============
+  # ============ 禁用自动拉取，防止 build-ready 报错 ============
   DEFCONFIG_SOURCE: ""
   DEFCONFIG_NAME: "star_defconfig"
   DEFCONFIG_ORIGIN_IMAGE: ""
@@ -38,7 +38,7 @@ env:
   KERNELSU_AUTO_GET: "true"
   KERNELSU_AUTO_FORK: "resukisu"
 
-  # 源码自带 SUSFS 2.1.0，不再打补丁
+  # 源码自带 SUSFS，启用它
   SUSFS_ENABLE: "true"
   SUSFS_FIXED: "false"
 
@@ -101,7 +101,7 @@ jobs:
       - name: ⌛️ Compilation environment preparation
         uses: ./.github/workflows/build-env
 
-      # ============ 修改点 2：把克隆源码提到最前面 ============
+      # ============ 1. 先手动克隆源码 ============
       - name: 🔧 Manually clone kernel source
         shell: bash
         run: |
@@ -117,7 +117,7 @@ jobs:
           ls include/linux/susfs.h
           grep "SUSFS_VERSION" include/linux/susfs.h
 
-      # ============ 修改点 3：手动下载并覆盖 star_defconfig ============
+      # ============ 2. 手动覆盖 star_defconfig ============
       - name: 🔄 Override star_defconfig from NonGKI_Kernel_Build_2nd
         working-directory: device_kernel
         shell: bash
@@ -125,15 +125,12 @@ jobs:
           set -euo pipefail
           echo "正在从指定仓库下载并覆盖 star_defconfig..."
           
-          # 确保目录存在
           mkdir -p arch/arm64/configs
           
-          # 下载并覆盖
           curl -L --fail --retry 3 --retry-delay 5 \
             -o arch/arm64/configs/star_defconfig \
             "https://raw.githubusercontent.com/zttlove/NonGKI_Kernel_Build_2nd/mainline/scripts/star_defconfig"
           
-          # 验证下载结果
           if [ ! -s arch/arm64/configs/star_defconfig ]; then
             echo "::error::❌ 覆盖失败，目标文件为空或不存在"
             exit 1
@@ -145,7 +142,7 @@ jobs:
           echo "=== 检查 LOCALVERSION ==="
           grep "CONFIG_LOCALVERSION" arch/arm64/configs/star_defconfig || true
 
-      # ============ 修改点 4：此时再获取工具（DEFCONFIG 已就位） ============
+      # ============ 3. 获取工具（此时 DEFCONFIG 已就位） ============
       - name: ⚙️ Get neccssary tools
         uses: ./.github/workflows/build-ready
 
@@ -190,140 +187,7 @@ jobs:
           echo "=== 验证 drivers/kernelsu/Kconfig 存在 ==="
           ls -la drivers/kernelsu/Kconfig
 
-      - name: 🔧 Convert susfs proc_no_su helpers to non-inline symbols
-        working-directory: device_kernel
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          python3 - <<'PYEOF'
-          import re
-
-          funcs = [
-            "susfs_is_current_proc_no_su",
-            "susfs_set_current_proc_no_su",
-            "susfs_clear_current_proc_no_su",
-            "susfs_is_current_proc_umounted_for_zygote_next",
-            "susfs_set_current_proc_umounted_for_zygote_next",
-            "susfs_clear_current_proc_umounted_for_zygote_next",
-          ]
-
-          # 1. 从 susfs_def.h 删掉 static inline 定义
-          path = "include/linux/susfs_def.h"
-          with open(path) as f:
-              content = f.read()
-
-          removed = 0
-          for fn in funcs:
-              pat = r'static\s+inline\s+[A-Za-z_]+\s+' + fn + r'\s*\(void\)\s*\{[^}]*\}\s*\n'
-              content, n = re.subn(pat, '', content)
-              removed += n
-
-          with open(path, "w") as f:
-              f.write(content)
-          print(f"[+] susfs_def.h: removed {removed} static inline defs")
-
-          # 2. 在 susfs.h 里加 extern 声明
-          path = "include/linux/susfs.h"
-          with open(path) as f:
-              content = f.read()
-
-          decl = (
-            "\n/* proc_no_su helpers (non-inline) */\n"
-            "bool susfs_is_current_proc_no_su(void);\n"
-            "void susfs_set_current_proc_no_su(void);\n"
-            "void susfs_clear_current_proc_no_su(void);\n"
-            "bool susfs_is_current_proc_umounted_for_zygote_next(void);\n"
-            "void susfs_set_current_proc_umounted_for_zygote_next(void);\n"
-            "void susfs_clear_current_proc_umounted_for_zygote_next(void);\n"
-          )
-
-          if "susfs_is_current_proc_no_su" not in content:
-              idx = content.rfind("#endif")
-              content = content[:idx] + decl + "\n" + content[idx:]
-              with open(path, "w") as f:
-                  f.write(content)
-              print("[+] susfs.h: added extern decls")
-
-          # 3. 在 fs/susfs.c 顶部确保 include <linux/susfs_def.h>
-          path = "fs/susfs.c"
-          with open(path) as f:
-              content = f.read()
-
-          if "#include <linux/susfs_def.h>" not in content:
-              m = re.search(r'(#include\s+<[^>]+>\n)', content)
-              if m:
-                  insert_pos = m.end()
-                  content = content[:insert_pos] + "#include <linux/susfs_def.h>\n" + content[insert_pos:]
-                  with open(path, "w") as f:
-                      f.write(content)
-                  print("[+] fs/susfs.c: added #include <linux/susfs_def.h>")
-              else:
-                  print("::error::fs/susfs.c 找不到 #include 位置")
-                  raise SystemExit(1)
-
-          # 4. 追加实现
-          with open(path) as f:
-              content = f.read()
-
-          impl = (
-            "\n/* proc_no_su helpers (non-inline) */\n"
-            "bool susfs_is_current_proc_no_su(void) {\n"
-            "\treturn (likely(test_thread_flag(TIF_PROC_NO_SU)));\n"
-            "}\n\n"
-            "void susfs_set_current_proc_no_su(void) {\n"
-            "\tset_thread_flag(TIF_PROC_NO_SU);\n"
-            "}\n\n"
-            "void susfs_clear_current_proc_no_su(void) {\n"
-            "\tclear_thread_flag(TIF_PROC_NO_SU);\n"
-            "}\n\n"
-            "bool susfs_is_current_proc_umounted_for_zygote_next(void) {\n"
-            "\treturn (likely(test_thread_flag(TIF_PROC_UMOUNTED_FOR_ZYGOTE_NEXT)));\n"
-            "}\n\n"
-            "void susfs_set_current_proc_umounted_for_zygote_next(void) {\n"
-            "\tset_thread_flag(TIF_PROC_UMOUNTED_FOR_ZYGOTE_NEXT);\n"
-            "}\n\n"
-            "void susfs_clear_current_proc_umounted_for_zygote_next(void) {\n"
-            "\tclear_thread_flag(TIF_PROC_UMOUNTED_FOR_ZYGOTE_NEXT);\n"
-            "}\n"
-          )
-
-          if "susfs_is_current_proc_no_su(void) {" not in content:
-              content = content.rstrip() + "\n" + impl
-              with open(path, "w") as f:
-                  f.write(content)
-              print("[+] fs/susfs.c: added non-inline impls")
-
-          # 5. 兜底：确保 TIF_PROC_* 宏存在
-          path = "include/linux/susfs_def.h"
-          with open(path) as f:
-              content = f.read()
-
-          if "TIF_PROC_NO_SU" not in content:
-              macros = (
-                "\n/* proc_no_su TIF macros */\n"
-                "#ifndef TIF_PROC_UMOUNTED\n"
-                "#define TIF_PROC_UMOUNTED 33\n"
-                "#endif\n"
-                "#ifndef TIF_PROC_NO_SU\n"
-                "#define TIF_PROC_NO_SU 34\n"
-                "#endif\n"
-                "#ifndef TIF_PROC_UMOUNTED_FOR_ZYGOTE_NEXT\n"
-                "#define TIF_PROC_UMOUNTED_FOR_ZYGOTE_NEXT 35\n"
-                "#endif\n"
-              )
-              idx = content.rfind("#endif")
-              content = content[:idx] + macros + "\n" + content[idx:]
-              with open(path, "w") as f:
-                  f.write(content)
-              print("[+] susfs_def.h: added TIF_PROC_* macros")
-          PYEOF
-
-          echo ""
-          echo "=== 验证 ==="
-          grep -n "linux/susfs_def.h" fs/susfs.c || echo "(无)"
-          grep -c "^bool susfs_is_current_proc_no_su" fs/susfs.c || echo 0
-          grep -c "TIF_PROC_NO_SU\|TIF_PROC_UMOUNTED_FOR_ZYGOTE_NEXT" include/linux/susfs_def.h || echo 0
+      # ============ 注意：已删除出错的 Convert susfs 步骤 ============
 
       - name: 🔧 Setup Clang to clang-custom
         shell: bash
