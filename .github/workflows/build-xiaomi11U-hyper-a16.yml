@@ -38,7 +38,7 @@ env:
   KERNELSU_AUTO_GET: "true"
   KERNELSU_AUTO_FORK: "resukisu"
 
-  # ============ 核心修改：禁用 SUSFS，源码不具备此功能 ============
+  # ============ 禁用 SUSFS，源码不具备此功能 ============
   SUSFS_ENABLE: "false"
   SUSFS_FIXED: "false"
 
@@ -101,7 +101,7 @@ jobs:
       - name: ⌛️ Compilation environment preparation
         uses: ./.github/workflows/build-env
 
-      # ============ 1. 先手动克隆源码 ============
+      # ============ 1. 手动克隆源码 ============
       - name: 🔧 Manually clone kernel source
         shell: bash
         run: |
@@ -114,9 +114,8 @@ jobs:
             "$DEST"
           cd "$DEST"
           echo "=== 源码已 clone ==="
-          ls include/linux/susfs.h 2>/dev/null || echo "⚠️ 警告：源码中没有 SUSFS 头文件"
 
-      # ============ 2. 手动覆盖 star_defconfig，并强制剔除 SUSFS 配置 ============
+      # ============ 2. 下载并清理 star_defconfig（仅修改配置文本，安全） ============
       - name: 🔄 Override star_defconfig and strip SUSFS
         working-directory: device_kernel
         shell: bash
@@ -137,7 +136,7 @@ jobs:
           
           echo "✅ star_defconfig 下载完成，正在剔除 SUSFS 相关配置..."
           
-          # 使用 sed 将所有 SUSFS 配置项强制改为禁用状态
+          # 使用 sed 将所有 SUSFS 配置项强制改为禁用状态（这是安全的，只改配置文本）
           sed -i 's/^CONFIG_KSU_SUSFS=y/# CONFIG_KSU_SUSFS is not set/g' arch/arm64/configs/star_defconfig
           sed -i 's/^CONFIG_KSU_SUSFS_/# CONFIG_KSU_SUSFS_/g' arch/arm64/configs/star_defconfig
           
@@ -146,20 +145,30 @@ jobs:
           echo "=== 检查 SUSFS 是否已全部禁用 ==="
           grep "SUSFS" arch/arm64/configs/star_defconfig || echo "✅ 所有 SUSFS 配置已成功移除/禁用"
 
-      # ============ 3. 清理源码中所有 SUSFS 头文件引用（解决当前报错） ============
-      - name: 🧹 Remove missing SUSFS includes
+      # ============ 3. 创建缺失的 SUSFS 桩头文件（不破坏源码结构，解决报错） ============
+      - name: 🩹 Create stub SUSFS headers
         working-directory: device_kernel
         shell: bash
         run: |
           set -euo pipefail
-          echo "正在扫描并移除对缺失 SUSFS 头文件的引用..."
-          find . -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i \
-            -e '/#include <linux\/susfs\.h>/d' \
-            -e '/#include <linux\/susfs_def\.h>/d' \
-            {} +
-          echo "✅ 已清理所有 SUSFS 头文件引用。"
-          echo "=== 验证是否还有残留引用 ==="
-          grep -r "linux/susfs" . --include="*.c" --include="*.h" | head -20 || echo "✅ 没有残留引用"
+          echo "正在创建空的 SUSFS 头文件以绕过编译检查..."
+          
+          mkdir -p include/linux
+          
+          # 如果文件不存在，才创建空的桩文件，避免覆盖可能存在的真实文件
+          if [ ! -f include/linux/susfs.h ]; then
+            touch include/linux/susfs.h
+            echo "✅ 已创建空的 include/linux/susfs.h"
+          else
+            echo "ℹ️ include/linux/susfs.h 已存在，跳过"
+          fi
+          
+          if [ ! -f include/linux/susfs_def.h ]; then
+            touch include/linux/susfs_def.h
+            echo "✅ 已创建空的 include/linux/susfs_def.h"
+          else
+            echo "ℹ️ include/linux/susfs_def.h 已存在，跳过"
+          fi
 
       # ============ 4. 获取工具 ============
       - name: ⚙️ Get neccssary tools
@@ -229,17 +238,14 @@ jobs:
         working-directory: device_kernel
         run: |
           echo "=== SUSFS 版本（如果存在） ==="
-          if [ -f include/linux/susfs.h ]; then
-            grep "SUSFS_VERSION" include/linux/susfs.h
+          if [ -s include/linux/susfs.h ]; then
+            grep "SUSFS_VERSION" include/linux/susfs.h || echo "(空文件，无版本信息)"
           else
-            echo "⚠️ 未找到 SUSFS 头文件，跳过 SUSFS 检查（符合预期）"
+            echo "⚠️ SUSFS 头文件为空或不存在，跳过检查（符合预期）"
           fi
 
           echo "=== ReSukiSU 版本 ==="
           grep -rn "KSU_VERSION" drivers/kernelsu/ 2>/dev/null | head -3 || echo "(未找到版本信息)"
-
-          echo "=== fs/susfs.c 存在？ ==="
-          ls -la fs/susfs.c 2>/dev/null || echo "(不存在，属于正常现象)"
 
           echo "=== star_defconfig 存在 ==="
           ls -la arch/arm64/configs/star_defconfig 2>/dev/null || echo "(不在 arch/arm64/configs/)"
