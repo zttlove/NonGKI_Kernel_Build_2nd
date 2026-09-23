@@ -35,7 +35,7 @@ env:
   KERNELSU_AUTO_GET: "true"
   KERNELSU_AUTO_FORK: "resukisu"
 
-  # 源码自带 SUSFS 2.1.0，不需要任何处理
+  # 源码自带 SUSFS 2.1.0
   SUSFS_ENABLE: "false"
   SUSFS_FIXED: "false"
 
@@ -48,7 +48,7 @@ env:
   ROM_TEXT: "Xiaomi11U-HyperA16"
 
   PYTHON_VERSION: "3"
-  PACK_METHOD: "AnyKernel3"
+  PACK_METHOD: "AnyKernel3"        # ← 大写 K
   PACK_KMODULES: "false"
 
   KERNELSU_METHOD: "shell"
@@ -101,43 +101,13 @@ jobs:
       - name: ⚙️ Get neccssary tools
         uses: ./.github/workflows/build-ready
 
-      - name: 🔧 Manually clone kernel source
-        shell: bash
-        run: |
-          set -euo pipefail
-          DEST="$GITHUB_WORKSPACE/device_kernel"
-          rm -rf "$DEST"
-          git clone "${{ env.KERNEL_SOURCE }}" \
-            -b "${{ env.KERNEL_BRANCH }}" \
-            --depth=1 \
-            "$DEST"
-          cd "$DEST"
-          echo "=== 源码已 clone ==="
-          ls include/linux/susfs.h
-          grep "SUSFS_VERSION" include/linux/susfs.h
-
-      - name: 📦 Init KernelSU submodule (keep tree-locked commit)
-        working-directory: device_kernel
-        shell: bash
-        run: |
-          set -euo pipefail
-          git submodule update --init --recursive
-          cd KernelSU
-          echo "=== KernelSU HEAD（tree 锁定的 commit） ==="
-          git log -1 --oneline
-          git rev-parse HEAD
-          cd ..
-          ls -la drivers/kernelsu/Kconfig
-
       - name: 🔧 Setup Clang to clang-custom
         shell: bash
         run: |
           set -euo pipefail
           DEST="$GITHUB_WORKSPACE/clang-custom"
           rm -rf "$DEST"
-          git clone --depth=1 \
-            https://github.com/thenoppy12/clang-r416183b.git \
-            "$DEST"
+          git clone --depth=1 https://github.com/thenoppy12/clang-r416183b.git "$DEST"
           "$DEST/bin/clang" --version | head -1
           echo "✅ Clang 已就绪: $DEST/bin"
 
@@ -145,15 +115,12 @@ jobs:
         working-directory: device_kernel
         run: |
           echo "=== SUSFS 版本 ==="
-          grep "SUSFS_VERSION" include/linux/susfs.h
-
+          grep "SUSFS_VERSION" include/linux/susfs.h || echo "(无)"
           echo "=== ReSukiSU 版本 ==="
-          grep -rn "KSU_VERSION" drivers/kernelsu/ 2>/dev/null | head -3
-
+          grep -rn "KSU_VERSION" drivers/kernelsu/ 2>/dev/null | head -3 || echo "(无)"
           echo "=== star_defconfig 存在 ==="
-          ls -la arch/arm64/configs/star_defconfig 2>/dev/null || echo "(不在 arch/arm64/configs/)"
-
-          echo "=== KSU hook 是否已内置 ==="
+          ls -la arch/arm64/configs/star_defconfig 2>/dev/null || echo "(无)"
+          echo "=== KSU hook ==="
           grep -c "ksu_handle_setresuid" kernel/sys.c || echo 0
           grep -c "ksu_handle_sys_read" fs/read_write.c || echo 0
 
@@ -164,7 +131,7 @@ jobs:
         uses: ./.github/workflows/build-process
 
       - name: 📦 Package Anykernel3 Flash Zip
-        if: env.PACK_METHOD == 'Anykernel3'
+        if: env.PACK_METHOD == 'AnyKernel3'
         shell: bash
         run: |
           set -euo pipefail
@@ -174,23 +141,17 @@ jobs:
           IMG_PATH="${KERNEL_DIR}/out/arch/arm64/boot/Image"
           cd "${KERNEL_DIR}"
 
-          if [[ ! -f "${IMG_PATH}" ]]; then
-            echo "::error::❌ 编译失败，未找到 Image"
-            exit 1
-          fi
+          [[ ! -f "${IMG_PATH}" ]] && { echo "::error::❌ 未找到 Image"; exit 1; }
 
-          rm -rf "${TMP_DIR}"
-          mkdir -p "${TMP_DIR}"
+          rm -rf "${TMP_DIR}"; mkdir -p "${TMP_DIR}"
 
-          AK3_DIR="${KERNEL_DIR}/Anykernel3"
-          if [[ -d "${AK3_DIR}" && -f "${AK3_DIR}/anykernel.sh" ]]; then
-            sed -i \
-              -e 's/^name=.*/name="Star-HyperA16-NonGKI-Kernel"/' \
-              -e 's/^do\.devicecheck=.*/do.devicecheck=0/' \
-              -e 's/^IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=1/' \
-              -e 's/^BLOCK=.*/BLOCK=boot/' \
-              "${AK3_DIR}/anykernel.sh"
-          fi
+          AK3_DIR="${KERNEL_DIR}/AnyKernel3"
+          [[ -d "${AK3_DIR}" && -f "${AK3_DIR}/anykernel.sh" ]] && \
+            sed -i -e 's/^name=.*/name="Star-HyperA16-NonGKI-Kernel"/' \
+                   -e 's/^do\.devicecheck=.*/do.devicecheck=0/' \
+                   -e 's/^IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=1/' \
+                   -e 's/^BLOCK=.*/BLOCK=boot/' \
+                   "${AK3_DIR}/anykernel.sh"
 
           cp -v "${IMG_PATH}" "${TMP_DIR}/Image"
           [[ -d "${AK3_DIR}" ]] && cp -rp "${AK3_DIR}"/* "${TMP_DIR}/"
@@ -204,7 +165,7 @@ jobs:
           echo "PACK_NAME=${FINAL_ZIP}" >> "${GITHUB_ENV}"
 
       - name: 🚀 Auto Upload To Github Release
-        if: env.PACK_METHOD == 'Anykernel3'
+        if: env.PACK_METHOD == 'AnyKernel3'
         uses: softprops/action-gh-release@v3
         with:
           tag_name: Star-HyperA16-Kernel-${{ github.run_number }}
@@ -212,8 +173,6 @@ jobs:
           body: |
             ## Xiaomi 11 Ultra Star HyperOS A16
             - ReSukiSU + SuSFS 2.1.0（源码自带）
-            - NonGKI 免解 boot
-            - Anykernel3
           files: ${{ env.PACK_NAME }}
           draft: false
           prerelease: false
