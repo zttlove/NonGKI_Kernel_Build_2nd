@@ -26,7 +26,7 @@ env:
   GCC_32_SOURCE: "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9.git"
   GCC_32_BRANCH: "android12L-release"
 
-  # ============ 禁用自动拉取，防止 build-ready 报错 ============
+  # 禁用自动拉取，防止 build-ready 报错
   DEFCONFIG_SOURCE: ""
   DEFCONFIG_NAME: "star_defconfig"
   DEFCONFIG_ORIGIN_IMAGE: ""
@@ -38,7 +38,7 @@ env:
   KERNELSU_AUTO_GET: "true"
   KERNELSU_AUTO_FORK: "resukisu"
 
-  # ============ 禁用 SUSFS，源码不具备此功能 ============
+  # 禁用 SUSFS，源码不具备此功能
   SUSFS_ENABLE: "false"
   SUSFS_FIXED: "false"
 
@@ -136,7 +136,7 @@ jobs:
           
           echo "✅ star_defconfig 下载完成，正在剔除 SUSFS 相关配置..."
           
-          # 使用 sed 将所有 SUSFS 配置项强制改为禁用状态（这是安全的，只改配置文本）
+          # 使用 sed 将所有 SUSFS 配置项强制改为禁用状态
           sed -i 's/^CONFIG_KSU_SUSFS=y/# CONFIG_KSU_SUSFS is not set/g' arch/arm64/configs/star_defconfig
           sed -i 's/^CONFIG_KSU_SUSFS_/# CONFIG_KSU_SUSFS_/g' arch/arm64/configs/star_defconfig
           
@@ -145,32 +145,7 @@ jobs:
           echo "=== 检查 SUSFS 是否已全部禁用 ==="
           grep "SUSFS" arch/arm64/configs/star_defconfig || echo "✅ 所有 SUSFS 配置已成功移除/禁用"
 
-      # ============ 3. 创建缺失的 SUSFS 桩头文件（不破坏源码结构，解决报错） ============
-      - name: 🩹 Create stub SUSFS headers
-        working-directory: device_kernel
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "正在创建空的 SUSFS 头文件以绕过编译检查..."
-          
-          mkdir -p include/linux
-          
-          # 如果文件不存在，才创建空的桩文件，避免覆盖可能存在的真实文件
-          if [ ! -f include/linux/susfs.h ]; then
-            touch include/linux/susfs.h
-            echo "✅ 已创建空的 include/linux/susfs.h"
-          else
-            echo "ℹ️ include/linux/susfs.h 已存在，跳过"
-          fi
-          
-          if [ ! -f include/linux/susfs_def.h ]; then
-            touch include/linux/susfs_def.h
-            echo "✅ 已创建空的 include/linux/susfs_def.h"
-          else
-            echo "ℹ️ include/linux/susfs_def.h 已存在，跳过"
-          fi
-
-      # ============ 4. 获取工具 ============
+      # ============ 3. 获取工具 ============
       - name: ⚙️ Get neccssary tools
         uses: ./.github/workflows/build-ready
 
@@ -233,6 +208,30 @@ jobs:
           "$DEST/bin/ld.lld" --version | head -1
           echo "✅ Clang 已就绪: $DEST/bin"
 
+      # ============ 4. 创建 SUSFS 桩文件（放在 build-ready 之后，防止被覆盖） ============
+      - name: 🩹 Create stub SUSFS headers (after build-ready)
+        working-directory: device_kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "正在创建空的 SUSFS 头文件以绕过编译检查..."
+          
+          mkdir -p include/linux
+          
+          if [ ! -f include/linux/susfs.h ]; then
+            touch include/linux/susfs.h
+            echo "✅ 已创建空的 include/linux/susfs.h"
+          else
+            echo "ℹ️ include/linux/susfs.h 已存在，跳过"
+          fi
+          
+          if [ ! -f include/linux/susfs_def.h ]; then
+            touch include/linux/susfs_def.h
+            echo "✅ 已创建空的 include/linux/susfs_def.h"
+          else
+            echo "ℹ️ include/linux/susfs_def.h 已存在，跳过"
+          fi
+
       # ============ 5. 验证源码完整性（加入容错） ============
       - name: 🔎 Verify source completeness
         working-directory: device_kernel
@@ -286,7 +285,7 @@ jobs:
       - name: 🚀 Build Process
         uses: ./.github/workflows/build-process
 
-      # 打包Anykernel3 仅Image内核专用
+      # 打包 Anykernel3
       - name: 📦 Package Anykernel3 Flash Zip
         if: env.PACK_METHOD == 'Anykernel3'
         shell: bash
