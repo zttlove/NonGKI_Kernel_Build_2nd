@@ -48,7 +48,7 @@ env:
   ROM_TEXT: "Xiaomi11U-HyperA16"
 
   PYTHON_VERSION: "3"
-  PACK_METHOD: "AnyKernel3"        # ← 大写 K
+  PACK_METHOD: "AnyKernel3"
   PACK_KMODULES: "false"
 
   KERNELSU_METHOD: "shell"
@@ -118,52 +118,35 @@ jobs:
           # 2. 确保 fs/stat.c 包含必要的头文件
           STAT_FILE="fs/stat.c"
           if ! grep -q "#include <linux/ksu.h>" "$STAT_FILE"; then
-            # 在文件开头添加 include（保留原有的 #include 顺序）
             sed -i '1i #include <linux/ksu.h>' "$STAT_FILE"
             echo "[+] Added #include <linux/ksu.h> to $STAT_FILE"
+          else
+            echo "[*] #include <linux/ksu.h> already present"
           fi
 
-          # 3. 注入 ksu_handle_newfstat_ret 钩子
+          # 3. 用 awk 注入 ksu_handle_newfstat_ret 钩子（避免 heredoc 问题）
           if grep -q "ksu_handle_newfstat_ret" "$STAT_FILE"; then
             echo "[*] ksu_handle_newfstat_ret hook already present in $STAT_FILE"
           else
-            python3 - <<'PYEOF'
-            import re
-            import sys
-
-            file_path = 'fs/stat.c'
-            with open(file_path, 'r') as f:
-            content = f.read()
-
-            # 尝试匹配 SYSCALL_DEFINE4(newfstatat, ...) 函数体
-            # 模式：找到函数定义，并在其内部的 return error; 前插入钩子
-            pattern = r'(SYSCALL_DEFINE4\(newfstatat,.*?\)\s*\{.*?)(\n\s*return\s+error;)'
-            match = re.search(pattern, content, re.DOTALL)
-
-            if not match:
-            print("[-] 无法通过第一种模式找到 newfstatat 函数，尝试备用模式...")
-            # 备用模式：匹配到 copy_to_user 之前
-            pattern = r'(SYSCALL_DEFINE4\(newfstatat,.*?\)\s*\{.*?)(\n\s*if\s*\(copy_to_user)'
-            match = re.search(pattern, content, re.DOTALL)
-            if not match:
-            print("[-] 仍然无法找到 newfstatat 函数，请手动检查 fs/stat.c")
-            sys.exit(1)
-            insert_code = '\n#ifdef CONFIG_KSU_MANUAL_HOOK\n    ksu_handle_newfstat_ret(&error, statbuf);\n#endif\n'
-            new_content = content[:match.start(2)] + insert_code + content[match.start(2):]
-          else:
-            insert_code = '\n#ifdef CONFIG_KSU_MANUAL_HOOK\n    ksu_handle_newfstat_ret(&error, statbuf);\n#endif\n'
-            new_content = content[:match.start(2)] + insert_code + content[match.start(2):]
-
-            with open(file_path, 'w') as f:
-            f.write(new_content)
-
-            print("[+] 成功将 ksu_handle_newfstat_ret 钩子注入 fs/stat.c")
-            PYEOF
-            fi
+            awk '
+              /SYSCALL_DEFINE4\(newfstatat,/ { in_func = 1 }
+              in_func && /copy_to_user/ && !done {
+                print "    #ifdef CONFIG_KSU_MANUAL_HOOK"
+                print "    ksu_handle_newfstat_ret(&error, statbuf);"
+                print "    #endif"
+                done = 1
+              }
+              { print }
+            ' "$STAT_FILE" > "${STAT_FILE}.tmp" && mv "${STAT_FILE}.tmp" "$STAT_FILE"
+            echo "[+] Injected ksu_handle_newfstat_ret hook into $STAT_FILE"
+          fi
 
           # 4. 验证注入结果
           echo "=== 验证 newfstatat 钩子注入 ==="
-          grep -n -A2 -B2 "ksu_handle_newfstat_ret" fs/stat.c || echo "[-] Hook not found!"
+          grep -n -B2 -A2 "ksu_handle_newfstat_ret" fs/stat.c || {
+            echo "[-] Hook not found!"
+            exit 1
+          }
 
       - name: 🔧 Setup Clang to clang-custom
         shell: bash
