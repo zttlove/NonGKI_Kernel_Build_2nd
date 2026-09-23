@@ -99,34 +99,8 @@ jobs:
 
       - name: ⚙️ Get neccssary tools
         uses: ./.github/workflows/build-ready
-      
-      - name: 🔍 Diagnose fs/stat.c function structure
-        working-directory: device_kernel
-        run: |
-          echo "===== fs/stat.c 中所有函数定义 ====="
-          grep -nE '^[a-zA-Z_].*\(.*\)[[:space:]]*$' fs/stat.c | head -80
 
-          echo ""
-          echo "===== fs/stat.c 中含 fstat 的行 ====="
-          grep -n "fstat" fs/stat.c
-
-          echo ""
-          echo "===== fs/stat.c 中含 getattr 的行 ====="
-          grep -n "getattr" fs/stat.c
-
-          echo ""
-          echo "===== fs/stat.c 中含 ksu_ 的行 ====="
-          grep -n "ksu_" fs/stat.c || echo "(无)"
-
-          echo ""
-          echo "===== ReSukiSU 检查脚本里关于 newfstat 的判定逻辑 ====="
-          grep -n -B5 -A5 "newfstat" KernelSU/kernel/tools/manual_hook_check.mk || true
-
-          echo ""
-          echo "===== ReSukiSU 源码里 ksu_handle_newfstat_ret 的定义位置 ====="
-          grep -rn "ksu_handle_newfstat_ret" KernelSU/ | head -20 || true
-
-      - name: ⚙️ Ensure Manual Hook and inject vfs_fstat hook
+      - name: ⚙️ Ensure Manual Hook and inject newfstat hook
         working-directory: device_kernel
         shell: bash
         run: |
@@ -155,19 +129,17 @@ jobs:
             exit 0
           fi
 
-          # 4. 用纯 awk 精确定位 vfs_fstat 函数体、查找 return 并插入钩子
-          echo "=== 开始定位并注入 vfs_fstat 钩子 ==="
+          # 4. 在 SYSCALL_DEFINE2(newfstat, ...) 中注入钩子
+          echo "=== 开始定位并注入 newfstat 钩子 ==="
           awk '
             { line = $0 }
 
-            # 匹配 vfs_fstat 函数定义（支持 int/static int/long vfs_fstat）
-            line ~ /^[ \t]*(static[ \t]+)?(int|long)[ \t]+vfs_fstat[ \t]*\(/ && !in_func && !done {
+            # 匹配 SYSCALL_DEFINE2(newfstat, ...)
+            line ~ /SYSCALL_DEFINE2\(newfstat,/ && !in_func && !done {
               in_func = 1
-              start = NR
-              print "[*] 找到 vfs_fstat 函数定义，起始行: " NR > "/dev/stderr"
+              print "[*] 找到 SYSCALL_DEFINE2(newfstat) 定义，起始行: " NR > "/dev/stderr"
             }
 
-            # 统计大括号，确定函数体范围
             in_func {
               tmp = line
               brace += gsub(/\{/, "", tmp)
@@ -175,38 +147,37 @@ jobs:
               brace -= gsub(/\}/, "", tmp)
               if (!started && brace > 0) started = 1
               if (started && brace == 0) {
-                print "[*] vfs_fstat 函数结束行: " NR > "/dev/stderr"
+                print "[*] newfstat 函数结束行: " NR > "/dev/stderr"
                 in_func = 0
                 done = 1
               }
             }
 
-            # 在函数体内查找第一个 return 语句
-            in_func && started && !inserted && line ~ /return[ \t]+[a-zA-Z_]/ {
+            # 在函数体内查找第一个 return error; 语句
+            in_func && started && !inserted && line ~ /return[ \t]+error;/ {
               hook_line = NR
               inserted = 1
-              print "[*] 找到 return 语句，行号: " NR > "/dev/stderr"
+              print "[*] 找到 return error; 语句，行号: " NR > "/dev/stderr"
             }
 
             # 输出：在 return 行之前插入钩子
             {
               if (NR == hook_line) {
                 print "\t#ifdef CONFIG_KSU_MANUAL_HOOK"
-                print "\tksu_handle_newfstat_ret(&error, stat);"
+                print "\tksu_handle_newfstat_ret(&fd, &statbuf);"
                 print "\t#endif"
               }
               print line
             }
           ' "$STAT_FILE" > "${STAT_FILE}.tmp"
 
-          # 5. 如果钩子未插入，打印 vfs_fstat 函数体便于诊断
+          # 5. 如果钩子未插入，打印 newfstat 函数体便于诊断
           if ! grep -q "ksu_handle_newfstat_ret" "${STAT_FILE}.tmp"; then
-            echo "[-] 钩子未成功插入，输出 vfs_fstat 函数体用于诊断："
+            echo "[-] 钩子未成功插入，输出 newfstat 函数体用于诊断："
             awk '
               { line = $0 }
-              line ~ /^[ \t]*(static[ \t]+)?(int|long)[ \t]+vfs_fstat[ \t]*\(/ && !in_func {
+              line ~ /SYSCALL_DEFINE2\(newfstat,/ && !in_func {
                 in_func = 1
-                start = NR
               }
               in_func { print NR ": " line }
               in_func {
@@ -225,7 +196,7 @@ jobs:
           mv "${STAT_FILE}.tmp" "$STAT_FILE"
 
           # 6. 验证注入结果
-          echo "=== 验证 vfs_fstat 钩子注入 ==="
+          echo "=== 验证 newfstat 钩子注入 ==="
           grep -n -B5 -A5 "ksu_handle_newfstat_ret" "$STAT_FILE"
 
       - name: 🔧 Setup Clang to clang-custom
