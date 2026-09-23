@@ -4,6 +4,7 @@ runs:
   using: 'composite'
   steps:
       - name: Get Kernel
+        if: ${{ !exists('device_kernel') }}   # <--- 新增这一行
         shell: bash
         run: |
           cd $GITHUB_WORKSPACE
