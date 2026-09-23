@@ -101,7 +101,7 @@ jobs:
       - name: ⚙️ Get neccssary tools
         uses: ./.github/workflows/build-ready
       
-      - name: 🩹 Restore SUSFS headers and kallsyms.c
+      - name: 🩹 Restore SUSFS headers and hook files
         working-directory: device_kernel
         shell: bash
         run: |
@@ -110,18 +110,44 @@ jobs:
 
           SRC="https://raw.githubusercontent.com/MiYume0721/android_kernel_xiaomi_sm8350_miyume/main"
 
-          echo "=== 恢复 SUSFS 头文件 ==="
-          curl -L --fail --retry 3 -o include/linux/susfs.h "$SRC/include/linux/susfs.h"
-          curl -L --fail --retry 3 -o include/linux/susfs_def.h "$SRC/include/linux/susfs_def.h"
+          # 1. SUSFS 头文件
+          for f in include/linux/susfs.h include/linux/susfs_def.h; do
+            curl -L --fail --retry 3 -o "$f" "$SRC/$f"
+            echo "[+] restored $f"
+          done
 
-          echo "=== 恢复 kernel/kallsyms.c ==="
-          curl -L --fail --retry 3 -o kernel/kallsyms.c "$SRC/kernel/kallsyms.c"
+          # 2. clean_hook.sh 会碰的所有 .c 文件
+          FILES="
+            kernel/kallsyms.c
+            kernel/sys.c
+            kernel/reboot.c
+            fs/stat.c
+            fs/exec.c
+            fs/namei.c
+            fs/readdir.c
+            fs/open.c
+            fs/read_write.c
+            fs/notify/fdinfo.c
+            drivers/input/input.c
+            security/security.c
+            security/selinux/hooks.c
+            security/selinux/ss/services.c
+          "
+
+          for f in $FILES; do
+            mkdir -p "$(dirname "$f")"
+            curl -L --fail --retry 3 -o "$f" "$SRC/$f"
+            echo "[+] restored $f"
+          done
 
           echo ""
           echo "=== 验证 ==="
-          ls -la include/linux/susfs.h include/linux/susfs_def.h kernel/kallsyms.c
+          ls -la include/linux/susfs.h include/linux/susfs_def.h
           grep "SUSFS_VERSION" include/linux/susfs.h
           grep -c "struct kallsym_iter" kernel/kallsyms.c || echo 0
+          grep -c "show_mark_fhandle" fs/notify/fdinfo.c || echo 0
+          grep -c "ksu_handle_setresuid" kernel/sys.c || echo 0
+          grep -c "ksu_handle_sys_read" fs/read_write.c || echo 0
 
       - name: 🔧 Setup Clang to clang-custom
         shell: bash
