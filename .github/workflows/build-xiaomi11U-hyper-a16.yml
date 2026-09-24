@@ -35,8 +35,7 @@ env:
   KERNELSU_AUTO_GET: "true"
   KERNELSU_AUTO_FORK: "resukisu"
 
-  # 禁用项目自带的 SUSFS 补丁流程
-  SUSFS_ENABLE: "false"
+  SUSFS_ENABLE: "true"
   SUSFS_FIXED: "false"
 
   AK3_SOURCE: "https://github.com/osm0sis/Anykernel3.git"
@@ -101,70 +100,72 @@ jobs:
       - name: ⚙️ Get neccssary tools
         uses: ./.github/workflows/build-ready
 
-      - name: 🩹 Manually apply SUSFS patch and inject ReSukiSU hooks
+      - name: 🔍 Confirm actual source repo and branch
+        working-directory: device_kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "===== 实际拉取的远程仓库 ====="
+          git remote -v
+          echo ""
+          echo "===== 当前分支与最近提交 ====="
+          git branch -a | head -30
+          git log -1 --oneline
+          echo ""
+          echo "===== 检查 SUSFS 文件是否存在 ====="
+          ls -la fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h 2>/dev/null || echo "(当前源码树中没有这些文件)"
+          echo ""
+          echo "===== 全仓库搜索 SUSFS_VERSION ====="
+          grep -rn "SUSFS_VERSION" --include="*.h" --include="*.c" . 2>/dev/null | head -10 || echo "(无)"
+          echo ""
+          echo "===== defconfig 中 KSU/SUSFS 相关配置 ====="
+          grep -n "KSU\|SUSFS" arch/arm64/configs/star_defconfig 2>/dev/null || echo "(无)"
+
+      - name: 🩹 Inject ReSukiSU manual hooks (only if needed)
         working-directory: device_kernel
         shell: bash
         run: |
           set -euo pipefail
 
-          # ========== 1. 手动应用 SUSFS 补丁 ==========
-          echo "=== 克隆补丁仓库 ==="
-          git clone --depth=1 -b mi_kernel \
-            https://github.com/JackA1ltman/NonGKI_Kernel_Patches.git /tmp/patches || {
-            echo "[-] 无法克隆补丁仓库"
-            exit 1
-          }
-
-          echo "=== 补丁仓库文件列表 ==="
-          find /tmp/patches -maxdepth 3 -type f | head -50
-
-          # 尝试应用 SUSFS 补丁（根据你的内核版本 5.4 选择对应补丁）
-          # 常见路径：/tmp/patches/susfs_patch_to_5.4.patch
-          SUSFS_PATCH=$(find /tmp/patches -name "*susfs*5.4*.patch" -o -name "*susfs_patch*.patch" | head -1)
-          if [ -z "$SUSFS_PATCH" ]; then
-            echo "[-] 未找到 SUSFS 补丁文件，请检查仓库结构"
-            exit 1
+          # 判断源码是否真的有 SUSFS
+          HAS_SUSFS=0
+          if [ -f "include/linux/susfs.h" ]; then
+            HAS_SUSFS=1
+            echo "[*] 检测到源码自带 SUSFS"
+            grep "SUSFS_VERSION" include/linux/susfs.h || true
+          else
+            echo "[-] 源码中没有 include/linux/susfs.h，可能拉错了分支"
           fi
-          echo "[*] 应用 SUSFS 补丁: $SUSFS_PATCH"
-          patch -p1 < "$SUSFS_PATCH" || {
-            echo "[-] SUSFS 补丁应用失败，可能存在冲突"
-            exit 1
-          }
 
-          # 检查 SUSFS 头文件是否已生成
-          if [ ! -f "include/linux/susfs.h" ]; then
-            echo "[-] SUSFS 头文件未生成，补丁可能未成功"
-            exit 1
-          fi
-          grep "SUSFS_VERSION" include/linux/susfs.h
-
-          # ========== 2. 确保 defconfig 配置 ==========
+          # 确保 Manual Hook 启用
           if ! grep -q "CONFIG_KSU_MANUAL_HOOK=y" arch/arm64/configs/star_defconfig; then
             echo "CONFIG_KSU_MANUAL_HOOK=y" >> arch/arm64/configs/star_defconfig
-          fi
-          if ! grep -q "CONFIG_KSU_SUSFS=y" arch/arm64/configs/star_defconfig; then
-            echo "CONFIG_KSU_SUSFS=y" >> arch/arm64/configs/star_defconfig
+            echo "[+] Added CONFIG_KSU_MANUAL_HOOK=y"
           fi
 
-          # ========== 3. 注入 ReSukiSU 钩子 ==========
+          # 如果源码自带 SUSFS，强制启用 CONFIG_KSU_SUSFS=y
+          if [ "$HAS_SUSFS" -eq 1 ]; then
+            if ! grep -q "CONFIG_KSU_SUSFS=y" arch/arm64/configs/star_defconfig; then
+              echo "CONFIG_KSU_SUSFS=y" >> arch/arm64/configs/star_defconfig
+              echo "[+] Added CONFIG_KSU_SUSFS=y"
+            fi
+          fi
+
+          # 如果源码没有 SUSFS，则不做任何 SUSFS 相关手动注入
+          # ReSukiSU 的 manual hook 仍需要注入（即使没有 SUSFS）
           STAT_FILE="fs/stat.c"
           if ! grep -q "#include <linux/ksu.h>" "$STAT_FILE"; then
             sed -i '1i #include <linux/ksu.h>' "$STAT_FILE"
           fi
 
-          # 注入 ksu_handle_stat 到 SYSCALL_DEFINE4(newfstatat)
+          # 注入 ksu_handle_stat
           if ! grep -q "ksu_handle_stat" "$STAT_FILE"; then
-            echo "=== 注入 ksu_handle_stat ==="
             awk '
               { line = $0 }
-              line ~ /SYSCALL_DEFINE4\(newfstatat,/ && !in_func && !done {
-                in_func = 1
-              }
+              line ~ /SYSCALL_DEFINE4\(newfstatat,/ && !in_func && !done { in_func = 1 }
               in_func {
-                tmp = line
-                brace += gsub(/\{/, "", tmp)
-                tmp = line
-                brace -= gsub(/\}/, "", tmp)
+                tmp = line; brace += gsub(/\{/, "", tmp)
+                tmp = line; brace -= gsub(/\}/, "", tmp)
                 if (!started && brace > 0) started = 1
                 if (started && brace == 0) { in_func = 0; done = 1 }
               }
@@ -179,19 +180,14 @@ jobs:
             mv "${STAT_FILE}.tmp" "$STAT_FILE"
           fi
 
-          # 注入 ksu_handle_newfstat_ret 到 SYSCALL_DEFINE2(newfstat)
+          # 注入 ksu_handle_newfstat_ret
           if ! grep -q "ksu_handle_newfstat_ret" "$STAT_FILE"; then
-            echo "=== 注入 ksu_handle_newfstat_ret ==="
             awk '
               { line = $0 }
-              line ~ /SYSCALL_DEFINE2\(newfstat,/ && !in_func && !done {
-                in_func = 1
-              }
+              line ~ /SYSCALL_DEFINE2\(newfstat,/ && !in_func && !done { in_func = 1 }
               in_func {
-                tmp = line
-                brace += gsub(/\{/, "", tmp)
-                tmp = line
-                brace -= gsub(/\}/, "", tmp)
+                tmp = line; brace += gsub(/\{/, "", tmp)
+                tmp = line; brace -= gsub(/\}/, "", tmp)
                 if (!started && brace > 0) started = 1
                 if (started && brace == 0) { in_func = 0; done = 1 }
               }
@@ -206,19 +202,14 @@ jobs:
             mv "${STAT_FILE}.tmp" "$STAT_FILE"
           fi
 
-          # 注入 ksu_handle_fstat64_ret 到 SYSCALL_DEFINE2(fstat64)
+          # 注入 ksu_handle_fstat64_ret
           if ! grep -q "ksu_handle_fstat64_ret" "$STAT_FILE"; then
-            echo "=== 注入 ksu_handle_fstat64_ret ==="
             awk '
               { line = $0 }
-              line ~ /SYSCALL_DEFINE2\(fstat64,/ && !in_func && !done {
-                in_func = 1
-              }
+              line ~ /SYSCALL_DEFINE2\(fstat64,/ && !in_func && !done { in_func = 1 }
               in_func {
-                tmp = line
-                brace += gsub(/\{/, "", tmp)
-                tmp = line
-                brace -= gsub(/\}/, "", tmp)
+                tmp = line; brace += gsub(/\{/, "", tmp)
+                tmp = line; brace -= gsub(/\}/, "", tmp)
                 if (!started && brace > 0) started = 1
                 if (started && brace == 0) { in_func = 0; done = 1 }
               }
@@ -233,12 +224,10 @@ jobs:
             mv "${STAT_FILE}.tmp" "$STAT_FILE"
           fi
 
-          # ========== 4. 验证 ==========
-          echo "=== 验证 SUSFS 和钩子 ==="
-          grep "SUSFS_VERSION" include/linux/susfs.h || true
-          grep -c "ksu_handle_stat" "$STAT_FILE" || true
-          grep -c "ksu_handle_newfstat_ret" "$STAT_FILE" || true
-          grep -c "ksu_handle_fstat64_ret" "$STAT_FILE" || true
+          echo "=== 钩子验证 ==="
+          grep -c "ksu_handle_stat" "$STAT_FILE" || echo 0
+          grep -c "ksu_handle_newfstat_ret" "$STAT_FILE" || echo 0
+          grep -c "ksu_handle_fstat64_ret" "$STAT_FILE" || echo 0
 
       - name: 🔧 Setup Clang to clang-custom
         shell: bash
@@ -254,7 +243,7 @@ jobs:
         working-directory: device_kernel
         run: |
           echo "=== SUSFS 版本 ==="
-          grep "SUSFS_VERSION" include/linux/susfs.h || echo "(无)"
+          grep "SUSFS_VERSION" include/linux/susfs.h 2>/dev/null || echo "(无)"
           echo "=== KSU hook 检查 ==="
           grep -c "ksu_handle_setresuid" kernel/sys.c || echo 0
           grep -c "ksu_handle_sys_read" fs/read_write.c || echo 0
@@ -312,7 +301,7 @@ jobs:
           name: Xiaomi 11 Ultra Star HyperOS A16 NonGKI Kernel
           body: |
             ## Xiaomi 11 Ultra Star HyperOS A16
-            - ReSukiSU + SuSFS 2.1.0（手动集成）
+            - ReSukiSU + SuSFS 2.1.0（源码自带）
           files: ${{ env.PACK_NAME }}
           draft: false
           prerelease: false
