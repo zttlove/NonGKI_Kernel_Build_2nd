@@ -121,6 +121,7 @@ jobs:
           # ========== 2. 恢复所有被 SUSFS 修改过的源文件 ==========
           # 这些文件在 SUSFS 补丁中会被修改，之前的 sed 操作可能破坏过它们
           SUSFS_TOUCHED_FILES="
+            kernel/kallsyms.c
             fs/proc/task_mmu.c
             fs/notify/fdinfo.c
             fs/stat.c
