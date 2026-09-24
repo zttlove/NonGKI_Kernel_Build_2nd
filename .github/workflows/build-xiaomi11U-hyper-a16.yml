@@ -35,6 +35,7 @@ env:
   KERNELSU_AUTO_GET: "true"
   KERNELSU_AUTO_FORK: "resukisu"
 
+  # 源码已自带 SUSFS 2.1，启用识别但禁用外部修补
   SUSFS_ENABLE: "true"
   SUSFS_FIXED: "false"
 
@@ -100,82 +101,59 @@ jobs:
       - name: ⚙️ Get neccssary tools
         uses: ./.github/workflows/build-ready
 
-      - name: 🔍 Locate SUSFS in submodules and inject ReSukiSU hooks
+      - name: 🩹 Ensure Manual Hook, SUSFS config and inject ReSukiSU hooks
         working-directory: device_kernel
         shell: bash
         run: |
           set -euo pipefail
 
-          # ========== 1. 查找 KernelSU 子模块中的 SUSFS 文件 ==========
-          echo "=== 查找所有 susfs 相关文件 ==="
-          find . -path "./.git" -prune -o -iname "*susfs*" -print 2>/dev/null | head -30
-
-          echo ""
-          echo "=== 查找 KernelSU 子模块目录 ==="
-          ls -la KernelSU/ 2>/dev/null || ls -la drivers/kernelsu/ 2>/dev/null || echo "(未找到 KernelSU 目录)"
-
-          # ========== 2. 将 SUSFS 头文件复制到主仓库 include/linux/ ==========
-          SUSFS_H_SRC=$(find . -path "./.git" -prune -o -name "susfs.h" -print 2>/dev/null | head -1)
-          SUSFS_DEF_SRC=$(find . -path "./.git" -prune -o -name "susfs_def.h" -print 2>/dev/null | head -1)
-
-          if [ -z "$SUSFS_H_SRC" ]; then
-            echo "[-] 未在任何子模块中找到 susfs.h"
-            echo "    当前仓库中 KernelSU 目录内容："
-            ls -la KernelSU/ 2>/dev/null || true
-            ls -la drivers/kernelsu/ 2>/dev/null || true
+          # ========== 1. 确认源码自带 SUSFS ==========
+          echo "=== 检查 SUSFS 源码 ==="
+          if [ -f "include/linux/susfs.h" ] && [ -f "fs/susfs.c" ]; then
+            echo "[+] 找到源码自带的 SUSFS"
+            grep "SUSFS_VERSION" include/linux/susfs.h || true
+          else
+            echo "[-] 警告：未找到 SUSFS 源码文件！"
             exit 1
           fi
 
-          echo "[+] 找到 susfs.h: $SUSFS_H_SRC"
-          echo "[+] 找到 susfs_def.h: $SUSFS_DEF_SRC"
-
-          mkdir -p include/linux
-          cp -v "$SUSFS_H_SRC" include/linux/susfs.h
-          if [ -n "$SUSFS_DEF_SRC" ]; then
-            cp -v "$SUSFS_DEF_SRC" include/linux/susfs_def.h
-          fi
-
-          # 同时复制 fs/susfs.c 到 fs/ 下（如果存在）
-          SUSFS_C_SRC=$(find . -path "./.git" -prune -o -name "susfs.c" -print 2>/dev/null | head -1)
-          if [ -n "$SUSFS_C_SRC" ]; then
-            echo "[+] 找到 susfs.c: $SUSFS_C_SRC"
-            cp -v "$SUSFS_C_SRC" fs/susfs.c
-          fi
-
-          # ========== 3. 确保 defconfig 配置 ==========
+          # ========== 2. 确保 defconfig 配置正确 ==========
           DEFCONFIG="arch/arm64/configs/star_defconfig"
 
-          # 移除之前手动添加的重复项
-          sed -i '/^CONFIG_KSU_MANUAL_HOOK=y$/d' "$DEFCONFIG"
-          sed -i '/^CONFIG_KSU_SUSFS=y$/d' "$DEFCONFIG"
+          # 强制启用 Manual Hook
+          if ! grep -q "CONFIG_KSU_MANUAL_HOOK=y" "$DEFCONFIG"; then
+            echo "CONFIG_KSU_MANUAL_HOOK=y" >> "$DEFCONFIG"
+            echo "[+] 已添加 CONFIG_KSU_MANUAL_HOOK=y"
+          fi
 
+          # 强制启用 SUSFS 及其所有子选项
           for opt in \
-            CONFIG_KSU_MANUAL_HOOK=y \
-            CONFIG_KSU_SUSFS=y \
-            CONFIG_KSU_SUSFS_SUS_PATH=y \
-            CONFIG_KSU_SUSFS_SUS_MOUNT=y \
-            CONFIG_KSU_SUSFS_SUS_KSTAT=y \
-            CONFIG_KSU_SUSFS_SPOOF_UNAME=y \
-            CONFIG_KSU_SUSFS_ENABLE_LOG=y \
-            CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y \
-            CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y \
-            CONFIG_KSU_SUSFS_OPEN_REDIRECT=y \
-            CONFIG_KSU_SUSFS_SUS_MAP=y
+            CONFIG_KSU_SUSFS \
+            CONFIG_KSU_SUSFS_SUS_PATH \
+            CONFIG_KSU_SUSFS_SUS_MOUNT \
+            CONFIG_KSU_SUSFS_SUS_KSTAT \
+            CONFIG_KSU_SUSFS_SPOOF_UNAME \
+            CONFIG_KSU_SUSFS_ENABLE_LOG \
+            CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+            CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+            CONFIG_KSU_SUSFS_OPEN_REDIRECT \
+            CONFIG_KSU_SUSFS_SUS_MAP
           do
-            if ! grep -q "^${opt}$" "$DEFCONFIG"; then
-              echo "${opt}" >> "$DEFCONFIG"
+            if ! grep -q "^${opt}=y" "$DEFCONFIG"; then
+              echo "${opt}=y" >> "$DEFCONFIG"
+              echo "[+] 已添加 ${opt}=y"
             fi
           done
-          echo "[+] defconfig 配置更新完成"
 
-          # ========== 4. 注入 ReSukiSU Manual Hook 钩子 ==========
+          # ========== 3. 注入 ReSukiSU Manual Hook 钩子 ==========
           STAT_FILE="fs/stat.c"
           if ! grep -q "#include <linux/ksu.h>" "$STAT_FILE"; then
             sed -i '1i #include <linux/ksu.h>' "$STAT_FILE"
           fi
 
-          # 4.1 ksu_handle_stat
+          # 3.1 ksu_handle_stat 注入 SYSCALL_DEFINE4(newfstatat)
           if ! grep -q "ksu_handle_stat" "$STAT_FILE"; then
+            echo "=== 注入 ksu_handle_stat ==="
             awk '
               { line = $0 }
               line ~ /SYSCALL_DEFINE4\(newfstatat,/ && !in_func && !done { in_func = 1 }
@@ -194,10 +172,12 @@ jobs:
               { print line }
             ' "$STAT_FILE" > "${STAT_FILE}.tmp"
             mv "${STAT_FILE}.tmp" "$STAT_FILE"
+            echo "[+] ksu_handle_stat 注入完成"
           fi
 
-          # 4.2 ksu_handle_newfstat_ret
+          # 3.2 ksu_handle_newfstat_ret 注入 SYSCALL_DEFINE2(newfstat)
           if ! grep -q "ksu_handle_newfstat_ret" "$STAT_FILE"; then
+            echo "=== 注入 ksu_handle_newfstat_ret ==="
             awk '
               { line = $0 }
               line ~ /SYSCALL_DEFINE2\(newfstat,/ && !in_func && !done { in_func = 1 }
@@ -216,10 +196,12 @@ jobs:
               { print line }
             ' "$STAT_FILE" > "${STAT_FILE}.tmp"
             mv "${STAT_FILE}.tmp" "$STAT_FILE"
+            echo "[+] ksu_handle_newfstat_ret 注入完成"
           fi
 
-          # 4.3 ksu_handle_fstat64_ret
+          # 3.3 ksu_handle_fstat64_ret 注入 SYSCALL_DEFINE2(fstat64)
           if ! grep -q "ksu_handle_fstat64_ret" "$STAT_FILE"; then
+            echo "=== 注入 ksu_handle_fstat64_ret ==="
             awk '
               { line = $0 }
               line ~ /SYSCALL_DEFINE2\(fstat64,/ && !in_func && !done { in_func = 1 }
@@ -238,9 +220,10 @@ jobs:
               { print line }
             ' "$STAT_FILE" > "${STAT_FILE}.tmp"
             mv "${STAT_FILE}.tmp" "$STAT_FILE"
+            echo "[+] ksu_handle_fstat64_ret 注入完成"
           fi
 
-          # ========== 5. 验证 ==========
+          # ========== 4. 最终验证 ==========
           echo "=== 最终验证 ==="
           grep "SUSFS_VERSION" include/linux/susfs.h || true
           echo "ksu_handle_stat: $(grep -c 'ksu_handle_stat' "$STAT_FILE" || echo 0)"
@@ -270,6 +253,8 @@ jobs:
           grep -c "ksu_handle_stat" fs/stat.c || echo 0
           grep -c "ksu_handle_newfstat_ret" fs/stat.c || echo 0
           grep -c "ksu_handle_fstat64_ret" fs/stat.c || echo 0
+          echo "=== defconfig KSU 配置 ==="
+          grep -n "KSU_MANUAL_HOOK\|KSU_SUSFS" arch/arm64/configs/star_defconfig || echo "(无)"
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
