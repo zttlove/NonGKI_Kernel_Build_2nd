@@ -105,11 +105,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          echo "=== 强制重置到上游 main 最新提交 ==="
+          git remote -v
           git fetch origin main --depth=1
           git reset --hard origin/main
           git clean -fdx
           echo "=== 当前提交 ==="
           git log -1 --oneline
+
+          echo "=== 检查 SUSFS 文件 ==="
+          ls -la include/linux/susfs.h include/linux/susfs_def.h fs/susfs.c 2>/dev/null || echo "(SUSFS 文件缺失)"
 
       - name: 🩹 Extract susfs.c / susfs.h / susfs_def.h from patch
         working-directory: device_kernel
@@ -120,6 +126,7 @@ jobs:
           PATCH_URL="https://raw.githubusercontent.com/zttlove/NonGKI_Kernel_Build_2nd/mainline/susfs_patch_to_5.4.patch"
           PATCH_FILE="/tmp/susfs_patch_to_5.4.patch"
 
+          echo "=== 下载 SUSFS 5.4 补丁 ==="
           curl -L --fail --retry 3 --connect-timeout 15 -o "$PATCH_FILE" "$PATCH_URL"
           echo "[+] 补丁大小: $(wc -c < "$PATCH_FILE") 字节"
 
@@ -149,65 +156,34 @@ jobs:
             grep -q "$sym" fs/susfs.c && echo "[+] $sym found" || echo "[-] $sym NOT FOUND"
           done
 
-      - name: 🩹 Ensure fs/Makefile and fs/Kconfig for SUSFS
+      - name: 🩹 Ensure fs/Makefile for SUSFS (no Kconfig modification)
         working-directory: device_kernel
         shell: bash
         run: |
           set -euo pipefail
 
+          # 只修 fs/Makefile，不动 fs/Kconfig（Kconfig 由 drivers/kernelsu 提供）
           if ! grep -q "susfs" fs/Makefile; then
             echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> fs/Makefile
+            echo "[+] fs/Makefile 已追加 susfs.o 引用"
           fi
-          grep -n "susfs" fs/Makefile
+          echo "=== fs/Makefile susfs 引用 ==="
+          grep -n "susfs" fs/Makefile || echo "(无)"
 
-          if ! grep -q "KSU_SUSFS" fs/Kconfig; then
-            cat >> fs/Kconfig << 'EOF'
-
-          # === Auto-injected for SUSFS integration ===
-          bool "SUSFS sus_path"
-          depends on KSU_SUSFS
-          default n
-          config KSU_SUSFS_SUS_MOUNT
-          bool "SUSFS sus_mount"
-          depends on KSU_SUSFS
-          default n
-          config KSU_SUSFS_SUS_KSTAT
-          bool "SUSFS sus_kstat"
-          depends on KSU_SUSFS
-          default n
-          config KSU_SUSFS_SPOOF_UNAME
-          bool "SUSFS spoof_uname"
-          depends on KSU_SUSFS
-          default n
-          config KSU_SUSFS_ENABLE_LOG
-          bool "SUSFS enable_log"
-          depends on KSU_SUSFS
-          default n
-          config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
-          bool "SUSFS hide_ksu_susfs_symbols"
-          depends on KSU_SUSFS
-          default n
-          config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
-          bool "SUSFS spoof_cmdline_or_bootconfig"
-          depends on KSU_SUSFS
-          default n
-          config KSU_SUSFS_OPEN_REDIRECT
-          bool "SUSFS open_redirect"
-          depends on KSU_SUSFS
-          default n
-          config KSU_SUSFS_SUS_MAP
-          bool "SUSFS sus_map"
-          depends on KSU_SUSFS
-          default n
-          EOF
-          fi
-          grep -n "KSU_SUSFS" fs/Kconfig | head -20
+          # 恢复 fs/Kconfig 干净版本，避免语法错误
+          echo "=== 恢复 fs/Kconfig ==="
+          curl -L --fail --retry 3 -o fs/Kconfig \
+            "https://raw.githubusercontent.com/MiYume0721/android_kernel_xiaomi_sm8350_miyume/main/fs/Kconfig"
+          echo "[+] fs/Kconfig 已恢复干净版本"
+          echo "=== fs/Kconfig 中 KSU_SUSFS 相关行 ==="
+          grep -n "KSU_SUSFS" fs/Kconfig || echo "(无，由 drivers/kernelsu 提供)"
 
       - name: 🩹 Force enable SUSFS in defconfig
         working-directory: device_kernel
         shell: bash
         run: |
           set -euo pipefail
+
           DEFCONFIG="arch/arm64/configs/star_defconfig"
 
           if [ -n "$(tail -c 1 "$DEFCONFIG")" ]; then
@@ -222,7 +198,8 @@ jobs:
           if ! grep -q "^CONFIG_KSU=y" "$DEFCONFIG"; then
             echo "CONFIG_KSU=y" >> "$DEFCONFIG"
           fi
-                {
+
+          {
             echo "CONFIG_KSU_SUSFS=y"
             echo "CONFIG_KSU_SUSFS_SUS_PATH=y"
             echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
@@ -260,6 +237,13 @@ jobs:
           echo ""
           echo "=== fs/Makefile susfs 引用 ==="
           grep -n "susfs" fs/Makefile || echo "(无)"
+          echo ""
+          echo "=== fs/Kconfig 语法检查 ==="
+          if grep -q "KSU_SUSFS" fs/Kconfig 2>/dev/null; then
+            echo "⚠️ fs/Kconfig 仍包含 KSU_SUSFS，请确认格式正确"
+          else
+            echo "✅ fs/Kconfig 干净"
+          fi
           echo ""
           echo "=== 残留 .rej 文件 ==="
           find . -name "*.rej" -not -path "./.git/*" 2>/dev/null | head -20 || echo "(无)"
