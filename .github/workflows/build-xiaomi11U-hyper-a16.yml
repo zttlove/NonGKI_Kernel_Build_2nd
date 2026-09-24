@@ -100,30 +100,61 @@ jobs:
       - name: ⚙️ Get neccssary tools
         uses: ./.github/workflows/build-ready
 
-      - name: 🩹 Force enable SUSFS in defconfig, no source modification
+      - name: 🩹 Restore SUSFS files and force enable in defconfig
         working-directory: device_kernel
         shell: bash
         run: |
           set -euo pipefail
 
+          # ========== 1. 恢复 SUSFS 源码文件（build-ready 后可能丢失） ==========
+          SUSFS_BASE="https://raw.githubusercontent.com/MiYume0721/android_kernel_xiaomi_sm8350_miyume/main"
+
+          echo "=== 恢复 SUSFS 源码 ==="
+          mkdir -p include/linux fs
+
+          if [ ! -f "include/linux/susfs.h" ]; then
+            echo "[-] include/linux/susfs.h 缺失，从远程恢复..."
+            curl -L --fail --retry 3 -o include/linux/susfs.h "$SUSFS_BASE/include/linux/susfs.h"
+          fi
+          if [ ! -f "include/linux/susfs_def.h" ]; then
+            echo "[-] include/linux/susfs_def.h 缺失，从远程恢复..."
+            curl -L --fail --retry 3 -o include/linux/susfs_def.h "$SUSFS_BASE/include/linux/susfs_def.h"
+          fi
+          if [ ! -f "fs/susfs.c" ]; then
+            echo "[-] fs/susfs.c 缺失，从远程恢复..."
+            curl -L --fail --retry 3 -o fs/susfs.c "$SUSFS_BASE/fs/susfs.c"
+          fi
+
+          # 验证
+          if [ -f "include/linux/susfs.h" ] && [ -f "fs/susfs.c" ]; then
+            echo "[+] SUSFS 源码已就绪"
+            grep "SUSFS_VERSION" include/linux/susfs.h || true
+          else
+            echo "[-] SUSFS 源码恢复失败"
+            exit 1
+          fi
+
+          # ========== 2. 强制启用 SUSFS 在 defconfig 中 ==========
           DEFCONFIG="arch/arm64/configs/star_defconfig"
 
-          echo "=== 补丁前 defconfig 中 KSU/SUSFS 相关行 ==="
-          grep -n "KSU\|SUSFS" "$DEFCONFIG" || echo "(无)"
+          # 关键：确保文件末尾有换行符，避免后续追加内容被拼到同一行
+          if [ -n "$(tail -c 1 "$DEFCONFIG")" ]; then
+            echo "" >> "$DEFCONFIG"
+            echo "[+] 已为 defconfig 末尾补加换行符"
+          fi
 
-          # 1. 删除所有 SUSFS 相关的注释或旧行，避免冲突
+          # 删除所有旧的 SUSFS / MANUAL_HOOK 行，避免重复
           sed -i '/^# CONFIG_KSU_SUSFS/d' "$DEFCONFIG"
           sed -i '/^CONFIG_KSU_SUSFS/d' "$DEFCONFIG"
           sed -i '/^# CONFIG_KSU_MANUAL_HOOK/d' "$DEFCONFIG"
           sed -i '/^CONFIG_KSU_MANUAL_HOOK/d' "$DEFCONFIG"
 
-          # 2. 确保 KSU 基础配置
+          # 确保 KSU 基础配置
           if ! grep -q "^CONFIG_KSU=y" "$DEFCONFIG"; then
             echo "CONFIG_KSU=y" >> "$DEFCONFIG"
           fi
-          # Inline hook 模式不需要 MANUAL_HOOK
 
-          # 3. 写入所有 SUSFS 配置（强制启用）
+          # 写入所有 SUSFS 配置
           {
             echo "CONFIG_KSU_SUSFS=y"
             echo "CONFIG_KSU_SUSFS_SUS_PATH=y"
@@ -140,21 +171,6 @@ jobs:
           echo "=== 补丁后 defconfig 中 KSU/SUSFS 相关行 ==="
           grep -n "KSU\|SUSFS" "$DEFCONFIG" || echo "(无)"
 
-          # 4. 校验 SUSFS 源码存在
-          if [ ! -f "include/linux/susfs.h" ] || [ ! -f "fs/susfs.c" ]; then
-            echo "[-] SUSFS 源码文件缺失"
-            exit 1
-          fi
-          echo "[+] SUSFS 源码存在"
-          grep "SUSFS_VERSION" include/linux/susfs.h || true
-
-          # 5. 校验 Kbuild 中是否有 susfs 引用
-          echo "=== drivers/kernelsu/Kbuild 中的 susfs 引用 ==="
-          grep -n "susfs\|SUSFS" drivers/kernelsu/Kbuild 2>/dev/null | head -20 || echo "(无)"
-
-          echo "=== drivers/kernelsu 目录结构 ==="
-          find drivers/kernelsu -maxdepth 2 -type d 2>/dev/null || true
-
       - name: 🔧 Setup Clang to clang-custom
         shell: bash
         run: |
@@ -164,6 +180,19 @@ jobs:
           git clone --depth=1 https://github.com/thenoppy12/clang-r416183b.git "$DEST"
           "$DEST/bin/clang" --version | head -1
           echo "✅ Clang 已就绪: $DEST/bin"
+
+      - name: 🔎 Verify source before build
+        working-directory: device_kernel
+        shell: bash
+        run: |
+          echo "=== SUSFS 版本 ==="
+          grep "SUSFS_VERSION" include/linux/susfs.h 2>/dev/null || echo "(无)"
+          echo "=== SUSFS 源文件 ==="
+          ls -la include/linux/susfs.h include/linux/susfs_def.h fs/susfs.c 2>/dev/null
+          echo "=== drivers/kernelsu/Kbuild 中 susfs 引用 ==="
+          grep -n "susfs\|SUSFS" drivers/kernelsu/Kbuild 2>/dev/null | head -20 || echo "(无)"
+          echo "=== defconfig 中 KSU 相关 ==="
+          grep -n "KSU_SUSFS\|KSU_MANUAL_HOOK" arch/arm64/configs/star_defconfig || echo "(无)"
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
