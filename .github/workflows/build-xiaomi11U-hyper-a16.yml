@@ -155,7 +155,8 @@ jobs:
           for sym in susfs_is_current_proc_no_su susfs_set_current_proc_no_su susfs_clear_current_proc_no_su susfs_set_current_proc_umounted_for_zygote_next; do
             grep -q "$sym" fs/susfs.c && echo "[+] $sym found" || echo "[-] $sym NOT FOUND"
           done
-
+          grep -n "EXPORT_SYMBOL\|susfs_open_redirect\|susfs_hide_sus_mnts" fs/susfs.c | head -50
+          
       - name: 🩹 Ensure fs/Makefile for SUSFS (no Kconfig modification)
         working-directory: device_kernel
         shell: bash
