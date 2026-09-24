@@ -11,7 +11,7 @@ env:
 
   CUSTOM_CMDS: "CLANG_TRIPLE=aarch64-linux-gnu-"
   EXTRA_CMDS: "LD=ld.lld LLVM=1 LLVM_IAS=1"
-  KCFLAGS_EXTRA: "-Wframe-larger-than=4096 -Wno-strict-prototypes -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-declaration-after-statement -fno-stack-protector -Wno-inline-asm -Wno-sometimes-uninitialized"
+  KCFLAGS_EXTRA: "-Wframe-larger-than=4096 -Wno-strict-prototypes -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-declaration-after-statement -fno-stack-protector -Wno-inline-asm -Wno-sometimes-uninitialized -Wno-reserved-identifier"
 
   KERNEL_SOURCE: "https://github.com/MiYume0721/android_kernel_xiaomi_sm8350_miyume.git"
   KERNEL_BRANCH: "main"
@@ -117,6 +117,45 @@ jobs:
           echo "=== 检查 SUSFS 文件 ==="
           ls -la include/linux/susfs.h include/linux/susfs_def.h fs/susfs.c 2>/dev/null || echo "(SUSFS 文件缺失)"
 
+      - name: 🩹 Apply SUSFS 5.4 patch from zttlove repo
+        working-directory: device_kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PATCH_URL="https://raw.githubusercontent.com/zttlove/NonGKI_Kernel_Build_2nd/mainline/susfs_patch_to_5.4.patch"
+          PATCH_FILE="/tmp/susfs_patch_to_5.4.patch"
+
+          echo "=== 下载补丁 ==="
+          curl -L --fail --retry 3 --connect-timeout 15 -o "$PATCH_FILE" "$PATCH_URL"
+          echo "[+] 补丁下载成功，大小: $(wc -c < "$PATCH_FILE") 字节"
+
+          echo "=== 预检补丁 ==="
+          if ! patch -p1 --dry-run < "$PATCH_FILE" > /tmp/patch_dryrun.log 2>&1; then
+            echo "[-] 补丁预检失败，输出："
+            cat /tmp/patch_dryrun.log
+            exit 1
+          fi
+          echo "[+] 预检通过"
+
+          echo "=== 应用补丁 ==="
+          patch -p1 < "$PATCH_FILE"
+          echo "[+] 补丁应用成功"
+
+          echo "=== 检查 SUSFS 关键文件 ==="
+          ls -la fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h 2>/dev/null || {
+            echo "[-] SUSFS 文件缺失"
+            exit 1
+          }
+
+          echo "=== SUSFS 版本 ==="
+          grep "SUSFS_VERSION" include/linux/susfs.h || true
+
+          echo "=== 关键符号检查 ==="
+          for sym in susfs_is_current_proc_no_su susfs_set_current_proc_no_su susfs_clear_current_proc_no_su susfs_set_current_proc_umounted_for_zygote_next; do
+            grep -q "$sym" fs/susfs.c && echo "[+] $sym found" || echo "[-] $sym NOT FOUND"
+          done
+
       - name: 🩹 Force enable SUSFS in defconfig
         working-directory: device_kernel
         shell: bash
@@ -172,39 +211,12 @@ jobs:
           grep -n "KSU_SUSFS\|SUSFS" fs/Kconfig 2>/dev/null | head -20 || echo "(fs/Kconfig 无 SUSFS 配置)"
 
           echo ""
-          echo "===== 4. 实际生成的 .config 中 SUSFS 配置 ====="
-          if [ -f out/.config ]; then
-            grep -n "KSU_SUSFS" out/.config | head -20 || echo "(out/.config 中无 SUSFS)"
-          else
-            echo "(out/.config 尚未生成)"
-          fi
-
-          echo ""
-          echo "===== 5. defconfig 中 SUSFS 配置 ====="
+          echo "===== 4. defconfig 中 SUSFS 配置 ====="
           grep -n "KSU_SUSFS" arch/arm64/configs/star_defconfig || echo "(无)"
 
           echo ""
-          echo "===== 6. fs/susfs.c 中定义的符号 ====="
+          echo "===== 5. fs/susfs.c 中定义的符号 ====="
           grep -n "susfs_is_current_proc_no_su\|susfs_set_current_proc_no_su\|susfs_clear_current_proc_no_su\|susfs_set_current_proc_umounted_for_zygote_next" fs/susfs.c 2>/dev/null || echo "(未找到符号定义)"
-
-          echo ""
-          echo "===== 7. fs/susfs.c 中是否包含 EXPORT_SYMBOL ====="
-          grep -n "EXPORT_SYMBOL" fs/susfs.c 2>/dev/null | head -20 || echo "(无 EXPORT_SYMBOL)"
-
-      - name: 🩹 Patch fs/Makefile to include susfs.o if missing
-        working-directory: device_kernel
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if ! grep -q "susfs" fs/Makefile; then
-            echo "[+] fs/Makefile 中没有 susfs 引用，追加 obj-\$(CONFIG_KSU_SUSFS) += susfs.o"
-            echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> fs/Makefile
-            echo "=== 修改后 fs/Makefile 中 susfs 相关行 ==="
-            grep -n "susfs" fs/Makefile
-          else
-            echo "[*] fs/Makefile 已包含 susfs 引用"
-          fi
 
       - name: 🔧 Setup Clang to clang-custom
         shell: bash
