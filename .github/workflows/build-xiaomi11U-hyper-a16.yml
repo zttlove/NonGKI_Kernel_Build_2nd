@@ -35,7 +35,6 @@ env:
   KERNELSU_AUTO_GET: "true"
   KERNELSU_AUTO_FORK: "resukisu"
 
-  # 源码已自带 SUSFS 2.1，启用识别但禁用外部修补
   SUSFS_ENABLE: "true"
   SUSFS_FIXED: "false"
 
@@ -101,32 +100,71 @@ jobs:
       - name: ⚙️ Get neccssary tools
         uses: ./.github/workflows/build-ready
 
-      - name: 🩹 Ensure Manual Hook, SUSFS config and inject ReSukiSU hooks
+      - name: 🔍 Diagnose kernel source state
+        working-directory: device_kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "===== git 当前提交 ====="
+          git log -1 --oneline || true
+          echo ""
+          echo "===== include/linux 下 susfs 文件 ====="
+          ls -la include/linux/susfs*.h 2>/dev/null || echo "(未找到)"
+          echo ""
+          echo "===== fs 下 susfs 文件 ====="
+          ls -la fs/susfs.c 2>/dev/null || echo "(未找到)"
+          echo ""
+          echo "===== git 历史中的 susfs 提交 ====="
+          git log --oneline --all -- include/linux/susfs.h 2>/dev/null | head -5 || echo "(无历史记录)"
+          echo ""
+          echo "===== 远程 main 最新提交 ====="
+          git ls-remote origin main 2>/dev/null | head -3 || echo "(无法访问)"
+
+      - name: 🩹 Ensure SUSFS files and inject ReSukiSU hooks
         working-directory: device_kernel
         shell: bash
         run: |
           set -euo pipefail
 
-          # ========== 1. 确认源码自带 SUSFS ==========
+          # ========== 1. 强制切到 main 最新提交 ==========
+          echo "=== 强制切到 main 最新提交 ==="
+          git fetch origin main --depth=1 2>/dev/null || true
+          git checkout origin/main -- . 2>/dev/null || true
+          git log -1 --oneline || true
+
+          # ========== 2. 检查 SUSFS 文件，缺失则从远程恢复 ==========
           echo "=== 检查 SUSFS 源码 ==="
+          SUSFS_BASE="https://raw.githubusercontent.com/MiYume0721/android_kernel_xiaomi_sm8350_miyume/main"
+          if [ ! -f "include/linux/susfs.h" ]; then
+            echo "[-] include/linux/susfs.h 不存在，从远程恢复..."
+            curl -L --fail --retry 3 -o include/linux/susfs.h "$SUSFS_BASE/include/linux/susfs.h" || true
+          fi
+          if [ ! -f "include/linux/susfs_def.h" ]; then
+            echo "[-] include/linux/susfs_def.h 不存在，从远程恢复..."
+            curl -L --fail --retry 3 -o include/linux/susfs_def.h "$SUSFS_BASE/include/linux/susfs_def.h" || true
+          fi
+          if [ ! -f "fs/susfs.c" ]; then
+            echo "[-] fs/susfs.c 不存在，从远程恢复..."
+            curl -L --fail --retry 3 -o fs/susfs.c "$SUSFS_BASE/fs/susfs.c" || true
+          fi
+
+          # 最终确认
           if [ -f "include/linux/susfs.h" ] && [ -f "fs/susfs.c" ]; then
-            echo "[+] 找到源码自带的 SUSFS"
+            echo "[+] SUSFS 源码已就绪"
             grep "SUSFS_VERSION" include/linux/susfs.h || true
           else
-            echo "[-] 警告：未找到 SUSFS 源码文件！"
+            echo "[-] SUSFS 源码恢复失败"
             exit 1
           fi
 
-          # ========== 2. 确保 defconfig 配置正确 ==========
+          # ========== 3. 确保 defconfig 配置正确 ==========
           DEFCONFIG="arch/arm64/configs/star_defconfig"
 
-          # 强制启用 Manual Hook
           if ! grep -q "CONFIG_KSU_MANUAL_HOOK=y" "$DEFCONFIG"; then
             echo "CONFIG_KSU_MANUAL_HOOK=y" >> "$DEFCONFIG"
             echo "[+] 已添加 CONFIG_KSU_MANUAL_HOOK=y"
           fi
 
-          # 强制启用 SUSFS 及其所有子选项
           for opt in \
             CONFIG_KSU_SUSFS \
             CONFIG_KSU_SUSFS_SUS_PATH \
@@ -141,17 +179,17 @@ jobs:
           do
             if ! grep -q "^${opt}=y" "$DEFCONFIG"; then
               echo "${opt}=y" >> "$DEFCONFIG"
-              echo "[+] 已添加 ${opt}=y"
             fi
           done
+          echo "[+] defconfig SUSFS 配置已就绪"
 
-          # ========== 3. 注入 ReSukiSU Manual Hook 钩子 ==========
+          # ========== 4. 注入 ReSukiSU Manual Hook ==========
           STAT_FILE="fs/stat.c"
           if ! grep -q "#include <linux/ksu.h>" "$STAT_FILE"; then
             sed -i '1i #include <linux/ksu.h>' "$STAT_FILE"
           fi
 
-          # 3.1 ksu_handle_stat 注入 SYSCALL_DEFINE4(newfstatat)
+          # 4.1 ksu_handle_stat
           if ! grep -q "ksu_handle_stat" "$STAT_FILE"; then
             echo "=== 注入 ksu_handle_stat ==="
             awk '
@@ -172,10 +210,9 @@ jobs:
               { print line }
             ' "$STAT_FILE" > "${STAT_FILE}.tmp"
             mv "${STAT_FILE}.tmp" "$STAT_FILE"
-            echo "[+] ksu_handle_stat 注入完成"
           fi
 
-          # 3.2 ksu_handle_newfstat_ret 注入 SYSCALL_DEFINE2(newfstat)
+          # 4.2 ksu_handle_newfstat_ret
           if ! grep -q "ksu_handle_newfstat_ret" "$STAT_FILE"; then
             echo "=== 注入 ksu_handle_newfstat_ret ==="
             awk '
@@ -196,10 +233,9 @@ jobs:
               { print line }
             ' "$STAT_FILE" > "${STAT_FILE}.tmp"
             mv "${STAT_FILE}.tmp" "$STAT_FILE"
-            echo "[+] ksu_handle_newfstat_ret 注入完成"
           fi
 
-          # 3.3 ksu_handle_fstat64_ret 注入 SYSCALL_DEFINE2(fstat64)
+          # 4.3 ksu_handle_fstat64_ret
           if ! grep -q "ksu_handle_fstat64_ret" "$STAT_FILE"; then
             echo "=== 注入 ksu_handle_fstat64_ret ==="
             awk '
@@ -220,10 +256,9 @@ jobs:
               { print line }
             ' "$STAT_FILE" > "${STAT_FILE}.tmp"
             mv "${STAT_FILE}.tmp" "$STAT_FILE"
-            echo "[+] ksu_handle_fstat64_ret 注入完成"
           fi
 
-          # ========== 4. 最终验证 ==========
+          # ========== 5. 最终验证 ==========
           echo "=== 最终验证 ==="
           grep "SUSFS_VERSION" include/linux/susfs.h || true
           echo "ksu_handle_stat: $(grep -c 'ksu_handle_stat' "$STAT_FILE" || echo 0)"
