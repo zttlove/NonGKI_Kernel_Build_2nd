@@ -117,6 +117,39 @@ jobs:
           echo "=== 检查 SUSFS 文件 ==="
           ls -la include/linux/susfs.h include/linux/susfs_def.h fs/susfs.c 2>/dev/null || echo "(SUSFS 文件缺失)"
 
+      - name: 🔎 Diagnose SUSFS linkage
+        working-directory: device_kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "===== 1. fs/susfs.c 是否存在 ====="
+          ls -la fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h 2>/dev/null || echo "(缺失)"
+
+          echo ""
+          echo "===== 2. fs/Makefile 是否引用了 susfs.o ====="
+          grep -n "susfs" fs/Makefile || echo "[-] fs/Makefile 中没有 susfs 引用！"
+
+          echo ""
+          echo "===== 3. fs/Kconfig 是否定义了 CONFIG_KSU_SUSFS ====="
+          grep -n "KSU_SUSFS\|SUSFS" fs/Kconfig 2>/dev/null | head -20 || echo "(fs/Kconfig 无 SUSFS 配置)"
+
+          echo ""
+          echo "===== 4. 实际生成的 .config 中 SUSFS 配置 ====="
+          if [ -f out/.config ]; then
+            grep -n "KSU_SUSFS" out/.config | head -20 || echo "(out/.config 中无 SUSFS)"
+          else
+            echo "(out/.config 尚未生成)"
+          fi
+
+          echo ""
+          echo "===== 5. defconfig 中 SUSFS 配置 ====="
+          grep -n "KSU_SUSFS" arch/arm64/configs/star_defconfig || echo "(无)"
+
+          echo ""
+          echo "===== 6. fs/susfs.c 中定义的符号 ====="
+          grep -n "^[a-z].*susfs_is_current_proc_no_su\|^[a-z].*susfs_set_current_proc_no_su\|^[a-z].*susfs_clear_current_proc_no_su\|^[a-z].*susfs_set_current_proc_umounted_for_zygote_next" fs/susfs.c 2>/dev/null || echo "(未找到符号定义)"
+
       - name: 🩹 Force enable SUSFS in defconfig
         working-directory: device_kernel
         shell: bash
