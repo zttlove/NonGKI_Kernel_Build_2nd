@@ -100,62 +100,29 @@ jobs:
       - name: ⚙️ Get neccssary tools
         uses: ./.github/workflows/build-ready
 
-      - name: 🩹 Restore ALL SUSFS-touched files from upstream
+      - name: 🔄 Reset kernel source to clean upstream main
         working-directory: device_kernel
         shell: bash
         run: |
           set -euo pipefail
 
-          SUSFS_BASE="https://raw.githubusercontent.com/MiYume0721/android_kernel_xiaomi_sm8350_miyume/main"
+          echo "=== 强制重置到上游 main 最新提交 ==="
+          git remote -v
+          git fetch origin main --depth=1
+          git reset --hard origin/main
+          git clean -fdx
+          echo "=== 当前提交 ==="
+          git log -1 --oneline
 
-          # ========== 1. 恢复 SUSFS 核心文件 ==========
-          echo "=== 恢复 SUSFS 核心文件 ==="
-          mkdir -p include/linux fs
-          for f in "include/linux/susfs.h" "include/linux/susfs_def.h" "fs/susfs.c"; do
-            if [ ! -f "$f" ]; then
-              echo "[-] $f 缺失，从远程恢复..."
-              curl -L --fail --retry 3 -o "$f" "$SUSFS_BASE/$f"
-            fi
-          done
+          echo "=== 检查 SUSFS 文件 ==="
+          ls -la include/linux/susfs.h include/linux/susfs_def.h fs/susfs.c 2>/dev/null || echo "(SUSFS 文件缺失)"
 
-          # ========== 2. 恢复所有被 SUSFS 修改过的源文件 ==========
-          # 这些文件在 SUSFS 补丁中会被修改，之前的 sed 操作可能破坏过它们
-          SUSFS_TOUCHED_FILES="
-            kernel/kallsyms.c
-            fs/proc/task_mmu.c
-            fs/notify/fdinfo.c
-            fs/stat.c
-            fs/exec.c
-            fs/namei.c
-            fs/readdir.c
-            fs/open.c
-            fs/read_write.c
-            fs/namespace.c
-            kernel/kallsyms.c
-            kernel/sys.c
-            kernel/reboot.c
-            drivers/input/input.c
-            security/security.c
-            security/selinux/hooks.c
-            security/selinux/ss/services.c
-          "
+      - name: 🩹 Force enable SUSFS in defconfig
+        working-directory: device_kernel
+        shell: bash
+        run: |
+          set -euo pipefail
 
-          echo "=== 检查并恢复被 SUSFS 修改过的文件 ==="
-          for f in $SUSFS_TOUCHED_FILES; do
-            if [ -f "$f" ]; then
-              # 检查文件是否被破坏（#if 与 #endif 数量是否匹配）
-              IF_COUNT=$(grep -c '^#if' "$f" 2>/dev/null || echo 0)
-              ENDIF_COUNT=$(grep -c '^#endif' "$f" 2>/dev/null || echo 0)
-              if [ "$IF_COUNT" != "$ENDIF_COUNT" ]; then
-                echo "[-] $f 中 #if=$IF_COUNT, #endif=$ENDIF_COUNT，不匹配，从远程恢复..."
-                curl -L --fail --retry 3 -o "$f" "$SUSFS_BASE/$f"
-              else
-                echo "[*] $f 正常（#if=$IF_COUNT, #endif=$ENDIF_COUNT）"
-              fi
-            fi
-          done
-
-          # ========== 3. 强制启用 SUSFS 在 defconfig 中 ==========
           DEFCONFIG="arch/arm64/configs/star_defconfig"
 
           if [ -n "$(tail -c 1 "$DEFCONFIG")" ]; then
@@ -184,8 +151,8 @@ jobs:
             echo "CONFIG_KSU_SUSFS_SUS_MAP=y"
           } >> "$DEFCONFIG"
 
-          echo "=== 最终 SUSFS 版本 ==="
-          grep "SUSFS_VERSION" include/linux/susfs.h || true
+          echo "=== defconfig 中 KSU/SUSFS 相关行 ==="
+          grep -n "KSU\|SUSFS" "$DEFCONFIG" || echo "(无)"
 
       - name: 🔧 Setup Clang to clang-custom
         shell: bash
@@ -201,8 +168,8 @@ jobs:
         working-directory: device_kernel
         shell: bash
         run: |
-          echo "=== 所有关键文件的 #if / #endif 统计 ==="
-          for f in fs/proc/task_mmu.c fs/notify/fdinfo.c fs/stat.c fs/exec.c fs/open.c; do
+          echo "=== 关键文件 #if / #endif 统计 ==="
+          for f in kernel/kallsyms.c fs/proc/task_mmu.c fs/notify/fdinfo.c fs/stat.c fs/exec.c fs/open.c; do
             if [ -f "$f" ]; then
               IF_COUNT=$(grep -c '^#if' "$f" 2>/dev/null || echo 0)
               ENDIF_COUNT=$(grep -c '^#endif' "$f" 2>/dev/null || echo 0)
