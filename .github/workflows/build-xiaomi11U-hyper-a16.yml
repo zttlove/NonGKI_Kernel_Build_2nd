@@ -156,6 +156,7 @@ jobs:
             grep -q "$sym" fs/susfs.c && echo "[+] $sym found" || echo "[-] $sym NOT FOUND"
           done
           grep -n "EXPORT_SYMBOL\|susfs_open_redirect\|susfs_hide_sus_mnts" fs/susfs.c | head -50
+          grep -n "^[a-zA-Z].*susfs_" fs/susfs.c | head -50
           
       - name: 🩹 Ensure fs/Makefile for SUSFS (no Kconfig modification)
         working-directory: device_kernel
