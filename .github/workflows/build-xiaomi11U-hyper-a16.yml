@@ -35,7 +35,6 @@ env:
   KERNELSU_AUTO_GET: "true"
   KERNELSU_AUTO_FORK: "resukisu"
 
-  # 源码已自带 SUSFS 2.1.0 + ReSukiSU Inline Hook
   SUSFS_ENABLE: "true"
   SUSFS_FIXED: "false"
 
@@ -61,7 +60,7 @@ env:
   SUSFS_PATCH_FIXED: "susfs_fixed"
 
   REKERNEL_ENABLE: "false"
-  HOOK_METHOD: "inline"      # 关键：使用 Inline Hook
+  HOOK_METHOD: "inline"
   KERNEL_PATCH: "false"
 
   KPM_ENABLE: "false"
@@ -77,7 +76,7 @@ env:
   GENERATE_CHIP: "qcom"
 
   BUILD_DEBUGGER: "false"
-  SKIP_PATCH: "true"       # 跳过所有外部补丁
+  SKIP_PATCH: "true"
   BUILD_OTHER_CONFIG: "false"
   MERGE_CONFIG_FILES: "vendor/venus_QGKI.config,vendor/xiaomi_QGKI.config"
   FREE_MORE_SPACE: "false"
@@ -101,66 +100,60 @@ jobs:
       - name: ⚙️ Get neccssary tools
         uses: ./.github/workflows/build-ready
 
-      - name: 🔎 Verify source state (no modifications)
+      - name: 🩹 Force enable SUSFS in defconfig, no source modification
         working-directory: device_kernel
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "===== git 当前提交 ====="
-          git log -1 --oneline || true
+          DEFCONFIG="arch/arm64/configs/star_defconfig"
 
-          echo ""
-          echo "===== SUSFS 源码文件 ====="
-          ls -la include/linux/susfs.h include/linux/susfs_def.h fs/susfs.c 2>/dev/null || echo "(SUSFS 文件缺失)"
+          echo "=== 补丁前 defconfig 中 KSU/SUSFS 相关行 ==="
+          grep -n "KSU\|SUSFS" "$DEFCONFIG" || echo "(无)"
 
-          echo ""
-          echo "===== SUSFS 版本 ====="
-          grep "SUSFS_VERSION" include/linux/susfs.h 2>/dev/null || echo "(无法读取)"
+          # 1. 删除所有 SUSFS 相关的注释或旧行，避免冲突
+          sed -i '/^# CONFIG_KSU_SUSFS/d' "$DEFCONFIG"
+          sed -i '/^CONFIG_KSU_SUSFS/d' "$DEFCONFIG"
+          sed -i '/^# CONFIG_KSU_MANUAL_HOOK/d' "$DEFCONFIG"
+          sed -i '/^CONFIG_KSU_MANUAL_HOOK/d' "$DEFCONFIG"
 
-          echo ""
-          echo "===== 检查源码中已有的 ReSukiSU 钩子 ====="
-          echo "ksu_handle_setresuid: $(grep -c 'ksu_handle_setresuid' kernel/sys.c 2>/dev/null || echo 0)"
-          echo "ksu_handle_execveat: $(grep -c 'ksu_handle_execveat' fs/exec.c 2>/dev/null || echo 0)"
-          echo "ksu_handle_faccessat: $(grep -c 'ksu_handle_faccessat' fs/open.c 2>/dev/null || echo 0)"
-          echo "ksu_handle_sys_read: $(grep -c 'ksu_handle_sys_read' fs/read_write.c 2>/dev/null || echo 0)"
-          echo "ksu_handle_stat: $(grep -c 'ksu_handle_stat' fs/stat.c 2>/dev/null || echo 0)"
-          echo "ksu_handle_sys_reboot: $(grep -c 'ksu_handle_sys_reboot' kernel/reboot.c 2>/dev/null || echo 0)"
-          echo "ksu_handle_input_handle_event: $(grep -c 'ksu_handle_input_handle_event' drivers/input/input.c 2>/dev/null || echo 0)"
-
-          echo ""
-          echo "===== 确认 fs/stat.c 中没有手动注入的 MANUAL_HOOK 代码 ====="
-          if grep -q "CONFIG_KSU_MANUAL_HOOK" fs/stat.c; then
-            echo "[-] 检测到 fs/stat.c 中仍有手动注入的代码，正在清理..."
-            # 删除手动注入的代码块
-            sed -i '/#ifdef CONFIG_KSU_MANUAL_HOOK/,/#endif/d' fs/stat.c
-            echo "[+] 已清理 fs/stat.c"
-          else
-            echo "[*] fs/stat.c 干净，无手动注入代码"
+          # 2. 确保 KSU 基础配置
+          if ! grep -q "^CONFIG_KSU=y" "$DEFCONFIG"; then
+            echo "CONFIG_KSU=y" >> "$DEFCONFIG"
           fi
+          # Inline hook 模式不需要 MANUAL_HOOK
 
-          echo ""
-          echo "===== defconfig 中 KSU / SUSFS 配置 ====="
-          grep -n "KSU\|SUSFS" arch/arm64/configs/star_defconfig 2>/dev/null || echo "(无)"
+          # 3. 写入所有 SUSFS 配置（强制启用）
+          {
+            echo "CONFIG_KSU_SUSFS=y"
+            echo "CONFIG_KSU_SUSFS_SUS_PATH=y"
+            echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
+            echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
+            echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
+            echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y"
+            echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y"
+            echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y"
+            echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
+            echo "CONFIG_KSU_SUSFS_SUS_MAP=y"
+          } >> "$DEFCONFIG"
 
-          # 确保 SUSFS 关键配置启用
-          for opt in \
-            CONFIG_KSU_SUSFS \
-            CONFIG_KSU_SUSFS_SUS_PATH \
-            CONFIG_KSU_SUSFS_SUS_MOUNT \
-            CONFIG_KSU_SUSFS_SUS_KSTAT \
-            CONFIG_KSU_SUSFS_SPOOF_UNAME \
-            CONFIG_KSU_SUSFS_ENABLE_LOG \
-            CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
-            CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
-            CONFIG_KSU_SUSFS_OPEN_REDIRECT \
-            CONFIG_KSU_SUSFS_SUS_MAP
-          do
-            if ! grep -q "^${opt}=y" arch/arm64/configs/star_defconfig; then
-              echo "${opt}=y" >> arch/arm64/configs/star_defconfig
-              echo "[+] 已添加 ${opt}=y"
-            fi
-          done
+          echo "=== 补丁后 defconfig 中 KSU/SUSFS 相关行 ==="
+          grep -n "KSU\|SUSFS" "$DEFCONFIG" || echo "(无)"
+
+          # 4. 校验 SUSFS 源码存在
+          if [ ! -f "include/linux/susfs.h" ] || [ ! -f "fs/susfs.c" ]; then
+            echo "[-] SUSFS 源码文件缺失"
+            exit 1
+          fi
+          echo "[+] SUSFS 源码存在"
+          grep "SUSFS_VERSION" include/linux/susfs.h || true
+
+          # 5. 校验 Kbuild 中是否有 susfs 引用
+          echo "=== drivers/kernelsu/Kbuild 中的 susfs 引用 ==="
+          grep -n "susfs\|SUSFS" drivers/kernelsu/Kbuild 2>/dev/null | head -20 || echo "(无)"
+
+          echo "=== drivers/kernelsu 目录结构 ==="
+          find drivers/kernelsu -maxdepth 2 -type d 2>/dev/null || true
 
       - name: 🔧 Setup Clang to clang-custom
         shell: bash
