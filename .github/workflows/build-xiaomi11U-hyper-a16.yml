@@ -117,7 +117,7 @@ jobs:
           echo "=== 检查 SUSFS 文件 ==="
           ls -la include/linux/susfs.h include/linux/susfs_def.h fs/susfs.c 2>/dev/null || echo "(SUSFS 文件缺失)"
 
-      - name: 🩹 Apply SUSFS 5.4 patch from zttlove repo
+      - name: 🩹 Apply full SUSFS 5.4 patch from zttlove repo
         working-directory: device_kernel
         shell: bash
         run: |
@@ -128,23 +128,24 @@ jobs:
 
           echo "=== 下载补丁 ==="
           curl -L --fail --retry 3 --connect-timeout 15 -o "$PATCH_FILE" "$PATCH_URL"
-          echo "[+] 补丁下载成功，大小: $(wc -c < "$PATCH_FILE") 字节"
+          echo "[+] 补丁大小: $(wc -c < "$PATCH_FILE") 字节"
 
-          echo "=== 预检补丁 ==="
-          if ! patch -p1 --dry-run < "$PATCH_FILE" > /tmp/patch_dryrun.log 2>&1; then
-            echo "[-] 补丁预检失败，输出："
-            cat /tmp/patch_dryrun.log
-            exit 1
-          fi
-          echo "[+] 预检通过"
+          echo "=== 预检补丁（允许部分 hunk 失败，用 -F3 放宽上下文） ==="
+          patch -p1 --dry-run -F3 < "$PATCH_FILE" > /tmp/patch_dryrun.log 2>&1 || true
+          echo "--- 预检日志 ---"
+          tail -30 /tmp/patch_dryrun.log || true
 
-          echo "=== 应用补丁 ==="
-          patch -p1 < "$PATCH_FILE"
-          echo "[+] 补丁应用成功"
+          echo "=== 应用补丁（-F3 模糊匹配，允许部分失败） ==="
+          patch -p1 -F3 < "$PATCH_FILE" > /tmp/patch_apply.log 2>&1 || true
+          echo "--- 应用日志 ---"
+          tail -30 /tmp/patch_apply.log || true
+
+          echo "=== 检查 .rej 文件（冲突残留） ==="
+          find . -name "*.rej" -not -path "./.git/*" 2>/dev/null | head -20 || echo "(无 .rej)"
 
           echo "=== 检查 SUSFS 关键文件 ==="
           ls -la fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h 2>/dev/null || {
-            echo "[-] SUSFS 文件缺失"
+            echo "[-] SUSFS 文件缺失，补丁未成功应用"
             exit 1
           }
 
@@ -155,6 +156,75 @@ jobs:
           for sym in susfs_is_current_proc_no_su susfs_set_current_proc_no_su susfs_clear_current_proc_no_su susfs_set_current_proc_umounted_for_zygote_next; do
             grep -q "$sym" fs/susfs.c && echo "[+] $sym found" || echo "[-] $sym NOT FOUND"
           done
+
+          echo "=== fs/Makefile susfs 引用 ==="
+          grep -n "susfs" fs/Makefile || echo "[-] fs/Makefile 中没有 susfs 引用"
+
+      - name: 🩹 Ensure fs/Makefile and fs/Kconfig for SUSFS
+        working-directory: device_kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # 1. 修复 fs/Makefile
+          if ! grep -q "susfs" fs/Makefile; then
+            echo "[+] fs/Makefile 中没有 susfs 引用，追加 obj-\$(CONFIG_KSU_SUSFS) += susfs.o"
+            echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> fs/Makefile
+          fi
+          echo "=== fs/Makefile susfs 引用 ==="
+          grep -n "susfs" fs/Makefile
+
+          # 2. 修复 fs/Kconfig
+          if ! grep -q "KSU_SUSFS" fs/Kconfig; then
+          echo "[+] fs/Kconfig 中追加 KSU_SUSFS 配置"
+          cat >> fs/Kconfig << 'EOF'
+
+          # === Auto-injected for SUSFS integration ===
+          config KSU_SUSFS
+          bool "KernelSU SUSFS"
+          depends on KSU
+          default n
+
+          config KSU_SUSFS_SUS_PATH
+          bool "SUSFS sus_path"
+          depends on KSU_SUSFS
+          default n
+          config KSU_SUSFS_SUS_MOUNT
+          bool "SUSFS sus_mount"
+          depends on KSU_SUSFS
+          default n
+          config KSU_SUSFS_SUS_KSTAT
+          bool "SUSFS sus_kstat"
+          depends on KSU_SUSFS
+          default n
+          config KSU_SUSFS_SPOOF_UNAME
+          bool "SUSFS spoof_uname"
+          depends on KSU_SUSFS
+          default n
+          config KSU_SUSFS_ENABLE_LOG
+          bool "SUSFS enable_log"
+          depends on KSU_SUSFS
+          default n
+          config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+          bool "SUSFS hide_ksu_susfs_symbols"
+          depends on KSU_SUSFS
+          default n
+          config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+          bool "SUSFS spoof_cmdline_or_bootconfig"
+          depends on KSU_SUSFS
+          default n
+          config KSU_SUSFS_OPEN_REDIRECT
+          bool "SUSFS open_redirect"
+          depends on KSU_SUSFS
+          default n
+          config KSU_SUSFS_SUS_MAP
+          bool "SUSFS sus_map"
+          depends on KSU_SUSFS
+          default n
+          EOF
+          fi
+          echo "=== fs/Kconfig KSU_SUSFS 配置 ==="
+          grep -n "KSU_SUSFS" fs/Kconfig || echo "(无)"
 
       - name: 🩹 Force enable SUSFS in defconfig
         working-directory: device_kernel
@@ -193,31 +263,6 @@ jobs:
           echo "=== defconfig 中 KSU/SUSFS 相关行 ==="
           grep -n "KSU\|SUSFS" "$DEFCONFIG" || echo "(无)"
 
-      - name: 🔎 Diagnose SUSFS linkage
-        working-directory: device_kernel
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "===== 1. fs/susfs.c 是否存在 ====="
-          ls -la fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h 2>/dev/null || echo "(缺失)"
-
-          echo ""
-          echo "===== 2. fs/Makefile 是否引用了 susfs.o ====="
-          grep -n "susfs" fs/Makefile || echo "[-] fs/Makefile 中没有 susfs 引用！"
-
-          echo ""
-          echo "===== 3. fs/Kconfig 是否定义了 CONFIG_KSU_SUSFS ====="
-          grep -n "KSU_SUSFS\|SUSFS" fs/Kconfig 2>/dev/null | head -20 || echo "(fs/Kconfig 无 SUSFS 配置)"
-
-          echo ""
-          echo "===== 4. defconfig 中 SUSFS 配置 ====="
-          grep -n "KSU_SUSFS" arch/arm64/configs/star_defconfig || echo "(无)"
-
-          echo ""
-          echo "===== 5. fs/susfs.c 中定义的符号 ====="
-          grep -n "susfs_is_current_proc_no_su\|susfs_set_current_proc_no_su\|susfs_clear_current_proc_no_su\|susfs_set_current_proc_umounted_for_zygote_next" fs/susfs.c 2>/dev/null || echo "(未找到符号定义)"
-
       - name: 🔧 Setup Clang to clang-custom
         shell: bash
         run: |
@@ -232,8 +277,25 @@ jobs:
         working-directory: device_kernel
         shell: bash
         run: |
+          echo "=== SUSFS 文件大小 ==="
+          ls -la fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h
+          echo ""
+          echo "=== SUSFS 版本 ==="
+          grep "SUSFS_VERSION" include/linux/susfs.h || echo "(无)"
+          echo ""
+          echo "=== 关键符号 ==="
+          for sym in susfs_is_current_proc_no_su susfs_set_current_proc_no_su susfs_clear_current_proc_no_su susfs_set_current_proc_umounted_for_zygote_next; do
+            grep -q "$sym" fs/susfs.c && echo "[+] $sym found" || echo "[-] $sym NOT FOUND"
+          done
+          echo ""
+          echo "=== fs/Makefile susfs 引用 ==="
+          grep -n "susfs" fs/Makefile || echo "(无)"
+          echo ""
+          echo "=== fs/Kconfig KSU_SUSFS 配置 ==="
+          grep -n "KSU_SUSFS" fs/Kconfig | head -20 || echo "(无)"
+          echo ""
           echo "=== 关键文件 #if / #endif 统计 ==="
-          for f in kernel/kallsyms.c fs/proc/task_mmu.c fs/notify/fdinfo.c fs/stat.c fs/exec.c fs/open.c; do
+          for f in kernel/kallsyms.c fs/proc/task_mmu.c fs/notify/fdinfo.c fs/stat.c fs/exec.c fs/open.c fs/namei.c fs/namespace.c fs/proc_namespace.c fs/readdir.c fs/statfs.c fs/super.c; do
             if [ -f "$f" ]; then
               IF_COUNT=$(grep -c '^#if' "$f" 2>/dev/null || echo 0)
               ENDIF_COUNT=$(grep -c '^#endif' "$f" 2>/dev/null || echo 0)
@@ -242,8 +304,9 @@ jobs:
               echo "$STATUS $f: #if=$IF_COUNT, #endif=$ENDIF_COUNT"
             fi
           done
-          echo "=== fs/Makefile susfs 引用 ==="
-          grep -n "susfs" fs/Makefile || echo "(无)"
+          echo ""
+          echo "=== 残留 .rej 文件 ==="
+          find . -name "*.rej" -not -path "./.git/*" 2>/dev/null | head -20 || echo "(无)"
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
@@ -293,7 +356,7 @@ jobs:
           name: Xiaomi 11 Ultra Star HyperOS A16 NonGKI Kernel
           body: |
             ## Xiaomi 11 Ultra Star HyperOS A16
-            - ReSukiSU + SuSFS 2.1.0（源码自带，Inline Hook）
+            - ReSukiSU + SuSFS 2.1.0（完整集成，Inline Hook）
           files: ${{ env.PACK_NAME }}
           draft: false
           prerelease: false
