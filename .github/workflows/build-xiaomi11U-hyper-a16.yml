@@ -61,7 +61,7 @@ env:
   SUSFS_PATCH_FIXED: "susfs_fixed"
 
   REKERNEL_ENABLE: "false"
-  HOOK_METHOD: "inline"
+  HOOK_METHOD: "inline"      # 关键：使用 Inline Hook
   KERNEL_PATCH: "false"
 
   KPM_ENABLE: "false"
@@ -77,7 +77,7 @@ env:
   GENERATE_CHIP: "qcom"
 
   BUILD_DEBUGGER: "false"
-  SKIP_PATCH: "true"
+  SKIP_PATCH: "true"       # 跳过所有外部补丁
   BUILD_OTHER_CONFIG: "false"
   MERGE_CONFIG_FILES: "vendor/venus_QGKI.config,vendor/xiaomi_QGKI.config"
   FREE_MORE_SPACE: "false"
@@ -119,7 +119,7 @@ jobs:
           grep "SUSFS_VERSION" include/linux/susfs.h 2>/dev/null || echo "(无法读取)"
 
           echo ""
-          echo "===== 检查源码中已存在的 ReSukiSU 钩子 ====="
+          echo "===== 检查源码中已有的 ReSukiSU 钩子 ====="
           echo "ksu_handle_setresuid: $(grep -c 'ksu_handle_setresuid' kernel/sys.c 2>/dev/null || echo 0)"
           echo "ksu_handle_execveat: $(grep -c 'ksu_handle_execveat' fs/exec.c 2>/dev/null || echo 0)"
           echo "ksu_handle_faccessat: $(grep -c 'ksu_handle_faccessat' fs/open.c 2>/dev/null || echo 0)"
@@ -129,18 +129,19 @@ jobs:
           echo "ksu_handle_input_handle_event: $(grep -c 'ksu_handle_input_handle_event' drivers/input/input.c 2>/dev/null || echo 0)"
 
           echo ""
-          echo "===== defconfig 中 KSU / SUSFS 配置 ====="
-          grep -n "KSU\|SUSFS" arch/arm64/configs/star_defconfig 2>/dev/null || echo "(无)"
+          echo "===== 确认 fs/stat.c 中没有手动注入的 MANUAL_HOOK 代码 ====="
+          if grep -q "CONFIG_KSU_MANUAL_HOOK" fs/stat.c; then
+            echo "[-] 检测到 fs/stat.c 中仍有手动注入的代码，正在清理..."
+            # 删除手动注入的代码块
+            sed -i '/#ifdef CONFIG_KSU_MANUAL_HOOK/,/#endif/d' fs/stat.c
+            echo "[+] 已清理 fs/stat.c"
+          else
+            echo "[*] fs/stat.c 干净，无手动注入代码"
+          fi
 
           echo ""
-          echo "===== 确认 CONFIG_KSU_MANUAL_HOOK 未启用 ====="
-          if grep -q "CONFIG_KSU_MANUAL_HOOK=y" arch/arm64/configs/star_defconfig; then
-            echo "[-] 检测到 CONFIG_KSU_MANUAL_HOOK=y，需要移除（源码使用 Inline hook）"
-            sed -i '/^CONFIG_KSU_MANUAL_HOOK=y/d' arch/arm64/configs/star_defconfig
-            echo "[+] 已移除 CONFIG_KSU_MANUAL_HOOK=y"
-          else
-            echo "[*] CONFIG_KSU_MANUAL_HOOK 未启用，符合 Inline hook 模式"
-          fi
+          echo "===== defconfig 中 KSU / SUSFS 配置 ====="
+          grep -n "KSU\|SUSFS" arch/arm64/configs/star_defconfig 2>/dev/null || echo "(无)"
 
           # 确保 SUSFS 关键配置启用
           for opt in \
@@ -160,10 +161,6 @@ jobs:
               echo "[+] 已添加 ${opt}=y"
             fi
           done
-
-          echo ""
-          echo "===== 最终 defconfig KSU 配置 ====="
-          grep -n "KSU" arch/arm64/configs/star_defconfig || echo "(无)"
 
       - name: 🔧 Setup Clang to clang-custom
         shell: bash
