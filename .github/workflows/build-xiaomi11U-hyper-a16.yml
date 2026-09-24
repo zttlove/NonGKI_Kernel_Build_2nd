@@ -35,6 +35,7 @@ env:
   KERNELSU_AUTO_GET: "true"
   KERNELSU_AUTO_FORK: "resukisu"
 
+  # 源码已自带 SUSFS 2.1.0 + ReSukiSU Inline Hook
   SUSFS_ENABLE: "true"
   SUSFS_FIXED: "false"
 
@@ -60,7 +61,7 @@ env:
   SUSFS_PATCH_FIXED: "susfs_fixed"
 
   REKERNEL_ENABLE: "false"
-  HOOK_METHOD: "manual"
+  HOOK_METHOD: "inline"
   KERNEL_PATCH: "false"
 
   KPM_ENABLE: "false"
@@ -100,71 +101,48 @@ jobs:
       - name: ⚙️ Get neccssary tools
         uses: ./.github/workflows/build-ready
 
-      - name: 🔍 Diagnose kernel source state
+      - name: 🔎 Verify source state (no modifications)
         working-directory: device_kernel
         shell: bash
         run: |
           set -euo pipefail
+
           echo "===== git 当前提交 ====="
           git log -1 --oneline || true
-          echo ""
-          echo "===== include/linux 下 susfs 文件 ====="
-          ls -la include/linux/susfs*.h 2>/dev/null || echo "(未找到)"
-          echo ""
-          echo "===== fs 下 susfs 文件 ====="
-          ls -la fs/susfs.c 2>/dev/null || echo "(未找到)"
-          echo ""
-          echo "===== git 历史中的 susfs 提交 ====="
-          git log --oneline --all -- include/linux/susfs.h 2>/dev/null | head -5 || echo "(无历史记录)"
-          echo ""
-          echo "===== 远程 main 最新提交 ====="
-          git ls-remote origin main 2>/dev/null | head -3 || echo "(无法访问)"
 
-      - name: 🩹 Ensure SUSFS files and inject ReSukiSU hooks
-        working-directory: device_kernel
-        shell: bash
-        run: |
-          set -euo pipefail
+          echo ""
+          echo "===== SUSFS 源码文件 ====="
+          ls -la include/linux/susfs.h include/linux/susfs_def.h fs/susfs.c 2>/dev/null || echo "(SUSFS 文件缺失)"
 
-          # ========== 1. 强制切到 main 最新提交 ==========
-          echo "=== 强制切到 main 最新提交 ==="
-          git fetch origin main --depth=1 2>/dev/null || true
-          git checkout origin/main -- . 2>/dev/null || true
-          git log -1 --oneline || true
+          echo ""
+          echo "===== SUSFS 版本 ====="
+          grep "SUSFS_VERSION" include/linux/susfs.h 2>/dev/null || echo "(无法读取)"
 
-          # ========== 2. 检查 SUSFS 文件，缺失则从远程恢复 ==========
-          echo "=== 检查 SUSFS 源码 ==="
-          SUSFS_BASE="https://raw.githubusercontent.com/MiYume0721/android_kernel_xiaomi_sm8350_miyume/main"
-          if [ ! -f "include/linux/susfs.h" ]; then
-            echo "[-] include/linux/susfs.h 不存在，从远程恢复..."
-            curl -L --fail --retry 3 -o include/linux/susfs.h "$SUSFS_BASE/include/linux/susfs.h" || true
-          fi
-          if [ ! -f "include/linux/susfs_def.h" ]; then
-            echo "[-] include/linux/susfs_def.h 不存在，从远程恢复..."
-            curl -L --fail --retry 3 -o include/linux/susfs_def.h "$SUSFS_BASE/include/linux/susfs_def.h" || true
-          fi
-          if [ ! -f "fs/susfs.c" ]; then
-            echo "[-] fs/susfs.c 不存在，从远程恢复..."
-            curl -L --fail --retry 3 -o fs/susfs.c "$SUSFS_BASE/fs/susfs.c" || true
-          fi
+          echo ""
+          echo "===== 检查源码中已存在的 ReSukiSU 钩子 ====="
+          echo "ksu_handle_setresuid: $(grep -c 'ksu_handle_setresuid' kernel/sys.c 2>/dev/null || echo 0)"
+          echo "ksu_handle_execveat: $(grep -c 'ksu_handle_execveat' fs/exec.c 2>/dev/null || echo 0)"
+          echo "ksu_handle_faccessat: $(grep -c 'ksu_handle_faccessat' fs/open.c 2>/dev/null || echo 0)"
+          echo "ksu_handle_sys_read: $(grep -c 'ksu_handle_sys_read' fs/read_write.c 2>/dev/null || echo 0)"
+          echo "ksu_handle_stat: $(grep -c 'ksu_handle_stat' fs/stat.c 2>/dev/null || echo 0)"
+          echo "ksu_handle_sys_reboot: $(grep -c 'ksu_handle_sys_reboot' kernel/reboot.c 2>/dev/null || echo 0)"
+          echo "ksu_handle_input_handle_event: $(grep -c 'ksu_handle_input_handle_event' drivers/input/input.c 2>/dev/null || echo 0)"
 
-          # 最终确认
-          if [ -f "include/linux/susfs.h" ] && [ -f "fs/susfs.c" ]; then
-            echo "[+] SUSFS 源码已就绪"
-            grep "SUSFS_VERSION" include/linux/susfs.h || true
+          echo ""
+          echo "===== defconfig 中 KSU / SUSFS 配置 ====="
+          grep -n "KSU\|SUSFS" arch/arm64/configs/star_defconfig 2>/dev/null || echo "(无)"
+
+          echo ""
+          echo "===== 确认 CONFIG_KSU_MANUAL_HOOK 未启用 ====="
+          if grep -q "CONFIG_KSU_MANUAL_HOOK=y" arch/arm64/configs/star_defconfig; then
+            echo "[-] 检测到 CONFIG_KSU_MANUAL_HOOK=y，需要移除（源码使用 Inline hook）"
+            sed -i '/^CONFIG_KSU_MANUAL_HOOK=y/d' arch/arm64/configs/star_defconfig
+            echo "[+] 已移除 CONFIG_KSU_MANUAL_HOOK=y"
           else
-            echo "[-] SUSFS 源码恢复失败"
-            exit 1
+            echo "[*] CONFIG_KSU_MANUAL_HOOK 未启用，符合 Inline hook 模式"
           fi
 
-          # ========== 3. 确保 defconfig 配置正确 ==========
-          DEFCONFIG="arch/arm64/configs/star_defconfig"
-
-          if ! grep -q "CONFIG_KSU_MANUAL_HOOK=y" "$DEFCONFIG"; then
-            echo "CONFIG_KSU_MANUAL_HOOK=y" >> "$DEFCONFIG"
-            echo "[+] 已添加 CONFIG_KSU_MANUAL_HOOK=y"
-          fi
-
+          # 确保 SUSFS 关键配置启用
           for opt in \
             CONFIG_KSU_SUSFS \
             CONFIG_KSU_SUSFS_SUS_PATH \
@@ -177,95 +155,15 @@ jobs:
             CONFIG_KSU_SUSFS_OPEN_REDIRECT \
             CONFIG_KSU_SUSFS_SUS_MAP
           do
-            if ! grep -q "^${opt}=y" "$DEFCONFIG"; then
-              echo "${opt}=y" >> "$DEFCONFIG"
+            if ! grep -q "^${opt}=y" arch/arm64/configs/star_defconfig; then
+              echo "${opt}=y" >> arch/arm64/configs/star_defconfig
+              echo "[+] 已添加 ${opt}=y"
             fi
           done
-          echo "[+] defconfig SUSFS 配置已就绪"
 
-          # ========== 4. 注入 ReSukiSU Manual Hook ==========
-          STAT_FILE="fs/stat.c"
-          if ! grep -q "#include <linux/ksu.h>" "$STAT_FILE"; then
-            sed -i '1i #include <linux/ksu.h>' "$STAT_FILE"
-          fi
-
-          # 4.1 ksu_handle_stat
-          if ! grep -q "ksu_handle_stat" "$STAT_FILE"; then
-            echo "=== 注入 ksu_handle_stat ==="
-            awk '
-              { line = $0 }
-              line ~ /SYSCALL_DEFINE4\(newfstatat,/ && !in_func && !done { in_func = 1 }
-              in_func {
-                tmp = line; brace += gsub(/\{/, "", tmp)
-                tmp = line; brace -= gsub(/\}/, "", tmp)
-                if (!started && brace > 0) started = 1
-                if (started && brace == 0) { in_func = 0; done = 1 }
-              }
-              in_func && started && !inserted && line ~ /vfs_fstatat\(/ {
-                print "\t#ifdef CONFIG_KSU_MANUAL_HOOK"
-                print "\tksu_handle_stat(&dfd, &filename, &flag);"
-                print "\t#endif"
-                inserted = 1
-              }
-              { print line }
-            ' "$STAT_FILE" > "${STAT_FILE}.tmp"
-            mv "${STAT_FILE}.tmp" "$STAT_FILE"
-          fi
-
-          # 4.2 ksu_handle_newfstat_ret
-          if ! grep -q "ksu_handle_newfstat_ret" "$STAT_FILE"; then
-            echo "=== 注入 ksu_handle_newfstat_ret ==="
-            awk '
-              { line = $0 }
-              line ~ /SYSCALL_DEFINE2\(newfstat,/ && !in_func && !done { in_func = 1 }
-              in_func {
-                tmp = line; brace += gsub(/\{/, "", tmp)
-                tmp = line; brace -= gsub(/\}/, "", tmp)
-                if (!started && brace > 0) started = 1
-                if (started && brace == 0) { in_func = 0; done = 1 }
-              }
-              in_func && started && !inserted && line ~ /return[ \t]+error;/ {
-                print "\t#ifdef CONFIG_KSU_MANUAL_HOOK"
-                print "\tksu_handle_newfstat_ret(&fd, &statbuf);"
-                print "\t#endif"
-                inserted = 1
-              }
-              { print line }
-            ' "$STAT_FILE" > "${STAT_FILE}.tmp"
-            mv "${STAT_FILE}.tmp" "$STAT_FILE"
-          fi
-
-          # 4.3 ksu_handle_fstat64_ret
-          if ! grep -q "ksu_handle_fstat64_ret" "$STAT_FILE"; then
-            echo "=== 注入 ksu_handle_fstat64_ret ==="
-            awk '
-              { line = $0 }
-              line ~ /SYSCALL_DEFINE2\(fstat64,/ && !in_func && !done { in_func = 1 }
-              in_func {
-                tmp = line; brace += gsub(/\{/, "", tmp)
-                tmp = line; brace -= gsub(/\}/, "", tmp)
-                if (!started && brace > 0) started = 1
-                if (started && brace == 0) { in_func = 0; done = 1 }
-              }
-              in_func && started && !inserted && line ~ /return[ \t]+error;/ {
-                print "\t#ifdef CONFIG_KSU_MANUAL_HOOK"
-                print "\tksu_handle_fstat64_ret(&fd, &statbuf);"
-                print "\t#endif"
-                inserted = 1
-              }
-              { print line }
-            ' "$STAT_FILE" > "${STAT_FILE}.tmp"
-            mv "${STAT_FILE}.tmp" "$STAT_FILE"
-          fi
-
-          # ========== 5. 最终验证 ==========
-          echo "=== 最终验证 ==="
-          grep "SUSFS_VERSION" include/linux/susfs.h || true
-          echo "ksu_handle_stat: $(grep -c 'ksu_handle_stat' "$STAT_FILE" || echo 0)"
-          echo "ksu_handle_newfstat_ret: $(grep -c 'ksu_handle_newfstat_ret' "$STAT_FILE" || echo 0)"
-          echo "ksu_handle_fstat64_ret: $(grep -c 'ksu_handle_fstat64_ret' "$STAT_FILE" || echo 0)"
-          echo "defconfig KSU_MANUAL_HOOK: $(grep -c 'CONFIG_KSU_MANUAL_HOOK=y' "$DEFCONFIG" || echo 0)"
-          echo "defconfig KSU_SUSFS: $(grep -c 'CONFIG_KSU_SUSFS=y' "$DEFCONFIG" || echo 0)"
+          echo ""
+          echo "===== 最终 defconfig KSU 配置 ====="
+          grep -n "KSU" arch/arm64/configs/star_defconfig || echo "(无)"
 
       - name: 🔧 Setup Clang to clang-custom
         shell: bash
@@ -276,20 +174,6 @@ jobs:
           git clone --depth=1 https://github.com/thenoppy12/clang-r416183b.git "$DEST"
           "$DEST/bin/clang" --version | head -1
           echo "✅ Clang 已就绪: $DEST/bin"
-
-      - name: 🔎 Verify source completeness
-        working-directory: device_kernel
-        run: |
-          echo "=== SUSFS 版本 ==="
-          grep "SUSFS_VERSION" include/linux/susfs.h 2>/dev/null || echo "(无)"
-          echo "=== KSU hook 检查 ==="
-          grep -c "ksu_handle_setresuid" kernel/sys.c || echo 0
-          grep -c "ksu_handle_sys_read" fs/read_write.c || echo 0
-          grep -c "ksu_handle_stat" fs/stat.c || echo 0
-          grep -c "ksu_handle_newfstat_ret" fs/stat.c || echo 0
-          grep -c "ksu_handle_fstat64_ret" fs/stat.c || echo 0
-          echo "=== defconfig KSU 配置 ==="
-          grep -n "KSU_MANUAL_HOOK\|KSU_SUSFS" arch/arm64/configs/star_defconfig || echo "(无)"
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
@@ -339,7 +223,7 @@ jobs:
           name: Xiaomi 11 Ultra Star HyperOS A16 NonGKI Kernel
           body: |
             ## Xiaomi 11 Ultra Star HyperOS A16
-            - ReSukiSU + SuSFS 2.1.0（源码自带）
+            - ReSukiSU + SuSFS 2.1.0（源码自带，Inline Hook）
           files: ${{ env.PACK_NAME }}
           draft: false
           prerelease: false
