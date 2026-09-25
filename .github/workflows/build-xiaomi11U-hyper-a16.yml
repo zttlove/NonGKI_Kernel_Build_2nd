@@ -132,7 +132,6 @@ jobs:
 
           mkdir -p include/linux fs
 
-          # 用 awk 从 patch 提取新增文件的完整内容
           extract_newfile() {
             local target="$1"
             local output="$2"
@@ -240,7 +239,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          # 只修 fs/Makefile，不动 fs/Kconfig
           if ! grep -q "susfs" fs/Makefile; then
             echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> fs/Makefile
             echo "[+] fs/Makefile 已追加 susfs.o 引用"
@@ -248,7 +246,6 @@ jobs:
           echo "=== fs/Makefile susfs 引用 ==="
           grep -n "susfs" fs/Makefile || echo "(无)"
 
-          # 恢复 fs/Kconfig 干净版本，避免语法错误
           echo "=== 恢复 fs/Kconfig ==="
           curl -L --fail --retry 3 -o fs/Kconfig \
             "https://raw.githubusercontent.com/MiYume0721/android_kernel_xiaomi_sm8350_miyume/main/fs/Kconfig"
@@ -316,13 +313,17 @@ jobs:
           echo ""
           echo "=== ReSukiSU 旧 API 调用点分布 ==="
           for api in susfs_is_current_proc_no_su susfs_set_current_proc_no_su susfs_clear_current_proc_no_su susfs_set_current_proc_umounted_for_zygote_next susfs_open_redirect_spoof_show_map_vma susfs_hide_sus_mnts_for_non_su_procs; do
-            COUNT=$(grep -rc "$api" drivers/kernelsu/ 2>/dev/null | awk -F: '{sum+=$2} END {print sum}')
+            COUNT=$(grep -rc "$api" drivers/kernelsu/ 2>/dev/null | awk -F: '{sum+=$2} END {print sum+0}' || true)
             echo "$api: $COUNT 处"
           done
           echo ""
           echo "=== fs/susfs.c 中 compat shim 符号 ==="
           for api in susfs_is_current_proc_no_su susfs_set_current_proc_no_su susfs_clear_current_proc_no_su susfs_set_current_proc_umounted_for_zygote_next susfs_open_redirect_spoof_show_map_vma susfs_hide_sus_mnts_for_non_su_procs; do
-            grep -q "$api" fs/susfs.c && echo "[+] $api found" || echo "[-] $api NOT FOUND"
+            if grep -q "$api" fs/susfs.c 2>/dev/null; then
+              echo "[+] $api found"
+            else
+              echo "[-] $api NOT FOUND"
+            fi
           done
           echo ""
           echo "=== 残留 .rej 文件 ==="
