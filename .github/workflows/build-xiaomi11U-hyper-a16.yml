@@ -298,6 +298,15 @@ jobs:
           "$DEST/bin/clang" --version | head -1
           echo "✅ Clang 已就绪: $DEST/bin"
 
+      - name: 🧹 Cleanup unrelated .rej files
+        working-directory: device_kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          find . -name "*.rej" -not -path "./.git/*" -delete 2>/dev/null || true
+          echo "[+] 已清理所有 .rej 文件"
+          find . -name "*.rej" -not -path "./.git/*" 2>/dev/null | head -5 || echo "(无残留)"
+
       - name: 🔎 Final source integrity check
         working-directory: device_kernel
         shell: bash
