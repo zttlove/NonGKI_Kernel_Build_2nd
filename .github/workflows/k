@@ -1,0 +1,61 @@
+# ========== 2. 生成兼容 shim ==========
+          echo ""
+          echo "=== 生成 v2.3.0 兼容 shim ==="
+          if ! grep -q "ReSukiSU legacy API compat" fs/susfs.c; then
+            cat >> fs/susfs.c << 'EOF'
+
+          /* === ReSukiSU legacy API compat (mapped to SUSFS v2.3.0) === */
+          #include <linux/statfs.h>
+          #include <linux/seq_file.h>
+          #include <linux/mm.h>
+          #include <linux/jump_label.h>
+
+          extern int susfs_open_redirect_spoof_show_map_vma_srcu(struct inode *inode, unsigned long *out_ino, dev_t *out_dev, char **out_spoofed_name);
+          extern bool susfs_is_current_ksu_domain(void);
+
+          /* Legacy process no-su state: 用 static_key 实现占位 */
+          DEFINE_STATIC_KEY_FALSE(susfs_is_current_proc_no_su_enabled);
+
+          bool susfs_is_current_proc_no_su(void) {
+          return static_branch_unlikely(&susfs_is_current_proc_no_su_enabled);
+          }
+
+          void susfs_set_current_proc_no_su(void) {
+          static_branch_enable(&susfs_is_current_proc_no_su_enabled);
+          }
+
+          void susfs_clear_current_proc_no_su(void) {
+          static_branch_disable(&susfs_is_current_proc_no_su_enabled);
+          }
+
+          void susfs_set_current_proc_umounted_for_zygote_next(void) {
+              /* v2.3.0 已通过 susfs_get_non_sus_vfsmnt_from_vfsmnt 实现，
+               * 这里保留空实现以满足旧 API 链接 */
+          }
+
+          /* Legacy open_redirect show_map_vma → 转发到 v2.3.0 的 _srcu 版本 */
+          int susfs_open_redirect_spoof_show_map_vma(struct inode *inode, unsigned long *out_ino, dev_t *out_dev, char **out_spoofed_name)
+          {
+          return susfs_open_redirect_spoof_show_map_vma_srcu(inode, out_ino, out_dev, out_spoofed_name);
+          }
+
+          /* Legacy static_key → v2.3.0 已提供 susfs_is_hide_sus_mnts_for_non_su_procs_enabled，
+           * 旧 API 符号保留空定义以满足链接 */
+          struct static_key_false susfs_hide_sus_mnts_for_non_su_procs;
+
+          /* 补充可能缺失的 open_redirect 相关函数 */
+          int susfs_open_redirect_spoof_vfs_statfs(struct inode *inode, struct kstatfs *buf, bool *is_fuse)
+          {
+           return 0;
+          }
+
+          int susfs_open_redirect_spoof_seq_show(struct seq_file *m, struct inode *inode, unsigned long *out_ino, dev_t *out_dev)
+          {
+            return 0;
+          }
+          EOF
+            echo "[+] 兼容 shim 已追加到 fs/susfs.c"
+          fi
+
+          echo "=== fs/susfs.c 尾部 30 行 ==="
+          tail -30 fs/susfs.c
