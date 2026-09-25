@@ -155,6 +155,51 @@ jobs:
           ls -la fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h
           grep "SUSFS_VERSION" include/linux/susfs.h || true
 
+      - name: 🩹 Add missing SUSFS v2.3.0 API shims
+        working-directory: device_kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # 只补 4 个真正缺失的符号，不重复定义 susfs_def.h 里已有的 inline 函数
+          if ! grep -q "ReSukiSU missing API shims" fs/susfs.c; then
+            {
+              printf '\n'
+              printf '/* === ReSukiSU missing API shims (v2.3.0 rename) === */\n'
+              printf '#include <linux/statfs.h>\n'
+              printf '#include <linux/seq_file.h>\n'
+              printf '#include <linux/mm.h>\n'
+              printf '#include <linux/jump_label.h>\n'
+              printf '\n'
+              printf 'extern int susfs_open_redirect_spoof_show_map_vma_srcu(struct inode *inode, unsigned long *out_ino, dev_t *out_dev, char **out_spoofed_name);\n'
+              printf '\n'
+              printf '/* susfs_hide_sus_mnts_for_non_su_procs: 旧版 static_key，v2.3.0 用 susfs_is_hide_sus_mnts_for_non_su_procs_enabled 替代 */\n'
+              printf 'struct static_key_false susfs_hide_sus_mnts_for_non_su_procs;\n'
+              printf '\n'
+              printf '/* 旧版 open_redirect spoof 函数，转发到 v2.3.0 的 _srcu 版本 */\n'
+              printf 'int susfs_open_redirect_spoof_show_map_vma(struct inode *inode, unsigned long *out_ino, dev_t *out_dev, char **out_spoofed_name)\n'
+              printf '{\n'
+              printf '    return susfs_open_redirect_spoof_show_map_vma_srcu(inode, out_ino, out_dev, out_spoofed_name);\n'
+              printf '}\n'
+              printf '\n'
+              printf 'int susfs_open_redirect_spoof_vfs_statfs(struct inode *inode, struct kstatfs *buf, bool *is_fuse)\n'
+              printf '{\n'
+              printf '    return 0;\n'
+              printf '}\n'
+              printf '\n'
+              printf 'int susfs_open_redirect_spoof_seq_show(struct seq_file *m, struct inode *inode, unsigned long *out_ino, dev_t *out_dev)\n'
+              printf '{\n'
+              printf '    return 0;\n'
+              printf '}\n'
+            } >> fs/susfs.c
+            echo "[+] 已追加 4 个缺失 API shim"
+          else
+            echo "[*] shim 已存在，跳过"
+          fi
+
+          echo "=== fs/susfs.c 尾部 30 行 ==="
+          tail -30 fs/susfs.c
+
       - name: 🩹 Ensure fs/Makefile for SUSFS (no Kconfig modification)
         working-directory: device_kernel
         shell: bash
@@ -241,7 +286,16 @@ jobs:
           echo "=== fs/Makefile susfs 引用 ==="
           grep -n "susfs" fs/Makefile || echo "(无)"
           echo ""
-          echo "=== susfs_def.h 中旧 API 兼容定义 ==="
+          echo "=== shim 中新增符号 ==="
+          for api in susfs_open_redirect_spoof_vfs_statfs susfs_hide_sus_mnts_for_non_su_procs susfs_open_redirect_spoof_show_map_vma susfs_open_redirect_spoof_seq_show; do
+            if grep -q "$api" fs/susfs.c 2>/dev/null; then
+              echo "[+] $api found"
+            else
+              echo "[-] $api NOT FOUND"
+            fi
+          done
+          echo ""
+          echo "=== susfs_def.h 旧 API inline 定义 ==="
           grep -n "susfs_is_current_proc_no_su\|susfs_set_current_proc_no_su\|susfs_clear_current_proc_no_su\|susfs_set_current_proc_umounted_for_zygote_next" include/linux/susfs_def.h || echo "(无)"
           echo ""
           echo "=== 残留 .rej 文件 ==="
@@ -295,7 +349,7 @@ jobs:
           name: Xiaomi 11 Ultra Star HyperOS A16 NonGKI Kernel
           body: |
             ## Xiaomi 11 Ultra Star HyperOS A16
-            - ReSukiSU + SuSFS 2.3.0（源码集成）
+            - ReSukiSU + SuSFS 2.3.0（源码集成 + 4 个 shim）
           files: ${{ env.PACK_NAME }}
           draft: false
           prerelease: false
