@@ -107,15 +107,11 @@ jobs:
           set -euo pipefail
 
           echo "=== 强制重置到上游 main 最新提交 ==="
-          git remote -v
           git fetch origin main --depth=1
           git reset --hard origin/main
           git clean -fdx
           echo "=== 当前提交 ==="
           git log -1 --oneline
-
-          echo "=== 检查源码自带 SUSFS 文件 ==="
-          ls -la include/linux/susfs.h include/linux/susfs_def.h fs/susfs.c 2>/dev/null || echo "(SUSFS 文件缺失)"
 
       - name: 🩹 Extract v2.3.0 susfs.c / susfs.h / susfs_def.h from patch
         working-directory: device_kernel
@@ -126,7 +122,6 @@ jobs:
           PATCH_URL="https://raw.githubusercontent.com/zttlove/NonGKI_Kernel_Build_2nd/mainline/susfs_patch_to_5.4.patch"
           PATCH_FILE="/tmp/susfs_patch_to_5.4.patch"
 
-          echo "=== 下载 SUSFS 5.4 补丁（v2.3.0） ==="
           curl -L --fail --retry 3 --connect-timeout 15 -o "$PATCH_FILE" "$PATCH_URL"
           echo "[+] 补丁大小: $(wc -c < "$PATCH_FILE") 字节"
 
@@ -136,10 +131,7 @@ jobs:
             local target="$1"
             local output="$2"
             awk -v target="$target" '
-              /^diff --git / {
-                in_target = ($0 ~ "b/" target "$")
-                next
-              }
+              /^diff --git / { in_target = ($0 ~ "b/" target "$"); next }
               in_target && /^\+\+\+/ { next }
               in_target && /^\+/ { print substr($0, 2); next }
               in_target && /^ / { print substr($0, 2); next }
@@ -151,9 +143,25 @@ jobs:
           extract_newfile "include/linux/susfs.h" "include/linux/susfs.h"
           extract_newfile "include/linux/susfs_def.h" "include/linux/susfs_def.h"
 
-          echo "=== 提取后验证 ==="
           ls -la fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h
-          grep "SUSFS_VERSION" include/linux/susfs.h || true
+
+      - name: 🩹 Export statfs internals from fs/statfs.c
+        working-directory: device_kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          STATFS="fs/statfs.c"
+
+          echo "=== 修改前 ==="
+          grep -n "^static int statfs_by_dentry\|^static int calculate_f_flags" "$STATFS" || true
+
+          # 把 static 去掉
+          sed -i 's/^static int statfs_by_dentry(/int statfs_by_dentry(/' "$STATFS"
+          sed -i 's/^static int calculate_f_flags(/int calculate_f_flags(/' "$STATFS"
+
+          echo "=== 修改后 ==="
+          grep -n "^int statfs_by_dentry\|^int calculate_f_flags" "$STATFS" || true
 
       - name: 🩹 Add missing SUSFS v2.3.0 API shims
         working-directory: device_kernel
@@ -161,7 +169,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          # 只补 4 个真正缺失的符号，不重复定义 susfs_def.h 里已有的 inline 函数
           if ! grep -q "ReSukiSU missing API shims" fs/susfs.c; then
             {
               printf '\n'
@@ -170,13 +177,26 @@ jobs:
               printf '#include <linux/seq_file.h>\n'
               printf '#include <linux/mm.h>\n'
               printf '#include <linux/jump_label.h>\n'
+              printf '#include <linux/mount.h>\n'
               printf '\n'
               printf 'extern int susfs_open_redirect_spoof_show_map_vma_srcu(struct inode *inode, unsigned long *out_ino, dev_t *out_dev, char **out_spoofed_name);\n'
+              printf 'extern int statfs_by_dentry(struct dentry *dentry, struct kstatfs *buf);\n'
+              printf 'extern int calculate_f_flags(struct vfsmount *mnt);\n'
               printf '\n'
-              printf '/* susfs_hide_sus_mnts_for_non_su_procs: 旧版 static_key，v2.3.0 用 susfs_is_hide_sus_mnts_for_non_su_procs_enabled 替代 */\n'
+              printf '/* 旧版 static_key */\n'
               printf 'struct static_key_false susfs_hide_sus_mnts_for_non_su_procs;\n'
               printf '\n'
-              printf '/* 旧版 open_redirect spoof 函数，转发到 v2.3.0 的 _srcu 版本 */\n'
+              printf '/* wrapper 函数 */\n'
+              printf 'int statfs_by_dentry_wrapper(struct dentry *dentry, struct kstatfs *buf)\n'
+              printf '{\n'
+              printf '    return statfs_by_dentry(dentry, buf);\n'
+              printf '}\n'
+              printf '\n'
+              printf 'int calculate_f_flags_wrapper(struct vfsmount *mnt)\n'
+              printf '{\n'
+              printf '    return calculate_f_flags(mnt);\n'
+              printf '}\n'
+              printf '\n'
               printf 'int susfs_open_redirect_spoof_show_map_vma(struct inode *inode, unsigned long *out_ino, dev_t *out_dev, char **out_spoofed_name)\n'
               printf '{\n'
               printf '    return susfs_open_redirect_spoof_show_map_vma_srcu(inode, out_ino, out_dev, out_spoofed_name);\n'
@@ -192,31 +212,24 @@ jobs:
               printf '    return 0;\n'
               printf '}\n'
             } >> fs/susfs.c
-            echo "[+] 已追加 4 个缺失 API shim"
-          else
-            echo "[*] shim 已存在，跳过"
+            echo "[+] 已追加缺失 API shim（含 wrapper）"
           fi
 
-          echo "=== fs/susfs.c 尾部 30 行 ==="
-          tail -30 fs/susfs.c
+          echo "=== fs/susfs.c 尾部 40 行 ==="
+          tail -40 fs/susfs.c
 
-      - name: 🩹 Ensure fs/Makefile for SUSFS (no Kconfig modification)
+      - name: 🩹 Ensure fs/Makefile for SUSFS
         working-directory: device_kernel
         shell: bash
         run: |
           set -euo pipefail
-
           if ! grep -q "susfs" fs/Makefile; then
             echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> fs/Makefile
-            echo "[+] fs/Makefile 已追加 susfs.o 引用"
           fi
-          echo "=== fs/Makefile susfs 引用 ==="
-          grep -n "susfs" fs/Makefile || echo "(无)"
+          grep -n "susfs" fs/Makefile
 
-          echo "=== 恢复 fs/Kconfig ==="
           curl -L --fail --retry 3 -o fs/Kconfig \
             "https://raw.githubusercontent.com/MiYume0721/android_kernel_xiaomi_sm8350_miyume/main/fs/Kconfig"
-          echo "[+] fs/Kconfig 已恢复干净版本"
 
       - name: 🩹 Force enable SUSFS in defconfig
         working-directory: device_kernel
@@ -225,10 +238,7 @@ jobs:
           set -euo pipefail
 
           DEFCONFIG="arch/arm64/configs/star_defconfig"
-
-          if [ -n "$(tail -c 1 "$DEFCONFIG")" ]; then
-            echo "" >> "$DEFCONFIG"
-          fi
+          if [ -n "$(tail -c 1 "$DEFCONFIG")" ]; then echo "" >> "$DEFCONFIG"; fi
 
           sed -i '/^# CONFIG_KSU_SUSFS/d' "$DEFCONFIG"
           sed -i '/^CONFIG_KSU_SUSFS/d' "$DEFCONFIG"
@@ -252,16 +262,12 @@ jobs:
             echo "CONFIG_KSU_SUSFS_SUS_MAP=y"
           } >> "$DEFCONFIG"
 
-          echo "=== defconfig KSU/SUSFS 相关行 ==="
-          grep -n "KSU\|SUSFS" "$DEFCONFIG" || echo "(无)"
-
       - name: 🧹 Cleanup unrelated .rej files
         working-directory: device_kernel
         shell: bash
         run: |
           set -euo pipefail
           find . -name "*.rej" -not -path "./.git/*" -delete 2>/dev/null || true
-          echo "[+] 已清理所有 .rej 文件"
 
       - name: 🔧 Setup Clang to clang-custom
         shell: bash
@@ -271,35 +277,19 @@ jobs:
           rm -rf "$DEST"
           git clone --depth=1 https://github.com/thenoppy12/clang-r416183b.git "$DEST"
           "$DEST/bin/clang" --version | head -1
-          echo "✅ Clang 已就绪: $DEST/bin"
 
       - name: 🔎 Final source integrity check
         working-directory: device_kernel
         shell: bash
         run: |
-          echo "=== SUSFS 文件 ==="
-          ls -la fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h
-          echo ""
           echo "=== SUSFS 版本 ==="
           grep "SUSFS_VERSION" include/linux/susfs.h || echo "(无)"
-          echo ""
-          echo "=== fs/Makefile susfs 引用 ==="
-          grep -n "susfs" fs/Makefile || echo "(无)"
-          echo ""
-          echo "=== shim 中新增符号 ==="
-          for api in susfs_open_redirect_spoof_vfs_statfs susfs_hide_sus_mnts_for_non_su_procs susfs_open_redirect_spoof_show_map_vma susfs_open_redirect_spoof_seq_show; do
-            if grep -q "$api" fs/susfs.c 2>/dev/null; then
-              echo "[+] $api found"
-            else
-              echo "[-] $api NOT FOUND"
-            fi
+          echo "=== fs/statfs.c 中导出的函数 ==="
+          grep -n "^int statfs_by_dentry\|^int calculate_f_flags" fs/statfs.c || echo "(未找到非 static 版本)"
+          echo "=== shim 符号检查 ==="
+          for api in susfs_open_redirect_spoof_vfs_statfs susfs_hide_sus_mnts_for_non_su_procs susfs_open_redirect_spoof_show_map_vma susfs_open_redirect_spoof_seq_show statfs_by_dentry_wrapper calculate_f_flags_wrapper; do
+            grep -q "$api" fs/susfs.c && echo "[+] $api found" || echo "[-] $api NOT FOUND"
           done
-          echo ""
-          echo "=== susfs_def.h 旧 API inline 定义 ==="
-          grep -n "susfs_is_current_proc_no_su\|susfs_set_current_proc_no_su\|susfs_clear_current_proc_no_su\|susfs_set_current_proc_umounted_for_zygote_next" include/linux/susfs_def.h || echo "(无)"
-          echo ""
-          echo "=== 残留 .rej 文件 ==="
-          find . -name "*.rej" -not -path "./.git/*" 2>/dev/null | head -20 || echo "(无)"
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
@@ -349,7 +339,7 @@ jobs:
           name: Xiaomi 11 Ultra Star HyperOS A16 NonGKI Kernel
           body: |
             ## Xiaomi 11 Ultra Star HyperOS A16
-            - ReSukiSU + SuSFS 2.3.0（源码集成 + 4 个 shim）
+            - ReSukiSU + SuSFS 2.3.0（源码集成 + 完整 shim）
           files: ${{ env.PACK_NAME }}
           draft: false
           prerelease: false
