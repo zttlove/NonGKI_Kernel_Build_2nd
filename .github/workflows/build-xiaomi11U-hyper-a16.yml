@@ -15,9 +15,10 @@ env:
 
   KERNEL_SOURCE: "https://github.com/zttlove/android_kernel_xiaomi_sm8350_miyume.git"
   KERNEL_BRANCH: "main"
+  
+  CLANG_SOURCE : "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-18.04.tar.xz"
+  CLANG_BRANCH : ""
 
-  CLANG_SOURCE: "https://github.com/AICP/prebuilts_clang_host_linux-x86.git"
-  CLANG_BRANCH: "master"
 
   GCC_GNU: false
   GCC_64_SOURCE: "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9.git"
