@@ -1,4 +1,4 @@
-name: Clean SUSFS 2.1 from Kernel
+name: Clean SUSFS 2.1 from Kernel0
 
 on:
   workflow_dispatch:
