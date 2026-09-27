@@ -56,8 +56,8 @@ jobs:
       - name: Download Clang
         run: |
           mkdir -p ${{ env.CLANG_DIR }}
-          curl -L --retry 3 -o clang.tar.xz "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r487747c.tar.gz"
-          tar -xf clang.tar.xz -C ${{ env.CLANG_DIR }} --strip-components=1
+          curl -L --retry 3 -o clang.tar.gz "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r487747c.tar.gz"
+          tar -xzf clang.tar.gz -C ${{ env.CLANG_DIR }} --strip-components=1
           rm clang.tar.xz
           ${{ env.CLANG_DIR }}/bin/clang --version
 
