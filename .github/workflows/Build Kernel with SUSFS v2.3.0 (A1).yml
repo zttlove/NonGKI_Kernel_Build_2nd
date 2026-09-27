@@ -56,18 +56,13 @@ jobs:
       - name: Download Clang (From LLVM GitHub)
         run: |
           mkdir -p ${{ env.CLANG_DIR }}
-          # 从 GitHub 官方 Release 下载
           curl -L --retry 3 -o clang.tar.xz "https://github.com/llvm/llvm-project/releases/download/llvmorg-14.0.6/clang+llvm-14.0.6-x86_64-linux-gnu-rhel-8.4.tar.xz"
-          
-          # 解压（官方包解压后自带一层文件夹，必须用 --strip-components=1 剥离）
           tar -xf clang.tar.xz -C ${{ env.CLANG_DIR }} --strip-components=1
           rm clang.tar.xz
-          
-          # 验证版本（必须成功打印出 clang version 14.0.6）
           ${{ env.CLANG_DIR }}/bin/clang --version
 
       # ============================================================
-      # 2. 安装 ReSukiSU（pin 到 b2ac2fc）
+      # 2. 安装 ReSukiSU（如果做纯净测试，可以注释掉这部分）
       # ============================================================
       - name: Setup ReSukiSU (main)
         working-directory: kernel
@@ -90,14 +85,11 @@ jobs:
         run: |
           set -e
           KCONFIG=drivers/kernelsu/kernel/Kconfig
-
           if ! grep -q "^config KSU_SUSFS$" "$KCONFIG"; then
             echo "::error::Kconfig 中没有找到 config KSU_SUSFS"
             exit 1
           fi
-
           cp "$KCONFIG" "$KCONFIG.orig"
-
           awk '
             BEGIN { in_susfs=0; skipped=0 }
             /^config KSU_SUSFS$/ && !in_susfs {
@@ -118,68 +110,13 @@ jobs:
             }
             { print }
           ' "$KCONFIG.orig" > "$KCONFIG"
-
           echo "=== 修改后的 choice / config 结构 ==="
           grep -nE "^(choice|endchoice|config KSU_(TRACEPOINT|MANUAL|SUSFS))" "$KCONFIG"
-
           echo "=== KSU_SUSFS 块前 8 行 ==="
           grep -A7 "^config KSU_SUSFS$" "$KCONFIG" | head -8
 
-      - name: Inspect kernel hooks
-        working-directory: kernel
-        run: |
-          echo "=== 旧版 Hook（不该有） ==="
-          grep -rn "ksu_vfs_read_hook\|ksu_input_hook\|ksu_execveat_hook\|ksu_init_rc_hook" \
-            fs/read_write.c fs/exec.c fs/stat.c drivers/input/input.c || echo "(无)"
-          echo "=== 新版 Hook（必须有） ==="
-          for f in "kernel/sys.c:ksu_handle_setresuid" \
-                   "fs/exec.c:ksu_handle_execveat" \
-                   "fs/open.c:ksu_handle_faccessat" \
-                   "fs/read_write.c:ksu_handle_sys_read" \
-                   "fs/stat.c:ksu_handle_stat" \
-                   "kernel/reboot.c:ksu_handle_sys_reboot" \
-                   "drivers/input/input.c:ksu_handle_input_handle_event"; do
-            file="${f%%:*}"; sym="${f##*:}"
-            if grep -qw "$sym" "$file"; then
-              echo "✅ $sym in $file"
-            else
-              echo "❌ MISSING: $sym in $file"
-            fi
-          done
-          
-      - name: Inspect SUSFS namespace symbols
-        working-directory: kernel
-        run: |
-          echo "=== 1. namespace.c 里的 susfs include ==="
-          grep -n "linux/susfs" fs/namespace.c || echo "(无)"
-
-          echo ""
-          echo "=== 2. susfs.h 里的声明 ==="
-          grep -n "susfs_alloc_non_unshare_ksu_vfsmnt\|susfs_alloc_unshare_ksu_vfsmnt" \
-            include/linux/susfs.h || echo "(无)"
-
-          echo ""
-          echo "=== 3. susfs.c 里的实现 ==="
-          grep -n "susfs_alloc_non_unshare_ksu_vfsmnt\|susfs_alloc_unshare_ksu_vfsmnt" \
-            fs/susfs.c || echo "(无)"
-
-          echo ""
-          echo "=== 4. namespace.c 用到这两个函数的位置 ==="
-          grep -n "susfs_alloc_non_unshare_ksu_vfsmnt\|susfs_alloc_unshare_ksu_vfsmnt" \
-            fs/namespace.c || echo "(无)"
-     
-      - name: Verify susfs.o build condition
-        working-directory: kernel
-        run: |
-          echo "=== fs/Makefile 里 susfs 相关的行 ==="
-          grep -n "susfs" fs/Makefile || echo "(无)"
-
-          echo ""
-          echo "=== 期望看到 obj-\$(CONFIG_KSU_SUSFS) += susfs.o ==="
-          echo "=== 如果是 obj-y += susfs.o，那么禁 CONFIG 也会编译它 ==="
-      
       # ============================================================
-      # 5. 配置内核
+      # 3. 配置内核 (纯净测试版：屏蔽了所有KSU和SUSFS配置)
       # ============================================================
       - name: Configure Kernel
         working-directory: kernel
@@ -193,106 +130,45 @@ jobs:
                  CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           make mrproper || true
           make -j$(nproc) O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
-            --enable KSU \
-            --enable INIT_ON_ALLOC_DEFAULT_ON \
-            --disable KSU_TRACEPOINT_HOOK \
-            --enable  KSU_MANUAL_HOOK \
-            --enable KSU_SELINUX \
-            --enable KSU_ZYGISK \
-            --enable KPROBES \
-            --enable HAVE_KPROBES \
-            --enable KPROBE_EVENTS \
-            --enable KALLSYMS \
-            --enable KALLSYMS_ALL \
-            --enable MODULES \
-            --enable MODULE_UNLOAD \
-            --enable OVERLAY_FS \
-            --enable EXT4_FS \
-            --enable NAMESPACES \
-            --disable KSU_DEBUG \
-            --disable KSU_SUSFS \
-            --disable KSU_SUSFS_SUS_PATH \
-            --disable KSU_SUSFS_SUS_MOUNT \
-            --disable KSU_SUSFS_SUS_KSTAT \
-            --disable KSU_SUSFS_SPOOF_UNAME \
-            --disable KSU_SUSFS_OPEN_REDIRECT \
-            --disable KSU_SUSFS_SUS_MAP \
-            --disable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
-            --disable KSU_SUSFS_ENABLE_LOG \
-            --disable KSU_SUSFS_SUS_SU \
-            --disable STATIC_USERMODEHELPER \
-            --enable CPU_FREQ \
-            --enable ENERGY_MODEL \
-            --enable CPU_IDLE \
-            --disable KSU_MANUAL_HOOK_AUTO_SETUID_HOOK \
-            --disable KSU_MANUAL_HOOK_AUTO_INITRC_HOOK \
-            --disable KSU_MANUAL_HOOK_AUTO_INPUT_HOOK \
-            --enable CPU_THERMAL \
-            --enable THERMAL \
-            --enable THERMAL_GOV_POWER_ALLOCATOR \
-            --enable THERMAL_GOV_USER_SPACE \
-            --set-val FRAME_WARN 3072
+          
+          # 关键修正：强制清空 LOCALVERSION，防止 VINTF 校验失败导致锁屏重启
+          scripts/config --file ${{ env.OUTPUT_DIR }}/.config --set-str LOCALVERSION ""
+          
+          # 如果纯净版能进系统，再启用下面这几行代码来测试 KSU
+          # scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
+          #   --enable KSU \
+          #   --enable INIT_ON_ALLOC_DEFAULT_ON \
+          #   --disable KSU_TRACEPOINT_HOOK \
+          #   --enable  KSU_MANUAL_HOOK \
+          #   --enable KSU_SELINUX \
+          #   --enable KSU_ZYGISK \
+          #   --enable KPROBES \
+          #   --enable HAVE_KPROBES \
+          #   --enable KPROBE_EVENTS \
+          #   --enable KALLSYMS \
+          #   --enable KALLSYMS_ALL \
+          #   --enable MODULES \
+          #   --enable MODULE_UNLOAD \
+          #   --disable KSU_DEBUG \
+          #   --disable KSU_SUSFS \
+          #   --disable KSU_SUSFS_SUS_PATH \
+          #   --disable KSU_SUSFS_SUS_MOUNT \
+          #   --disable KSU_SUSFS_SUS_KSTAT \
+          #   --disable KSU_SUSFS_SPOOF_UNAME \
+          #   --disable KSU_SUSFS_OPEN_REDIRECT \
+          #   --disable KSU_SUSFS_SUS_MAP \
+          #   --disable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+          #   --disable KSU_SUSFS_ENABLE_LOG \
+          #   --disable KSU_SUSFS_SUS_SU \
+          #   --disable KSU_MANUAL_HOOK_AUTO_SETUID_HOOK \
+          #   --disable KSU_MANUAL_HOOK_AUTO_INITRC_HOOK \
+          #   --disable KSU_MANUAL_HOOK_AUTO_INPUT_HOOK
+          
           make olddefconfig O=${{ env.OUTPUT_DIR }}
-          grep -E 'CONFIG_(KSU|KSU_SUSFS|KPROBES|KALLSYMS|MODULES)' ${{ env.OUTPUT_DIR }}/.config || true
-          grep -E 'CONFIG_(CPU_FREQ|ENERGY_MODEL|CPU_IDLE)' ${{ env.OUTPUT_DIR }}/.config
-          grep -nE "config KSU.*HOOK" drivers/kernelsu/kernel/Kconfig
-          
-          echo "=== SUSFS 配置校验（应全部为 n） ==="
-          if grep -q "CONFIG_KSU_SUSFS.*=y" ${{ env.OUTPUT_DIR }}/.config; then
-            echo "::error::仍有 SUSFS 配置被启用"
-            grep "CONFIG_KSU_SUSFS.*=y" ${{ env.OUTPUT_DIR }}/.config
-            exit 1
-          fi
-          echo "✅ SUSFS 全部禁用"
+          grep -E 'CONFIG_(KSU|KSU_SUSFS|KPROBES|KALLSYMS|MODULES|LOCALVERSION)' ${{ env.OUTPUT_DIR }}/.config || true
 
-          echo "=== 基础配置校验 ==="
-          for sym in CONFIG_KSU CONFIG_KSU_MANUAL_HOOK; do
-            if grep -q "^${sym}=y" ${{ env.OUTPUT_DIR }}/.config; then
-              echo "✅ ${sym}=y"
-            else
-              echo "::error::${sym} 未启用"
-              exit 1
-            fi
-          done
-          echo "✅ 基础配置正确"
-          grep -E "CONFIG_KSU_SUSFS" out/.config | head -20
-      
-      - name: Locate cpu_limits_set_level
-        working-directory: kernel
-        run: |
-          echo "=== 全内核搜索 cpu_limits_set_level ==="
-          grep -rn "cpu_limits_set_level" --include="*.c" --include="*.h" . 2>/dev/null | head -30 || echo "(未找到)"
-
-          echo ""
-          echo "=== 检查 lib/xarray.c 顶部 include ==="
-          head -40 lib/xarray.c
-
-          echo ""
-          echo "=== 检查是否有别的 xarray.c ==="
-          find . -name "xarray.c" -not -path "./out/*"
-      
-      - name: Check SUSFS integration coverage
-        working-directory: kernel
-        run: |
-          echo "=== 有 SUSFS 改动的文件 ==="
-          for f in fs/namei.c fs/readdir.c fs/stat.c fs/statfs.c fs/super.c \
-                   fs/proc/base.c fs/proc/fd.c fs/proc/cmdline.c fs/proc/task_mmu.c \
-                   fs/proc_namespace.c fs/notify/fdinfo.c kernel/kallsyms.c \
-                   kernel/sys.c mm/memory.c security/selinux/avc.c; do
-            if grep -q "susfs_\|SUSFS_" "$f" 2>/dev/null; then
-              echo "✅ $f"
-            else
-              echo "❌ $f"
-            fi
-          done
-
-          echo ""
-          echo "=== namespace.c 的 SUSFS 改动行数 ==="
-          grep -c "susfs_\|SUSFS_" fs/namespace.c || echo 0
-          
       # ============================================================
-      # 6. 编译（输出 build.log 便于排查）
+      # 4. 编译（输出 build.log 便于排查）
       # ============================================================
       - name: Build Kernel
         working-directory: kernel
@@ -304,13 +180,13 @@ jobs:
           export CCACHE_DIR="${{ env.CCACHE_DIR }}"
           ccache -M 6G
           export LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- \
-          CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+                 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           make -j$(nproc) O=${{ env.OUTPUT_DIR }} \
-          KCFLAGS="-Wno-error -Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-declaration-after-statement"
+               KCFLAGS="-Wno-error -Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-declaration-after-statement" \
+               2>&1 | tee build.log
 
-          
       # ============================================================
-      # 7. 打包 AnyKernel3
+      # 5. 打包 AnyKernel3
       # ============================================================
       - name: Package AnyKernel3
         id: package
@@ -330,7 +206,7 @@ jobs:
           echo "zip_name=${{ env.DEVICE_CODENAME }}-SUSFS-reponative-sp-${TIME}.zip" >> $GITHUB_OUTPUT
 
       # ============================================================
-      # 8. 上传
+      # 6. 上传
       # ============================================================
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
