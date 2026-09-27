@@ -141,30 +141,51 @@ jobs:
             echo "[+] 已恢复 fs/proc/fd.c"
           fi
 
-          # ========== 4. 修复 fs/namei.c 的 __lookup_hash ==========
+          # ========== 4. fs/namespace.c（补丁 Hunk #1~#3、#10 失败导致结构破坏） ==========
+          NS_BROKEN=false
+          if [ -f "fs/namespace.c.rej" ]; then
+            echo "[-] fs/namespace.c 存在 .rej"
+            NS_BROKEN=true
+          fi
+          # 检测 res 未声明
+          if grep -q "if (res < 0)" fs/namespace.c 2>/dev/null && ! grep -q "int res = ida_alloc_min" fs/namespace.c 2>/dev/null; then
+            echo "[-] fs/namespace.c 缺少 int res 声明"
+            NS_BROKEN=true
+          fi
+          # 检测 susfs_alloc_unshare_ksu_vfsmnt 函数头缺失
+          if grep -q "out_free_devname:" fs/namespace.c 2>/dev/null && ! grep -q "static struct mount \*susfs_alloc_unshare_ksu_vfsmnt" fs/namespace.c 2>/dev/null; then
+            echo "[-] fs/namespace.c 缺少 susfs_alloc_unshare_ksu_vfsmnt 函数头"
+            NS_BROKEN=true
+          fi
+
+          if [ "$NS_BROKEN" = "true" ]; then
+            echo "[-] fs/namespace.c 被破坏，从 MiYume0721 恢复"
+            curl -L --fail --retry 3 -o fs/namespace.c "$SUSFS_BASE/fs/namespace.c"
+            rm -f fs/namespace.c.rej
+            echo "[+] 已恢复 fs/namespace.c"
+          else
+            echo "[*] fs/namespace.c 结构正常"
+          fi
+
+          # ========== 5. 修复 fs/namei.c 的 __lookup_hash ==========
           NAMEI="fs/namei.c"
 
           echo ""
           echo "=== 定位 __lookup_hash 函数 ==="
 
-          # 4.1 用 grep 找函数起始行（宽松匹配）
           START=$(grep -n "__lookup_hash(const struct qstr" "$NAMEI" | head -1 | cut -d: -f1)
           if [ -z "$START" ]; then
             START=$(grep -n "__lookup_hash" "$NAMEI" | grep -E "^\s*[0-9]+:\s*(static|__always_inline|inline).*__lookup_hash" | head -1 | cut -d: -f1)
           fi
           echo "函数起始行: $START"
 
-          # 4.2 在函数范围内找锚点行
           if [ -n "$START" ]; then
-            # 找 struct inode *dir = base->d_inode;
             DIR_LINE=$(awk -v s="$START" 'NR > s && /struct inode \*dir = base->d_inode;/ { print NR; exit }' "$NAMEI")
-            # 找 dentry = d_alloc(base, name);
             ALLOC_LINE=$(awk -v s="$START" 'NR > s && /dentry = d_alloc\(base, name\);/ { print NR; exit }' "$NAMEI")
             echo "DIR_LINE: $DIR_LINE"
             echo "ALLOC_LINE: $ALLOC_LINE"
           fi
 
-          # 4.3 如果锚点都找到，用 awk 按行号插入
           if [ -n "$START" ] && [ -n "$DIR_LINE" ] && [ -n "$ALLOC_LINE" ]; then
             echo "[+] 开始插入 found_sus_path 声明和 retry 标签"
             awk -v dir="$DIR_LINE" -v alloc="$ALLOC_LINE" '
@@ -187,21 +208,23 @@ jobs:
             echo "[+] 插入完成"
           else
             echo "[-] 锚点未找到，跳过插入"
-            echo "=== 函数体前 40 行 ==="
-            if [ -n "$START" ]; then
-              sed -n "${START},$((START+40))p" "$NAMEI"
-            fi
           fi
 
-          # ========== 5. 清理所有 .rej ==========
+          # ========== 6. 清理所有 .rej ==========
           find . -name "*.rej" -not -path "./.git/*" -delete 2>/dev/null || true
           echo "[+] 已清理所有 .rej 文件"
 
-          # ========== 6. 验证 ==========
+          # ========== 7. 验证 ==========
           echo ""
-          echo "=== 验证插入结果 ==="
-          grep -n "bool found_sus_path = false;" "$NAMEI" | head -5
-          grep -n "^retry:" "$NAMEI" | head -5
+          echo "=== 验证 ==="
+          echo "--- fs/namespace.c 关键函数 ---"
+          grep -n "int res = ida_alloc_min\|static struct mount \*susfs_alloc_unshare_ksu_vfsmnt\|static struct mount \*susfs_alloc_non_unshare_ksu_vfsmnt" fs/namespace.c | head -5 || echo "(无)"
+          echo "--- fs/namespace.c 行数 ---"
+          wc -l fs/namespace.c
+          echo "--- fs/namei.c found_sus_path ---"
+          grep -n "bool found_sus_path = false" fs/namei.c | head -3
+          echo "--- fs/namei.c retry ---"
+          grep -n "^retry:" fs/namei.c | head -3
 
       - name: 🔎 Final source integrity check
         working-directory: device_kernel
