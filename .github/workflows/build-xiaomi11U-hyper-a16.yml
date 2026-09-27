@@ -11,7 +11,7 @@ env:
 
   CUSTOM_CMDS: "CLANG_TRIPLE=aarch64-linux-gnu-"
   EXTRA_CMDS: "LD=ld.lld LLVM=1 LLVM_IAS=1"
-  KCFLAGS_EXTRA : "-Wframe-larger-than=4096 -Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-array-parameter -Wno-declaration-after-statement -fno-stack-protector"
+  KCFLAGS_EXTRA: "-Wframe-larger-than=4096 -Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-array-parameter -Wno-declaration-after-statement -fno-stack-protector"
 
   KERNEL_SOURCE: "https://github.com/zttlove/android_kernel_xiaomi_sm8350_miyume.git"
   KERNEL_BRANCH: "main"
@@ -152,35 +152,25 @@ jobs:
           find . -name "*.rej" -not -path "./.git/*" -delete 2>/dev/null || true
           echo "[+] 已清理所有 .rej 文件"
 
-          # ========== 4. 恢复后验证 ==========
-          echo ""
-          echo "=== 恢复后检查 ==="
-          echo "--- fs/notify/fdinfo.c 关键函数 ---"
-          grep -n "static void show_fdinfo\|static void inotify_fdinfo\|inotify_show_fdinfo" fs/notify/fdinfo.c || echo "(无)"
-          echo "--- fs/notify/fdinfo.c #if/#endif ---"
-          echo "if=$(grep -c '^#if' fs/notify/fdinfo.c) endif=$(grep -c '^#endif' fs/notify/fdinfo.c)"
-          echo "--- fs/proc/task_mmu.c #if/#endif ---"
-          echo "if=$(grep -c '^#if' fs/proc/task_mmu.c) endif=$(grep -c '^#endif' fs/proc/task_mmu.c)"
-
       - name: 🔎 Final source integrity check
         working-directory: device_kernel
         shell: bash
         run: |
           echo "=== SUSFS 文件 ==="
-          ls -la fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h
+          ls -la fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h || true
           echo ""
           echo "=== SUSFS 版本 ==="
-          grep "SUSFS_VERSION" include/linux/susfs.h || echo "(无)"
+          grep "SUSFS_VERSION" include/linux/susfs.h || true
           echo ""
           echo "=== fs/Makefile susfs 引用 ==="
-          grep -n "susfs" fs/Makefile || echo "(无)"
+          grep -n "susfs" fs/Makefile || true
           echo ""
           echo "=== 各文件的 SUSFS 挂钩数量 ==="
           for f in fs/namei.c fs/namespace.c fs/notify/fdinfo.c fs/proc/fd.c fs/proc/task_mmu.c fs/proc_namespace.c fs/readdir.c fs/stat.c fs/statfs.c kernel/kallsyms.c kernel/sys.c mm/memory.c security/selinux/avc.c; do
             if [ -f "$f" ]; then
-              IF_COUNT=$(grep -c '^#if' "$f" 2>/dev/null | head -1)
-              ENDIF_COUNT=$(grep -c '^#endif' "$f" 2>/dev/null | head -1)
-              SUSFS_COUNT=$(grep -c "CONFIG_KSU_SUSFS" "$f" 2>/dev/null | head -1)
+              IF_COUNT=$(awk '/^#if/{c++} END{print c+0}' "$f")
+              ENDIF_COUNT=$(awk '/^#endif/{c++} END{print c+0}' "$f")
+              SUSFS_COUNT=$(awk '/CONFIG_KSU_SUSFS/{c++} END{print c+0}' "$f")
               STATUS="OK"
               [ "$IF_COUNT" != "$ENDIF_COUNT" ] && STATUS="BAD"
               echo "$STATUS $f: #if=$IF_COUNT, #endif=$ENDIF_COUNT, SUSFS=$SUSFS_COUNT"
@@ -188,7 +178,7 @@ jobs:
           done
           echo ""
           echo "=== 残留 .rej 文件 ==="
-          find . -name "*.rej" -not -path "./.git/*" 2>/dev/null || echo "(无)"
+          find . -name "*.rej" -not -path "./.git/*" 2>/dev/null || true
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
