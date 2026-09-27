@@ -53,12 +53,11 @@ jobs:
             echo "✅ libtinfo.so.5 修复成功！"
           fi
 
-      - name: Download Clang (via Mirror)
+      - name: Download Clang (via Proxy)
         run: |
           mkdir -p ${{ env.CLANG_DIR }}
-          # 使用清华源镜像下载 clang-r487747c
-          curl -L --retry 3 -o clang.tar.gz "https://mirrors.tuna.tsinghua.edu.cn/git/AOSP/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r487747c.tar.gz"
-          # 注意解压命令要和文件名匹配
+          # 使用 ghproxy 代理加速
+          curl -L --retry 3 -o clang.tar.gz "https://ghproxy.com/https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r487747c.tar.gz"
           tar -xzf clang.tar.gz -C ${{ env.CLANG_DIR }} --strip-components=1
           rm clang.tar.gz
           ${{ env.CLANG_DIR }}/bin/clang --version
