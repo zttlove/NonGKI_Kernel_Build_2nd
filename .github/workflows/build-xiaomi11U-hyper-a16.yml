@@ -105,7 +105,7 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs
 
-      - name: 🩹 Restore broken files and patch namei.c
+      - name: 🩹 Restore broken files and patch namei.c / proc_namespace.c
         working-directory: device_kernel
         shell: bash
         run: |
@@ -141,38 +141,71 @@ jobs:
             echo "[+] 已恢复 fs/proc/fd.c"
           fi
 
-          # ========== 4. fs/namespace.c（补丁 Hunk #1~#3、#10 失败导致结构破坏） ==========
+          # ========== 4. fs/namespace.c ==========
           NS_BROKEN=false
-          if [ -f "fs/namespace.c.rej" ]; then
-            echo "[-] fs/namespace.c 存在 .rej"
-            NS_BROKEN=true
-          fi
-          # 检测 res 未声明
+          if [ -f "fs/namespace.c.rej" ]; then NS_BROKEN=true; fi
           if grep -q "if (res < 0)" fs/namespace.c 2>/dev/null && ! grep -q "int res = ida_alloc_min" fs/namespace.c 2>/dev/null; then
-            echo "[-] fs/namespace.c 缺少 int res 声明"
             NS_BROKEN=true
           fi
-          # 检测 susfs_alloc_unshare_ksu_vfsmnt 函数头缺失
           if grep -q "out_free_devname:" fs/namespace.c 2>/dev/null && ! grep -q "static struct mount \*susfs_alloc_unshare_ksu_vfsmnt" fs/namespace.c 2>/dev/null; then
-            echo "[-] fs/namespace.c 缺少 susfs_alloc_unshare_ksu_vfsmnt 函数头"
             NS_BROKEN=true
           fi
-
           if [ "$NS_BROKEN" = "true" ]; then
             echo "[-] fs/namespace.c 被破坏，从 MiYume0721 恢复"
             curl -L --fail --retry 3 -o fs/namespace.c "$SUSFS_BASE/fs/namespace.c"
             rm -f fs/namespace.c.rej
             echo "[+] 已恢复 fs/namespace.c"
-          else
-            echo "[*] fs/namespace.c 结构正常"
           fi
 
-          # ========== 5. 修复 fs/namei.c 的 __lookup_hash ==========
+          # ========== 5. fs/proc_namespace.c：补 include + extern ==========
+          NS_FILE="fs/proc_namespace.c"
+
+          # 5.1 补 #include <linux/susfs_def.h>
+          if ! grep -q "linux/susfs_def.h" "$NS_FILE" 2>/dev/null; then
+            echo "[+] fs/proc_namespace.c 补 #include <linux/susfs_def.h>"
+            TARGET_LINE=$(grep -n "^#include <linux/sched/task.h>" "$NS_FILE" | head -1 | cut -d: -f1)
+            if [ -n "$TARGET_LINE" ]; then
+              awk -v line="$TARGET_LINE" '
+                NR == line {
+                  print
+                  print "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT"
+                  print "#include <linux/susfs_def.h>"
+                  print "#endif"
+                  next
+                }
+                { print }
+              ' "$NS_FILE" > "$NS_FILE.tmp" && mv "$NS_FILE.tmp" "$NS_FILE"
+            fi
+          fi
+
+          # 5.2 补 extern 声明
+          if ! grep -q "extern bool susfs_is_current_ksu_domain" "$NS_FILE" 2>/dev/null; then
+            echo "[+] fs/proc_namespace.c 补 extern 声明"
+            TARGET_LINE=$(grep -n '^#include "internal.h"' "$NS_FILE" | head -1 | cut -d: -f1)
+            if [ -n "$TARGET_LINE" ]; then
+              awk -v line="$TARGET_LINE" '
+                NR == line {
+                  print
+                  print ""
+                  print "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT"
+                  print "extern bool susfs_is_current_ksu_domain(void);"
+                  print "extern struct static_key_false susfs_is_hide_sus_mnts_for_non_su_procs_enabled;"
+                  print "#endif"
+                  next
+                }
+                { print }
+              ' "$NS_FILE" > "$NS_FILE.tmp" && mv "$NS_FILE.tmp" "$NS_FILE"
+            fi
+          fi
+
+          echo "=== fs/proc_namespace.c 头部 25 行 ==="
+          head -25 "$NS_FILE"
+
+          # ========== 6. 修复 fs/namei.c 的 __lookup_hash ==========
           NAMEI="fs/namei.c"
 
           echo ""
           echo "=== 定位 __lookup_hash 函数 ==="
-
           START=$(grep -n "__lookup_hash(const struct qstr" "$NAMEI" | head -1 | cut -d: -f1)
           if [ -z "$START" ]; then
             START=$(grep -n "__lookup_hash" "$NAMEI" | grep -E "^\s*[0-9]+:\s*(static|__always_inline|inline).*__lookup_hash" | head -1 | cut -d: -f1)
@@ -206,21 +239,21 @@ jobs:
               { print }
             ' "$NAMEI" > "$NAMEI.tmp" && mv "$NAMEI.tmp" "$NAMEI"
             echo "[+] 插入完成"
-          else
-            echo "[-] 锚点未找到，跳过插入"
           fi
 
-          # ========== 6. 清理所有 .rej ==========
+          # ========== 7. 清理所有 .rej ==========
           find . -name "*.rej" -not -path "./.git/*" -delete 2>/dev/null || true
           echo "[+] 已清理所有 .rej 文件"
 
-          # ========== 7. 验证 ==========
+          # ========== 8. 验证 ==========
           echo ""
           echo "=== 验证 ==="
+          echo "--- fs/proc_namespace.c include ---"
+          grep -n "linux/susfs_def.h" fs/proc_namespace.c || echo "(未找到)"
+          echo "--- fs/proc_namespace.c extern ---"
+          grep -n "extern bool susfs_is_current_ksu_domain" fs/proc_namespace.c || echo "(未找到)"
           echo "--- fs/namespace.c 关键函数 ---"
-          grep -n "int res = ida_alloc_min\|static struct mount \*susfs_alloc_unshare_ksu_vfsmnt\|static struct mount \*susfs_alloc_non_unshare_ksu_vfsmnt" fs/namespace.c | head -5 || echo "(无)"
-          echo "--- fs/namespace.c 行数 ---"
-          wc -l fs/namespace.c
+          grep -n "int res = ida_alloc_min\|susfs_alloc_unshare_ksu_vfsmnt\|susfs_alloc_non_unshare_ksu_vfsmnt" fs/namespace.c | head -5 || echo "(无)"
           echo "--- fs/namei.c found_sus_path ---"
           grep -n "bool found_sus_path = false" fs/namei.c | head -3
           echo "--- fs/namei.c retry ---"
