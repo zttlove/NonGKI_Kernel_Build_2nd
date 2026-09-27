@@ -58,8 +58,8 @@ env:
   PATCHES_SOURCE: "JackA1ltman/NonGKI_Kernel_Patches"
   PATCHES_BRANCH: "mi_kernel"
 
-  SUSFS_FOLDER_FIXED: "mi11_evox_a16"
-  SUSFS_PATCH_FIXED: "susfs_fixed"
+  SUSFS_FOLDER_FIXED: ""
+  SUSFS_PATCH_FIXED: ""
 
   REKERNEL_ENABLE: "false"
   HOOK_METHOD: "inline"
@@ -105,11 +105,11 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs
 
-      - name: 🔎 Verify SUSFS source state (no modifications)
+      - name: 🔎 Verify SUSFS source state
         working-directory: device_kernel
         shell: bash
         run: |
-          echo "=== 源码自带 SUSFS 文件 ==="
+          echo "=== SUSFS 文件 ==="
           ls -la fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h 2>/dev/null || echo "(缺失)"
           echo ""
           echo "=== SUSFS 版本 ==="
@@ -121,27 +121,13 @@ jobs:
           echo "=== 各文件的 SUSFS 挂钩数量 ==="
           for f in fs/namei.c fs/namespace.c fs/notify/fdinfo.c fs/proc/fd.c fs/proc/task_mmu.c fs/proc_namespace.c fs/readdir.c fs/stat.c fs/statfs.c kernel/kallsyms.c kernel/sys.c mm/memory.c security/selinux/avc.c; do
             if [ -f "$f" ]; then
-              IF_COUNT=$(awk '/^#if/{c++} END{print c+0}' "$f")
-              ENDIF_COUNT=$(awk '/^#endif/{c++} END{print c+0}' "$f")
               SUSFS_COUNT=$(awk '/CONFIG_KSU_SUSFS/{c++} END{print c+0}' "$f")
-              STATUS="OK"
-              [ "$IF_COUNT" != "$ENDIF_COUNT" ] && STATUS="BAD"
-              echo "$STATUS $f: #if=$IF_COUNT, #endif=$ENDIF_COUNT, SUSFS=$SUSFS_COUNT"
+              echo "  $f: SUSFS=$SUSFS_COUNT"
             fi
           done
           echo ""
           echo "=== 残留 .rej 文件 ==="
           find . -name "*.rej" -not -path "./.git/*" 2>/dev/null || true
-
-      - name: 🔧 Setup Clang to clang-custom
-        shell: bash
-        run: |
-          set -euo pipefail
-          DEST="$GITHUB_WORKSPACE/clang-custom"
-          rm -rf "$DEST"
-          git clone --depth=1 https://github.com/thenoppy12/clang-r416183b.git "$DEST"
-          "$DEST/bin/clang" --version | head -1
-          echo "✅ Clang 已就绪: $DEST/bin"
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
