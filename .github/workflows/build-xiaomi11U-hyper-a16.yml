@@ -105,7 +105,7 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs
 
-      - name: 🩹 Restore broken files and patch namei.c Hunk #6
+      - name: 🩹 Restore broken files and patch namei.c
         working-directory: device_kernel
         shell: bash
         run: |
@@ -144,48 +144,65 @@ jobs:
           # ========== 4. 修复 fs/namei.c 的 __lookup_hash ==========
           NAMEI="fs/namei.c"
 
-          # 4.1 在 __lookup_hash 里插入 found_sus_path 声明
-          awk '
-            /^static struct dentry \*__lookup_hash\(/ { in_func = 1; next }
-            in_func && /^}/ { in_func = 0 }
-            in_func && /struct inode \*dir = base->d_inode;/ && !done {
-              print
-              print "#ifdef CONFIG_KSU_SUSFS_SUS_PATH"
-              print "\tbool found_sus_path = false;"
-              print "#endif"
-              done = 1
-              next
-            }
-            { print }
-          ' "$NAMEI" > "$NAMEI.tmp" && mv "$NAMEI.tmp" "$NAMEI"
+          echo ""
+          echo "=== 定位 __lookup_hash 函数 ==="
 
-          # 4.2 在 __lookup_hash 里插入 retry 标签
-          awk '
-            /^static struct dentry \*__lookup_hash\(/ { in_func = 1; next }
-            in_func && /^}/ { in_func = 0 }
-            in_func && /dentry = d_alloc\(base, name\);/ && !done {
-              print
-              print "#ifdef CONFIG_KSU_SUSFS_SUS_PATH"
-              print "retry:"
-              print "#endif"
-              done = 1
-              next
-            }
-            { print }
-          ' "$NAMEI" > "$NAMEI.tmp" && mv "$NAMEI.tmp" "$NAMEI"
+          # 4.1 用 grep 找函数起始行（宽松匹配）
+          START=$(grep -n "__lookup_hash(const struct qstr" "$NAMEI" | head -1 | cut -d: -f1)
+          if [ -z "$START" ]; then
+            START=$(grep -n "__lookup_hash" "$NAMEI" | grep -E "^\s*[0-9]+:\s*(static|__always_inline|inline).*__lookup_hash" | head -1 | cut -d: -f1)
+          fi
+          echo "函数起始行: $START"
+
+          # 4.2 在函数范围内找锚点行
+          if [ -n "$START" ]; then
+            # 找 struct inode *dir = base->d_inode;
+            DIR_LINE=$(awk -v s="$START" 'NR > s && /struct inode \*dir = base->d_inode;/ { print NR; exit }' "$NAMEI")
+            # 找 dentry = d_alloc(base, name);
+            ALLOC_LINE=$(awk -v s="$START" 'NR > s && /dentry = d_alloc\(base, name\);/ { print NR; exit }' "$NAMEI")
+            echo "DIR_LINE: $DIR_LINE"
+            echo "ALLOC_LINE: $ALLOC_LINE"
+          fi
+
+          # 4.3 如果锚点都找到，用 awk 按行号插入
+          if [ -n "$START" ] && [ -n "$DIR_LINE" ] && [ -n "$ALLOC_LINE" ]; then
+            echo "[+] 开始插入 found_sus_path 声明和 retry 标签"
+            awk -v dir="$DIR_LINE" -v alloc="$ALLOC_LINE" '
+              NR == dir {
+                print
+                print "#ifdef CONFIG_KSU_SUSFS_SUS_PATH"
+                print "\tbool found_sus_path = false;"
+                print "#endif"
+                next
+              }
+              NR == alloc {
+                print
+                print "#ifdef CONFIG_KSU_SUSFS_SUS_PATH"
+                print "retry:"
+                print "#endif"
+                next
+              }
+              { print }
+            ' "$NAMEI" > "$NAMEI.tmp" && mv "$NAMEI.tmp" "$NAMEI"
+            echo "[+] 插入完成"
+          else
+            echo "[-] 锚点未找到，跳过插入"
+            echo "=== 函数体前 40 行 ==="
+            if [ -n "$START" ]; then
+              sed -n "${START},$((START+40))p" "$NAMEI"
+            fi
+          fi
 
           # ========== 5. 清理所有 .rej ==========
           find . -name "*.rej" -not -path "./.git/*" -delete 2>/dev/null || true
           echo "[+] 已清理所有 .rej 文件"
 
-          # ========== 6. 验证 __lookup_hash ==========
+          # ========== 6. 验证 ==========
           echo ""
-          echo "=== __lookup_hash 函数检查 ==="
-          awk '
-            /^static struct dentry \*__lookup_hash\(/ { in_func = 1 }
-            in_func { print NR": "$0 }
-            in_func && /^}/ { exit }
-          ' "$NAMEI" | head -50
+          echo "=== 验证插入结果 ==="
+          grep -n "bool found_sus_path = false;" "$NAMEI" | head -5
+          grep -n "^retry:" "$NAMEI" | head -5
+
       - name: 🔎 Final source integrity check
         working-directory: device_kernel
         shell: bash
