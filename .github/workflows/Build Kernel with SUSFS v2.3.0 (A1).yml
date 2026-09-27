@@ -53,13 +53,17 @@ jobs:
             echo "✅ libtinfo.so.5 修复成功！"
           fi
 
-      - name: Download Clang (via Proxy)
+      - name: Download Clang (From LLVM GitHub)
         run: |
           mkdir -p ${{ env.CLANG_DIR }}
-          # 使用 ghproxy 代理加速
-          curl -L --retry 3 -o clang.tar.gz "https://ghproxy.com/https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r487747c.tar.gz"
-          tar -xzf clang.tar.gz -C ${{ env.CLANG_DIR }} --strip-components=1
-          rm clang.tar.gz
+          # 从 GitHub 官方 Release 下载
+          curl -L --retry 3 -o clang.tar.xz "https://github.com/llvm/llvm-project/releases/download/llvmorg-14.0.6/clang+llvm-14.0.6-x86_64-linux-gnu-rhel-8.4.tar.xz"
+          
+          # 解压（官方包解压后自带一层文件夹，必须用 --strip-components=1 剥离）
+          tar -xf clang.tar.xz -C ${{ env.CLANG_DIR }} --strip-components=1
+          rm clang.tar.xz
+          
+          # 验证版本（必须成功打印出 clang version 14.0.6）
           ${{ env.CLANG_DIR }}/bin/clang --version
 
       # ============================================================
