@@ -77,7 +77,7 @@ env:
   GENERATE_DTB: "false"
   GENERATE_CHIP: "qcom"
 
-  BUILD_DEBUGGER: "false"
+  BUILD_DEBUGGER: "true"
   SKIP_PATCH: "false"
   BUILD_OTHER_CONFIG: "false"
   MERGE_CONFIG_FILES: "vendor/venus_QGKI.config,vendor/xiaomi_QGKI.config"
@@ -104,6 +104,53 @@ jobs:
 
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs
+
+      - name: 🩹 Restore fs/proc/task_mmu.c if patched incompletely
+        working-directory: device_kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -f "fs/proc/task_mmu.c.rej" ]; then
+            echo "[-] fs/proc/task_mmu.c 存在 .rej，从上游恢复干净版本"
+            curl -L --fail --retry 3 -o fs/proc/task_mmu.c \
+              "https://raw.githubusercontent.com/zttlove/android_kernel_xiaomi_sm8350_miyume/main/fs/proc/task_mmu.c"
+            rm -f fs/proc/task_mmu.c.rej
+            echo "[+] 已恢复 fs/proc/task_mmu.c"
+          else
+            echo "[*] fs/proc/task_mmu.c 无 .rej，保留补丁结果"
+          fi
+
+          find . -name "*.rej" -not -path "./.git/*" -delete 2>/dev/null || true
+          echo "[+] 已清理所有 .rej 文件"
+
+      - name: 🔎 Final source integrity check
+        working-directory: device_kernel
+        shell: bash
+        run: |
+          echo "=== SUSFS 文件 ==="
+          ls -la fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h
+          echo ""
+          echo "=== SUSFS 版本 ==="
+          grep "SUSFS_VERSION" include/linux/susfs.h || echo "(无)"
+          echo ""
+          echo "=== fs/Makefile susfs 引用 ==="
+          grep -n "susfs" fs/Makefile || echo "(无)"
+          echo ""
+          echo "=== 各文件的 SUSFS 挂钩数量 ==="
+          for f in fs/namei.c fs/namespace.c fs/notify/fdinfo.c fs/proc/fd.c fs/proc/task_mmu.c fs/proc_namespace.c fs/readdir.c fs/stat.c fs/statfs.c kernel/kallsyms.c kernel/sys.c mm/memory.c security/selinux/avc.c; do
+            if [ -f "$f" ]; then
+              IF_COUNT=$(grep -c '^#if' "$f" 2>/dev/null || echo 0)
+              ENDIF_COUNT=$(grep -c '^#endif' "$f" 2>/dev/null || echo 0)
+              SUSFS_COUNT=$(grep -c "CONFIG_KSU_SUSFS" "$f" 2>/dev/null || echo 0)
+              STATUS="✅"
+              [ "$IF_COUNT" != "$ENDIF_COUNT" ] && STATUS="❌"
+              echo "$STATUS $f: #if=$IF_COUNT, #endif=$ENDIF_COUNT, SUSFS挂钩=$SUSFS_COUNT"
+            fi
+          done
+          echo ""
+          echo "=== 残留 .rej 文件 ==="
+          find . -name "*.rej" -not -path "./.git/*" 2>/dev/null || echo "(无)"
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
@@ -153,7 +200,7 @@ jobs:
           name: Xiaomi 11 Ultra Star HyperOS A16 NonGKI Kernel
           body: |
             ## Xiaomi 11 Ultra Star HyperOS A16
-            - ReSukiSU + SuSFS 2.3.0（源码集成 + 完整 shim）
+            - ReSukiSU + SuSFS 2.3.0（源码集成）
           files: ${{ env.PACK_NAME }}
           draft: false
           prerelease: false
