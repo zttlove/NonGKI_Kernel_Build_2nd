@@ -13,7 +13,7 @@ env:
   EXTRA_CMDS: "LD=ld.lld LLVM=1 LLVM_IAS=1"
   KCFLAGS_EXTRA: "-Wframe-larger-than=4096 -Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-array-parameter -Wno-declaration-after-statement -fno-stack-protector -Wno-sometimes-uninitialized"
 
-  KERNEL_SOURCE: "https://github.com/zttlove/android_kernel_xiaomi_sm8350_miyume.git"
+  KERNEL_SOURCE: "https://github.com/MiYume0721/android_kernel_xiaomi_sm8350_miyume.git"
   KERNEL_BRANCH: "main"
   KERNEL_VERSION: "5.4"
   KERNEL_ARCH: "arm64"
@@ -38,7 +38,7 @@ env:
   KERNELSU_AUTO_FORK: "resukisu"
 
   SUSFS_ENABLE: "true"
-  SUSFS_FIXED: "true"
+  SUSFS_FIXED: "false"
 
   AK3_SOURCE: "https://github.com/osm0sis/Anykernel3.git"
   AK3_BRANCH: "master"
@@ -62,7 +62,7 @@ env:
   SUSFS_PATCH_FIXED: "susfs_fixed"
 
   REKERNEL_ENABLE: "false"
-  HOOK_METHOD: "syscall"
+  HOOK_METHOD: "inline"
   KERNEL_PATCH: "false"
 
   KPM_ENABLE: "false"
@@ -77,8 +77,8 @@ env:
   GENERATE_DTB: "false"
   GENERATE_CHIP: "qcom"
 
-  BUILD_DEBUGGER: "true"
-  SKIP_PATCH: "false"
+  BUILD_DEBUGGER: "false"
+  SKIP_PATCH: "true"
   BUILD_OTHER_CONFIG: "false"
   MERGE_CONFIG_FILES: "vendor/venus_QGKI.config,vendor/xiaomi_QGKI.config"
   FREE_MORE_SPACE: "false"
@@ -105,195 +105,18 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs
 
-      - name: 🩹 Restore broken files and patch namei.c / proc_namespace.c
+      - name: 🔎 Verify SUSFS source state (no modifications)
         working-directory: device_kernel
         shell: bash
         run: |
-          set -euo pipefail
-
-          SUSFS_BASE="https://raw.githubusercontent.com/MiYume0721/android_kernel_xiaomi_sm8350_miyume/main"
-
-          # ========== 1. fs/proc/task_mmu.c ==========
-          if [ -f "fs/proc/task_mmu.c.rej" ]; then
-            echo "[-] fs/proc/task_mmu.c 存在 .rej，从 MiYume0721 恢复"
-            curl -L --fail --retry 3 -o fs/proc/task_mmu.c "$SUSFS_BASE/fs/proc/task_mmu.c"
-            rm -f fs/proc/task_mmu.c.rej
-            echo "[+] 已恢复 fs/proc/task_mmu.c"
-          fi
-
-          # ========== 2. fs/notify/fdinfo.c ==========
-          FDINFO_BROKEN=false
-          if [ -f "fs/notify/fdinfo.c.rej" ]; then FDINFO_BROKEN=true; fi
-          if ! grep -q "static void show_fdinfo" fs/notify/fdinfo.c 2>/dev/null; then FDINFO_BROKEN=true; fi
-          if ! grep -q "static void inotify_fdinfo" fs/notify/fdinfo.c 2>/dev/null; then FDINFO_BROKEN=true; fi
-          if [ "$FDINFO_BROKEN" = "true" ]; then
-            echo "[-] fs/notify/fdinfo.c 被破坏，从 MiYume0721 恢复"
-            curl -L --fail --retry 3 -o fs/notify/fdinfo.c "$SUSFS_BASE/fs/notify/fdinfo.c"
-            rm -f fs/notify/fdinfo.c.rej
-            echo "[+] 已恢复 fs/notify/fdinfo.c"
-          fi
-
-          # ========== 3. fs/proc/fd.c ==========
-          if [ -f "fs/proc/fd.c.rej" ]; then
-            echo "[-] fs/proc/fd.c 存在 .rej，从 MiYume0721 恢复"
-            curl -L --fail --retry 3 -o fs/proc/fd.c "$SUSFS_BASE/fs/proc/fd.c"
-            rm -f fs/proc/fd.c.rej
-            echo "[+] 已恢复 fs/proc/fd.c"
-          fi
-
-          # ========== 4. fs/namespace.c ==========
-          NS_BROKEN=false
-          if [ -f "fs/namespace.c.rej" ]; then NS_BROKEN=true; fi
-          if grep -q "if (res < 0)" fs/namespace.c 2>/dev/null && ! grep -q "int res = ida_alloc_min" fs/namespace.c 2>/dev/null; then
-            NS_BROKEN=true
-          fi
-          if grep -q "out_free_devname:" fs/namespace.c 2>/dev/null && ! grep -q "static struct mount \*susfs_alloc_unshare_ksu_vfsmnt" fs/namespace.c 2>/dev/null; then
-            NS_BROKEN=true
-          fi
-          if [ "$NS_BROKEN" = "true" ]; then
-            echo "[-] fs/namespace.c 被破坏，从 MiYume0721 恢复"
-            curl -L --fail --retry 3 -o fs/namespace.c "$SUSFS_BASE/fs/namespace.c"
-            rm -f fs/namespace.c.rej
-            echo "[+] 已恢复 fs/namespace.c"
-          fi
-
-          # ========== 5. fs/proc_namespace.c：补 include + extern ==========
-          NS_FILE="fs/proc_namespace.c"
-
-          # 5.1 补 #include <linux/susfs_def.h>
-          if ! grep -q "linux/susfs_def.h" "$NS_FILE" 2>/dev/null; then
-            echo "[+] fs/proc_namespace.c 补 #include <linux/susfs_def.h>"
-            TARGET_LINE=$(grep -n "^#include <linux/sched/task.h>" "$NS_FILE" | head -1 | cut -d: -f1)
-            if [ -n "$TARGET_LINE" ]; then
-              awk -v line="$TARGET_LINE" '
-                NR == line {
-                  print
-                  print "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT"
-                  print "#include <linux/susfs_def.h>"
-                  print "#endif"
-                  next
-                }
-                { print }
-              ' "$NS_FILE" > "$NS_FILE.tmp" && mv "$NS_FILE.tmp" "$NS_FILE"
-            fi
-          fi
-
-          # 5.2 补 extern 声明
-          if ! grep -q "extern bool susfs_is_current_ksu_domain" "$NS_FILE" 2>/dev/null; then
-            echo "[+] fs/proc_namespace.c 补 extern 声明"
-            TARGET_LINE=$(grep -n '^#include "internal.h"' "$NS_FILE" | head -1 | cut -d: -f1)
-            if [ -n "$TARGET_LINE" ]; then
-              awk -v line="$TARGET_LINE" '
-                NR == line {
-                  print
-                  print ""
-                  print "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT"
-                  print "extern bool susfs_is_current_ksu_domain(void);"
-                  print "extern struct static_key_false susfs_is_hide_sus_mnts_for_non_su_procs_enabled;"
-                  print "#endif"
-                  next
-                }
-                { print }
-              ' "$NS_FILE" > "$NS_FILE.tmp" && mv "$NS_FILE.tmp" "$NS_FILE"
-            fi
-          fi
-
-          echo "=== fs/proc_namespace.c 头部 25 行 ==="
-          head -25 "$NS_FILE"
-
-          # ========== 6. 修复 fs/namei.c 的 __lookup_hash ==========
-          NAMEI="fs/namei.c"
-
-          echo ""
-          echo "=== 定位 __lookup_hash 函数 ==="
-          START=$(grep -n "__lookup_hash(const struct qstr" "$NAMEI" | head -1 | cut -d: -f1)
-          if [ -z "$START" ]; then
-            START=$(grep -n "__lookup_hash" "$NAMEI" | grep -E "^\s*[0-9]+:\s*(static|__always_inline|inline).*__lookup_hash" | head -1 | cut -d: -f1)
-          fi
-          echo "函数起始行: $START"
-
-          if [ -n "$START" ]; then
-            DIR_LINE=$(awk -v s="$START" 'NR > s && /struct inode \*dir = base->d_inode;/ { print NR; exit }' "$NAMEI")
-            ALLOC_LINE=$(awk -v s="$START" 'NR > s && /dentry = d_alloc\(base, name\);/ { print NR; exit }' "$NAMEI")
-            echo "DIR_LINE: $DIR_LINE"
-            echo "ALLOC_LINE: $ALLOC_LINE"
-          fi
-
-          if [ -n "$START" ] && [ -n "$DIR_LINE" ] && [ -n "$ALLOC_LINE" ]; then
-            echo "[+] 开始插入 found_sus_path 声明和 retry 标签"
-            awk -v dir="$DIR_LINE" -v alloc="$ALLOC_LINE" '
-              NR == dir {
-                print
-                print "#ifdef CONFIG_KSU_SUSFS_SUS_PATH"
-                print "\tbool found_sus_path = false;"
-                print "#endif"
-                next
-              }
-              NR == alloc {
-                print
-                print "#ifdef CONFIG_KSU_SUSFS_SUS_PATH"
-                print "retry:"
-                print "#endif"
-                next
-              }
-              { print }
-            ' "$NAMEI" > "$NAMEI.tmp" && mv "$NAMEI.tmp" "$NAMEI"
-            echo "[+] 插入完成"
-          fi
-
-          # ========== 6.5. 为 v2.1 task_mmu.c 补旧 API shim ==========
-          SUSFS_C="fs/susfs.c"
-          if ! grep -q "ReSukiSU legacy API shim for task_mmu" "$SUSFS_C" 2>/dev/null; then
-            echo "[+] fs/susfs.c 追加 v2.1 → v2.3.0 兼容 shim"
-            cat >> "$SUSFS_C" << 'EOF'
-
-          /* === ReSukiSU legacy API shim for task_mmu (v2.1 → v2.3.0) === */
-          extern struct srcu_struct susfs_srcu_open_redirect;
-          extern int susfs_open_redirect_spoof_show_map_vma_srcu(struct inode *inode, unsigned long *out_ino, dev_t *out_dev, char **out_spoofed_name);
-
-          int susfs_open_redirect_spoof_show_map_vma(struct inode *inode, unsigned long *out_ino, dev_t *out_dev, char **out_spoofed_name)
-          {
-              int srcu_idx = srcu_read_lock(&susfs_srcu_open_redirect);
-              int ret = susfs_open_redirect_spoof_show_map_vma_srcu(inode, out_ino, out_dev, out_spoofed_name);
-              srcu_read_unlock(&susfs_srcu_open_redirect, srcu_idx);
-              return ret;
-          }
-          EOF
-            echo "[+] shim 已追加"
-          fi
-
-          # ========== 7. 清理所有 .rej ==========
-          find . -name "*.rej" -not -path "./.git/*" -delete 2>/dev/null || true
-          echo "[+] 已清理所有 .rej 文件"
-
-          # ========== 8. 验证 ==========
-          echo ""
-          echo "=== 验证 ==="
-          echo "--- fs/proc_namespace.c include ---"
-          grep -n "linux/susfs_def.h" fs/proc_namespace.c || echo "(未找到)"
-          echo "--- fs/proc_namespace.c extern ---"
-          grep -n "extern bool susfs_is_current_ksu_domain" fs/proc_namespace.c || echo "(未找到)"
-          echo "--- fs/namespace.c 关键函数 ---"
-          grep -n "int res = ida_alloc_min\|susfs_alloc_unshare_ksu_vfsmnt\|susfs_alloc_non_unshare_ksu_vfsmnt" fs/namespace.c | head -5 || echo "(无)"
-          echo "--- fs/namei.c found_sus_path ---"
-          grep -n "bool found_sus_path = false" fs/namei.c | head -3
-          echo "--- fs/namei.c retry ---"
-          grep -n "^retry:" fs/namei.c | head -3
-          echo "--- fs/susfs.c shim ---"
-          grep -n "susfs_open_redirect_spoof_show_map_vma" fs/susfs.c | head -5
-
-      - name: 🔎 Final source integrity check
-        working-directory: device_kernel
-        shell: bash
-        run: |
-          echo "=== SUSFS 文件 ==="
-          ls -la fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h || true
+          echo "=== 源码自带 SUSFS 文件 ==="
+          ls -la fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h 2>/dev/null || echo "(缺失)"
           echo ""
           echo "=== SUSFS 版本 ==="
-          grep "SUSFS_VERSION" include/linux/susfs.h || true
+          grep "SUSFS_VERSION" include/linux/susfs.h 2>/dev/null || echo "(未找到)"
           echo ""
           echo "=== fs/Makefile susfs 引用 ==="
-          grep -n "susfs" fs/Makefile || true
+          grep -n "susfs" fs/Makefile 2>/dev/null || echo "(无)"
           echo ""
           echo "=== 各文件的 SUSFS 挂钩数量 ==="
           for f in fs/namei.c fs/namespace.c fs/notify/fdinfo.c fs/proc/fd.c fs/proc/task_mmu.c fs/proc_namespace.c fs/readdir.c fs/stat.c fs/statfs.c kernel/kallsyms.c kernel/sys.c mm/memory.c security/selinux/avc.c; do
@@ -309,6 +132,16 @@ jobs:
           echo ""
           echo "=== 残留 .rej 文件 ==="
           find . -name "*.rej" -not -path "./.git/*" 2>/dev/null || true
+
+      - name: 🔧 Setup Clang to clang-custom
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEST="$GITHUB_WORKSPACE/clang-custom"
+          rm -rf "$DEST"
+          git clone --depth=1 https://github.com/thenoppy12/clang-r416183b.git "$DEST"
+          "$DEST/bin/clang" --version | head -1
+          echo "✅ Clang 已就绪: $DEST/bin"
 
       - name: 🔗 Patch for no-kprobe
         uses: ./.github/workflows/patch-no-kprobe
@@ -358,7 +191,7 @@ jobs:
           name: Xiaomi 11 Ultra Star HyperOS A16 NonGKI Kernel
           body: |
             ## Xiaomi 11 Ultra Star HyperOS A16
-            - ReSukiSU + SuSFS 2.3.0（源码集成）
+            - ReSukiSU + SuSFS 2.1（源码自带）
           files: ${{ env.PACK_NAME }}
           draft: false
           prerelease: false
