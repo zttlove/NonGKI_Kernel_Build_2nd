@@ -306,8 +306,7 @@ jobs:
           export LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- \
           CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           make -j$(nproc) O=${{ env.OUTPUT_DIR }} \
-          KCFLAGS="-Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-array-parameter -Wno-declaration-after-statement" \
-          2>&1 | tee build.log
+                   KCFLAGS="-Wno-error -Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-declaration-after-statement" \
 
           
       # ============================================================
