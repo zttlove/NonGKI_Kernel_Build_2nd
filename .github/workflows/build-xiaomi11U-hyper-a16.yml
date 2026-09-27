@@ -76,7 +76,7 @@ env:
   GENERATE_CHIP: "qcom"
 
   BUILD_DEBUGGER: "false"
-  SKIP_PATCH: "true"
+  SKIP_PATCH: "false"
   BUILD_OTHER_CONFIG: "false"
   MERGE_CONFIG_FILES: "vendor/venus_QGKI.config,vendor/xiaomi_QGKI.config"
   FREE_MORE_SPACE: "false"
