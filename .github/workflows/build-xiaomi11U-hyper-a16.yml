@@ -105,13 +105,12 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs
 
-      - name: 🩹 Restore broken files from MiYume0721 upstream
+      - name: 🩹 Restore broken files and patch namei.c Hunk #6
         working-directory: device_kernel
         shell: bash
         run: |
           set -euo pipefail
 
-          # 关键：从 MiYume0721 原始仓库恢复（zttlove 的副本已被自动清理破坏）
           SUSFS_BASE="https://raw.githubusercontent.com/MiYume0721/android_kernel_xiaomi_sm8350_miyume/main"
 
           # ========== 1. fs/proc/task_mmu.c ==========
@@ -127,19 +126,9 @@ jobs:
           # ========== 2. fs/notify/fdinfo.c ==========
           echo "=== 检查 fs/notify/fdinfo.c ==="
           FDINFO_BROKEN=false
-          if [ -f "fs/notify/fdinfo.c.rej" ]; then
-            echo "[-] 存在 fs/notify/fdinfo.c.rej"
-            FDINFO_BROKEN=true
-          fi
-          if ! grep -q "static void show_fdinfo" fs/notify/fdinfo.c 2>/dev/null; then
-            echo "[-] fs/notify/fdinfo.c 缺少 show_fdinfo 函数头"
-            FDINFO_BROKEN=true
-          fi
-          if ! grep -q "static void inotify_fdinfo" fs/notify/fdinfo.c 2>/dev/null; then
-            echo "[-] fs/notify/fdinfo.c 缺少 inotify_fdinfo 函数头"
-            FDINFO_BROKEN=true
-          fi
-
+          if [ -f "fs/notify/fdinfo.c.rej" ]; then FDINFO_BROKEN=true; fi
+          if ! grep -q "static void show_fdinfo" fs/notify/fdinfo.c 2>/dev/null; then FDINFO_BROKEN=true; fi
+          if ! grep -q "static void inotify_fdinfo" fs/notify/fdinfo.c 2>/dev/null; then FDINFO_BROKEN=true; fi
           if [ "$FDINFO_BROKEN" = "true" ]; then
             echo "[-] fs/notify/fdinfo.c 被破坏，从 MiYume0721 恢复"
             curl -L --fail --retry 3 -o fs/notify/fdinfo.c "$SUSFS_BASE/fs/notify/fdinfo.c"
@@ -159,21 +148,63 @@ jobs:
             echo "[*] fs/proc/fd.c 无 .rej"
           fi
 
-          # ========== 4. 清理所有残留 .rej ==========
+          # ========== 4. 修复 fs/namei.c 的 Hunk #6 缺失 ==========
+          NAMEI="fs/namei.c"
+
+          # 4.1 补 found_sus_path 声明
+          if ! grep -q "bool found_sus_path = false" "$NAMEI"; then
+            echo "[+] 补 fs/namei.c 的 found_sus_path 声明"
+            awk '
+              /^static struct dentry \*__lookup_hash\(/ { in_func = 1 }
+              in_func && /struct inode \*dir = base->d_inode;/ && !done {
+                print
+                print "#ifdef CONFIG_KSU_SUSFS_SUS_PATH"
+                print "\tbool found_sus_path = false;"
+                print "#endif"
+                done = 1
+                next
+              }
+              { print }
+            ' "$NAMEI" > "$NAMEI.tmp" && mv "$NAMEI.tmp" "$NAMEI"
+          else
+            echo "[*] fs/namei.c 已有 found_sus_path 声明"
+          fi
+
+          # 4.2 补 retry 标签
+          if ! grep -q "^retry:" "$NAMEI"; then
+            echo "[+] 补 fs/namei.c 的 retry 标签"
+            awk '
+              /^static struct dentry \*__lookup_hash\(/ { in_func = 1 }
+              in_func && /^[[:space:]]*dentry = d_alloc\(base, name\);/ && !done {
+                print
+                print "#ifdef CONFIG_KSU_SUSFS_SUS_PATH"
+                print "retry:"
+                print "#endif"
+                done = 1
+                next
+              }
+              { print }
+            ' "$NAMEI" > "$NAMEI.tmp" && mv "$NAMEI.tmp" "$NAMEI"
+          else
+            echo "[*] fs/namei.c 已有 retry 标签"
+          fi
+
+          # ========== 5. 清理所有 .rej ==========
           find . -name "*.rej" -not -path "./.git/*" -delete 2>/dev/null || true
           echo "[+] 已清理所有 .rej 文件"
 
-          # ========== 5. 恢复后验证 ==========
+          # ========== 6. 验证 ==========
           echo ""
           echo "=== 恢复后检查 ==="
+          echo "--- fs/namei.c 关键修复 ---"
+          grep -n "bool found_sus_path = false" "$NAMEI" || echo "(未找到 found_sus_path)"
+          grep -n "^retry:" "$NAMEI" || echo "(未找到 retry)"
+          echo "--- fs/namei.c 行数 ---"
+          wc -l "$NAMEI"
           echo "--- fs/notify/fdinfo.c 关键函数 ---"
-          grep -n "static void show_fdinfo\|static void inotify_fdinfo\|inotify_show_fdinfo\|fanotify_show_fdinfo" fs/notify/fdinfo.c || echo "(无)"
+          grep -n "static void show_fdinfo\|static void inotify_fdinfo" fs/notify/fdinfo.c || echo "(无)"
           echo "--- fs/notify/fdinfo.c 行数 ---"
           wc -l fs/notify/fdinfo.c
-          echo "--- fs/proc/task_mmu.c 行数 ---"
-          wc -l fs/proc/task_mmu.c
-          echo "--- fs/proc/fd.c 行数 ---"
-          wc -l fs/proc/fd.c
 
       - name: 🔎 Final source integrity check
         working-directory: device_kernel
