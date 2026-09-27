@@ -105,22 +105,23 @@ jobs:
       - name: 🪝 Patch Kernel of SUSFS
         uses: ./.github/workflows/patch-susfs
 
-      - name: 🩹 Restore broken files if patched incompletely
+      - name: 🩹 Restore broken files from MiYume0721 upstream
         working-directory: device_kernel
         shell: bash
         run: |
           set -euo pipefail
 
-          SUSFS_BASE="https://raw.githubusercontent.com/zttlove/android_kernel_xiaomi_sm8350_miyume/main"
+          # 关键：从 MiYume0721 原始仓库恢复（zttlove 的副本已被自动清理破坏）
+          SUSFS_BASE="https://raw.githubusercontent.com/MiYume0721/android_kernel_xiaomi_sm8350_miyume/main"
 
           # ========== 1. fs/proc/task_mmu.c ==========
           if [ -f "fs/proc/task_mmu.c.rej" ]; then
-            echo "[-] fs/proc/task_mmu.c 存在 .rej，从上游恢复"
+            echo "[-] fs/proc/task_mmu.c 存在 .rej，从 MiYume0721 恢复"
             curl -L --fail --retry 3 -o fs/proc/task_mmu.c "$SUSFS_BASE/fs/proc/task_mmu.c"
             rm -f fs/proc/task_mmu.c.rej
             echo "[+] 已恢复 fs/proc/task_mmu.c"
           else
-            echo "[*] fs/proc/task_mmu.c 无 .rej，保留补丁结果"
+            echo "[*] fs/proc/task_mmu.c 无 .rej"
           fi
 
           # ========== 2. fs/notify/fdinfo.c ==========
@@ -130,17 +131,17 @@ jobs:
             echo "[-] 存在 fs/notify/fdinfo.c.rej"
             FDINFO_BROKEN=true
           fi
-          if ! grep -q "static void show_fdinfo" fs/notify/fdinfo.c; then
+          if ! grep -q "static void show_fdinfo" fs/notify/fdinfo.c 2>/dev/null; then
             echo "[-] fs/notify/fdinfo.c 缺少 show_fdinfo 函数头"
             FDINFO_BROKEN=true
           fi
-          if ! grep -q "static void inotify_fdinfo" fs/notify/fdinfo.c; then
+          if ! grep -q "static void inotify_fdinfo" fs/notify/fdinfo.c 2>/dev/null; then
             echo "[-] fs/notify/fdinfo.c 缺少 inotify_fdinfo 函数头"
             FDINFO_BROKEN=true
           fi
 
           if [ "$FDINFO_BROKEN" = "true" ]; then
-            echo "[-] fs/notify/fdinfo.c 结构被破坏，从上游恢复"
+            echo "[-] fs/notify/fdinfo.c 被破坏，从 MiYume0721 恢复"
             curl -L --fail --retry 3 -o fs/notify/fdinfo.c "$SUSFS_BASE/fs/notify/fdinfo.c"
             rm -f fs/notify/fdinfo.c.rej
             echo "[+] 已恢复 fs/notify/fdinfo.c"
@@ -148,9 +149,31 @@ jobs:
             echo "[*] fs/notify/fdinfo.c 结构正常"
           fi
 
-          # ========== 3. 清理所有残留 .rej ==========
+          # ========== 3. fs/proc/fd.c ==========
+          if [ -f "fs/proc/fd.c.rej" ]; then
+            echo "[-] fs/proc/fd.c 存在 .rej，从 MiYume0721 恢复"
+            curl -L --fail --retry 3 -o fs/proc/fd.c "$SUSFS_BASE/fs/proc/fd.c"
+            rm -f fs/proc/fd.c.rej
+            echo "[+] 已恢复 fs/proc/fd.c"
+          else
+            echo "[*] fs/proc/fd.c 无 .rej"
+          fi
+
+          # ========== 4. 清理所有残留 .rej ==========
           find . -name "*.rej" -not -path "./.git/*" -delete 2>/dev/null || true
           echo "[+] 已清理所有 .rej 文件"
+
+          # ========== 5. 恢复后验证 ==========
+          echo ""
+          echo "=== 恢复后检查 ==="
+          echo "--- fs/notify/fdinfo.c 关键函数 ---"
+          grep -n "static void show_fdinfo\|static void inotify_fdinfo\|inotify_show_fdinfo\|fanotify_show_fdinfo" fs/notify/fdinfo.c || echo "(无)"
+          echo "--- fs/notify/fdinfo.c 行数 ---"
+          wc -l fs/notify/fdinfo.c
+          echo "--- fs/proc/task_mmu.c 行数 ---"
+          wc -l fs/proc/task_mmu.c
+          echo "--- fs/proc/fd.c 行数 ---"
+          wc -l fs/proc/fd.c
 
       - name: 🔎 Final source integrity check
         working-directory: device_kernel
