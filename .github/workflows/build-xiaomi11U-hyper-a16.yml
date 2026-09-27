@@ -241,6 +241,27 @@ jobs:
             echo "[+] 插入完成"
           fi
 
+          # ========== 6.5. 为 v2.1 task_mmu.c 补旧 API shim ==========
+          SUSFS_C="fs/susfs.c"
+          if ! grep -q "ReSukiSU legacy API shim for task_mmu" "$SUSFS_C" 2>/dev/null; then
+            echo "[+] fs/susfs.c 追加 v2.1 → v2.3.0 兼容 shim"
+            cat >> "$SUSFS_C" << 'EOF'
+
+          /* === ReSukiSU legacy API shim for task_mmu (v2.1 → v2.3.0) === */
+          extern struct srcu_struct susfs_srcu_open_redirect;
+          extern int susfs_open_redirect_spoof_show_map_vma_srcu(struct inode *inode, unsigned long *out_ino, dev_t *out_dev, char **out_spoofed_name);
+
+          int susfs_open_redirect_spoof_show_map_vma(struct inode *inode, unsigned long *out_ino, dev_t *out_dev, char **out_spoofed_name)
+          {
+              int srcu_idx = srcu_read_lock(&susfs_srcu_open_redirect);
+              int ret = susfs_open_redirect_spoof_show_map_vma_srcu(inode, out_ino, out_dev, out_spoofed_name);
+              srcu_read_unlock(&susfs_srcu_open_redirect, srcu_idx);
+              return ret;
+          }
+          EOF
+            echo "[+] shim 已追加"
+          fi
+
           # ========== 7. 清理所有 .rej ==========
           find . -name "*.rej" -not -path "./.git/*" -delete 2>/dev/null || true
           echo "[+] 已清理所有 .rej 文件"
@@ -258,6 +279,8 @@ jobs:
           grep -n "bool found_sus_path = false" fs/namei.c | head -3
           echo "--- fs/namei.c retry ---"
           grep -n "^retry:" fs/namei.c | head -3
+          echo "--- fs/susfs.c shim ---"
+          grep -n "susfs_open_redirect_spoof_show_map_vma" fs/susfs.c | head -5
 
       - name: 🔎 Final source integrity check
         working-directory: device_kernel
