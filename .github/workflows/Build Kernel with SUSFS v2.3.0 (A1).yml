@@ -53,12 +53,14 @@ jobs:
             echo "✅ libtinfo.so.5 修复成功！"
           fi
 
-      - name: Download Clang
+      - name: Download Clang (via Mirror)
         run: |
           mkdir -p ${{ env.CLANG_DIR }}
-          git clone https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 -b main --depth=1 ${{ env.CLANG_DIR }}-repo
-          cp -r ${{ env.CLANG_DIR }}-repo/clang-r487747c/* ${{ env.CLANG_DIR }}/
-          rm -rf ${{ env.CLANG_DIR }}-repo
+          # 使用清华源镜像下载 clang-r487747c
+          curl -L --retry 3 -o clang.tar.gz "https://mirrors.tuna.tsinghua.edu.cn/git/AOSP/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r487747c.tar.gz"
+          # 注意解压命令要和文件名匹配
+          tar -xzf clang.tar.gz -C ${{ env.CLANG_DIR }} --strip-components=1
+          rm clang.tar.gz
           ${{ env.CLANG_DIR }}/bin/clang --version
 
       # ============================================================
