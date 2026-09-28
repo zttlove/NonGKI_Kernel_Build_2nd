@@ -115,7 +115,7 @@ jobs:
           grep -A7 "^config KSU_SUSFS$" "$KCONFIG" | head -8
 
       # ============================================================
-      # 3. 配置内核（核心步骤：彻底清理、配置、补全 Makefile）
+      # 3. 配置内核（核心步骤：彻底清理、配置、修补 Makefile）
       # ============================================================
       - name: Configure Kernel
         working-directory: kernel
@@ -144,7 +144,6 @@ jobs:
           echo "正在生成 out/.config ..."
           make -j$(nproc) O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
           
-          # 校验 .config 是否生成成功
           if [ ! -f "${{ env.OUTPUT_DIR }}/.config" ]; then
             echo "::error::make defconfig 失败，out/.config 不存在！"
             exit 1
@@ -152,11 +151,12 @@ jobs:
           echo "✅ out/.config 生成成功"
 
           # ============================================================
-          # 3. 修改配置（强制启用所有必要的 SUSFS/KSU 选项）
+          # 3. 修改配置（强制启用 Manual Hook 和 SUSFS）
           # ============================================================
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
             --enable KSU \
             --enable KSU_MANUAL_HOOK \
+            --disable KSU_TRACEPOINT_HOOK \
             --enable KSU_SUSFS \
             --enable KSU_SUSFS_SUS_PATH \
             --enable KSU_SUSFS_SUS_MOUNT \
@@ -166,8 +166,7 @@ jobs:
             --enable KSU_SUSFS_SUS_MAP \
             --enable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
             --enable KSU_SUSFS_ENABLE_LOG \
-            --enable KSU_SUSFS_SUS_SU \
-            --disable KSU_TRACEPOINT_HOOK \
+            --disable KSU_SUSFS_SUS_SU \
             --enable KSU_ZYGISK \
             --enable KSU_SELINUX \
             --enable KPROBES \
@@ -206,19 +205,19 @@ jobs:
           fi
           echo "✅ susfs.c 和 susfs.h 文件存在"
           
-          # 【关键检查点3】强制补全 fs/Makefile（不依赖 grep，直接追加）
+          # 【关键检查点3】强制补全 fs/Makefile（确保 susfs.o 被编译）
           echo "=== 补全 fs/Makefile ==="
-          sed -i '/^obj-\$(CONFIG_KSU_SUSFS) += susfs.o/d' fs/Makefile
+          sed -i '/susfs.o/d' fs/Makefile
           echo "obj-\$(CONFIG_KSU_SUSFS) += susfs.o" >> fs/Makefile
           echo "✅ 已追加 susfs.o 到 fs/Makefile"
           
-          # 【关键检查点4】强制补全 drivers/Makefile（不依赖 grep，直接追加）
+          # 【关键检查点4】强制补全 drivers/Makefile（确保 kernelsu 被编译）
           echo "=== 补全 drivers/Makefile ==="
-          sed -i '/^obj-\$(CONFIG_KSU) += kernelsu\//d' drivers/Makefile
+          sed -i '/kernelsu/d' drivers/Makefile
           echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
           echo "✅ 已追加 kernelsu/ 到 drivers/Makefile"
           
-          # 【关键检查点5】处理 Kbuild 中的强制报错行
+          # 【关键检查点5】处理 Kbuild 中的强制报错行（绕过 GKI 1.0 限制）
           echo "=== 处理 Kbuild 强制报错 ==="
           if [ -f "drivers/kernelsu/kernel/Kbuild" ]; then
             sed -i '/TP hooks are incompatible with Non-GKI/d' drivers/kernelsu/kernel/Kbuild
