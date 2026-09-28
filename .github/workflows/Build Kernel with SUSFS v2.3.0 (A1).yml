@@ -148,14 +148,28 @@ jobs:
           echo "✅ out/.config 生成成功"
 
           # ============================================================
-          # 修补 pahole-flags.sh，兼容 5.4 内核的 BTF 生成
+          # 修补 BTF 相关文件，解决链接错误
           # ============================================================
+          echo "=== 修复 .BTF_ids 对齐问题 ==="
+          BTF_IDS_FILE="tools/testing/selftests/bpf/prog_tests/resolve_btfids.c"
+          if [ -f "$BTF_IDS_FILE" ]; then
+            if ! grep -q "balign 4" "$BTF_IDS_FILE"; then
+              sed -i '/^BTF_ID_LIST(test_list_local)/i asm ( ".pushsection " BTF_IDS_SECTION " ,\\"a\\"; \\n" ".balign 4, 0; \\n" ".popsection; \\n");' "$BTF_IDS_FILE"
+              echo "✅ 已修复 .BTF_ids 对齐"
+            else
+              echo "✅ .BTF_ids 对齐已修复，跳过"
+            fi
+          else
+            echo "⚠️ 未找到 $BTF_IDS_FILE，跳过对齐修复"
+          fi
+
           echo "=== 修补 pahole-flags.sh ==="
           PAHOLE_FLAGS_SCRIPT="scripts/pahole-flags.sh"
           if [ -f "$PAHOLE_FLAGS_SCRIPT" ]; then
             if ! grep -q "skip_encoding_btf_enum64" "$PAHOLE_FLAGS_SCRIPT"; then
               echo "Patching pahole-flags.sh..."
-              sed -i 's/^echo \${extra_paholeopt}$/if [ "\${pahole_ver}" -ge "124" ]; then\n    extra_paholeopt="\${extra_paholeopt} --skip_encoding_btf_enum64"\nfi\necho \${extra_paholeopt}/' "$PAHOLE_FLAGS_SCRIPT"
+              # 在脚本开头插入版本判断
+              sed -i '1s/^/if [ "${pahole_ver}" -ge "124" ]; then\n    extra_paholeopt="${extra_paholeopt} --skip_encoding_btf_enum64"\nfi\n/' "$PAHOLE_FLAGS_SCRIPT"
               echo "✅ 已修补 pahole-flags.sh"
             else
               echo "✅ pahole-flags.sh 已包含 skip_encoding_btf_enum64"
