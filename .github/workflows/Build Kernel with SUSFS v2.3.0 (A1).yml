@@ -15,7 +15,6 @@ env:
   CCACHE_DIR: "${{ github.workspace }}/.ccache"
   KERNEL_DIR: "${{ github.workspace }}/kernel"
 
-
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -62,7 +61,7 @@ jobs:
           ${{ env.CLANG_DIR }}/bin/clang --version
 
       # ============================================================
-      # 2. 安装 ReSukiSU（如果做纯净测试，可以注释掉这部分）
+      # 2. 安装 ReSukiSU
       # ============================================================
       - name: Setup ReSukiSU (main)
         working-directory: kernel
@@ -115,10 +114,10 @@ jobs:
           echo "=== KSU_SUSFS 块前 8 行 ==="
           grep -A7 "^config KSU_SUSFS$" "$KCONFIG" | head -8
 
-            # ============================================================
-      # 6. 编译（输出 build.log 便于排查）
       # ============================================================
-      - name: Build Kernel
+      # 5. 配置内核（核心步骤：生成 .config 并打补丁）
+      # ============================================================
+      - name: Configure Kernel
         working-directory: kernel
         run: |
           set -e
@@ -129,9 +128,20 @@ jobs:
           ccache -M 6G
           export LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- \
                  CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          
+          # 1. 清理并生成 .config
+          make mrproper || true
+          echo "正在生成 out/.config ..."
+          make -j$(nproc) O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
+          
+          # 2. 校验 .config 是否生成成功
+          if [ ! -f "${{ env.OUTPUT_DIR }}/.config" ]; then
+            echo "::error::make defconfig 失败，out/.config 不存在！"
+            exit 1
+          fi
+          echo "✅ out/.config 生成成功"
 
-          # 【核心修复1】强制修改 .config，启用 KSU 和 SUSFS 所需的所有选项
-          # 注意：这里不再禁用 SUSFS，因为 xarray.c 里引用了这些函数，必须一起编译
+          # 3. 修改配置（启用 KSU 和 SUSFS）
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
             --enable KSU \
             --enable KSU_MANUAL_HOOK \
@@ -161,25 +171,18 @@ jobs:
             --set-str LOCALVERSION ""
           
           make olddefconfig O=${{ env.OUTPUT_DIR }}
+          echo "✅ 配置修改完成"
 
-          # 【核心修复2】注释掉 Kbuild 中的强制报错行，允许 GKI 1.0 继续编译
+          # 4. 注释掉 Kbuild 中的强制报错行，允许 GKI 1.0 继续编译
           sed -i '/TP hooks are incompatible with Non-GKI/d' drivers/kernelsu/kernel/Kbuild
           
-          # 【核心修复3】确保 SUSFS 的源文件被编译进内核
-          # 如果 fs/Makefile 里没有 susfs.o 的编译规则，就手动加上
+          # 5. 确保 SUSFS 和 KSU 源文件被编译进内核
           if ! grep -q "susfs.o" fs/Makefile; then
             echo "obj-\$(CONFIG_KSU_SUSFS) += susfs.o" >> fs/Makefile
           fi
-          
-          # 【核心修复4】确保 KSU 的源文件被编译进内核
           if ! grep -q "kernelsu" drivers/Makefile; then
             echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
           fi
-
-          # 开始正式编译
-          make -j$(nproc) O=${{ env.OUTPUT_DIR }} \
-               KCFLAGS="-Wno-error -Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-declaration-after-statement" \
-               2>&1 | tee build.log
 
       # ============================================================
       # 6. 编译（输出 build.log 便于排查）
@@ -196,20 +199,12 @@ jobs:
           export LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- \
                  CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           
-          # 【核心修复1】强制修改 .config，禁用 Tracepoint，启用手动钩子，清空 LOCALVERSION
-          sed -i 's/CONFIG_KSU_TRACEPOINT_HOOK=y/# CONFIG_KSU_TRACEPOINT_HOOK is not set/g' ${{ env.OUTPUT_DIR }}/.config
-          sed -i 's/# CONFIG_KSU_MANUAL_HOOK is not set/CONFIG_KSU_MANUAL_HOOK=y/g' ${{ env.OUTPUT_DIR }}/.config
-          sed -i 's/CONFIG_LOCALVERSION=".*"/CONFIG_LOCALVERSION=""/g' ${{ env.OUTPUT_DIR }}/.config
-
-          # 【核心修复2】注释掉 Kbuild 中的强制报错行，允许 GKI 1.0 继续编译
-          sed -i '/TP hooks are incompatible with Non-GKI/d' drivers/kernelsu/kernel/Kbuild
-          
-          # 开始正式编译
           make -j$(nproc) O=${{ env.OUTPUT_DIR }} \
                KCFLAGS="-Wno-error -Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-declaration-after-statement" \
                2>&1 | tee build.log
+
       # ============================================================
-      # 5. 打包 AnyKernel3
+      # 7. 打包 AnyKernel3
       # ============================================================
       - name: Package AnyKernel3
         id: package
@@ -229,7 +224,7 @@ jobs:
           echo "zip_name=${{ env.DEVICE_CODENAME }}-SUSFS-reponative-sp-${TIME}.zip" >> $GITHUB_OUTPUT
 
       # ============================================================
-      # 6. 上传
+      # 8. 上传
       # ============================================================
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -253,10 +248,9 @@ jobs:
           name: "SUSFS (Repo-native + KPROBES Hook)"
           body: |
             ## 测试内核 - 仓库自带 SUSFS
-            - ReSukiSU b2ac2fc (v35089)
+            - ReSukiSU main (最新)
             - 仓库自带 SUSFS
-            - KPROBES/Tracepoint Hook
-            - inline_hook_check.mk 已绕过
+            - 手动钩子 (Manual Hook)
             - 刷机有风险，请备份原内核
           files: ${{ env.DEVICE_CODENAME }}-SUSFS-reponative-sp-*.zip
         env:
