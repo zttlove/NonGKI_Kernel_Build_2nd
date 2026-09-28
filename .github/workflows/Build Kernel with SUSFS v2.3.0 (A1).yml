@@ -40,7 +40,8 @@ jobs:
           sudo apt install -y \
             bc bison flex libelf-dev libssl-dev libncurses-dev \
             make python3 device-tree-compiler git curl xz-utils \
-            ccache zip unzip
+            ccache zip unzip \
+            dwarves
           echo "正在修复 libtinfo.so.5 依赖..."
           if ! sudo apt install -y libtinfo5; then
             sudo ln -sf /lib/x86_64-linux-gnu/libtinfo.so.6 /lib/x86_64-linux-gnu/libtinfo.so.5
@@ -51,6 +52,8 @@ jobs:
           else
             echo "✅ libtinfo.so.5 修复成功！"
           fi
+          echo "=== pahole 版本 ==="
+          pahole --version
 
       - name: Download Clang (From LLVM GitHub)
         run: |
@@ -113,7 +116,7 @@ jobs:
           grep -nE "^(choice|endchoice|config KSU_(TRACEPOINT|MANUAL|SUSFS))" "$KCONFIG"
 
       # ============================================================
-      # 3. 配置内核（彻底清理、生成配置、修补 Makefile）
+      # 3. 配置内核（彻底清理、生成配置、修补 Makefile、启用 BTF）
       # ============================================================
       - name: Configure Kernel
         working-directory: kernel
@@ -144,7 +147,7 @@ jobs:
           fi
           echo "✅ out/.config 生成成功"
 
-          # 3. 修改配置（只启用 KSU，禁用 SUSFS 和 Tracepoint）
+          # 3. 修改配置（启用 BTF、KSU Manual Hook，禁用 SUSFS 和 Tracepoint）
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
             --enable KSU \
             --enable KSU_MANUAL_HOOK \
@@ -171,6 +174,9 @@ jobs:
             --enable OVERLAY_FS \
             --enable EXT4_FS \
             --enable NAMESPACES \
+            --enable DEBUG_INFO_BTF \
+            --enable DEBUG_INFO \
+            --disable DEBUG_INFO_DWARF5 \
             --set-str LOCALVERSION ""
           
           # 4. 再次运行 olddefconfig，检查配置是否被回滚
@@ -190,6 +196,13 @@ jobs:
             exit 1
           else
             echo "✅ CONFIG_KSU_SUSFS 已禁用"
+          fi
+
+          if grep -q "CONFIG_DEBUG_INFO_BTF=y" ${{ env.OUTPUT_DIR }}/.config; then
+            echo "✅ CONFIG_DEBUG_INFO_BTF=y 生效"
+          else
+            echo "::error::CONFIG_DEBUG_INFO_BTF 未启用！"
+            exit 1
           fi
           
           # 6. 强制补全 drivers/Makefile，确保 kernelsu 被编译
@@ -266,12 +279,13 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: resukisu_${{ github.run_number }}
-          name: "ReSukiSU Kernel (No SUSFS)"
+          name: "ReSukiSU Kernel (No SUSFS + BTF)"
           body: |
             ## 测试内核 - 仅 ReSukiSU
             - ReSukiSU main (最新)
             - 手动钩子 (Manual Hook)
             - 无 SUSFS
+            - 已启用 BTF（解决 BPF 卡锁屏问题）
             - 刷机有风险，请备份原内核
           files: ${{ env.DEVICE_CODENAME }}-ReSukiSU-*.zip
         env:
