@@ -115,7 +115,7 @@ jobs:
           grep -A7 "^config KSU_SUSFS$" "$KCONFIG" | head -8
 
       # ============================================================
-      # 3. 配置内核（核心步骤：生成 .config 并打补丁）
+      # 3. 配置内核（核心步骤：彻底清理并重新生成配置）
       # ============================================================
       - name: Configure Kernel
         working-directory: kernel
@@ -129,19 +129,29 @@ jobs:
           export LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- \
                  CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
-          # 1. 清理并生成 .config
+          # ============================================================
+          # 1. 彻底清理（关键修复：先删 out 目录，再清理源码树）
+          # ============================================================
+          echo "正在彻底清理残留文件..."
+          rm -rf ${{ env.OUTPUT_DIR }}
           make mrproper || true
+
+          # ============================================================
+          # 2. 生成 .config
+          # ============================================================
           echo "正在生成 out/.config ..."
           make -j$(nproc) O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
           
-          # 2. 校验 .config 是否生成成功
+          # 校验 .config 是否生成成功
           if [ ! -f "${{ env.OUTPUT_DIR }}/.config" ]; then
             echo "::error::make defconfig 失败，out/.config 不存在！"
             exit 1
           fi
           echo "✅ out/.config 生成成功"
 
+          # ============================================================
           # 3. 修改配置（强制启用所有必要的 SUSFS/KSU 选项）
+          # ============================================================
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
             --enable KSU \
             --enable KSU_MANUAL_HOOK \
