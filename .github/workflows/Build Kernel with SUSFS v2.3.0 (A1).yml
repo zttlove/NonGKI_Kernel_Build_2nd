@@ -147,6 +147,23 @@ jobs:
           fi
           echo "✅ out/.config 生成成功"
 
+          # ============================================================
+          # 修补 pahole-flags.sh，兼容 5.4 内核的 BTF 生成
+          # ============================================================
+          echo "=== 修补 pahole-flags.sh ==="
+          PAHOLE_FLAGS_SCRIPT="scripts/pahole-flags.sh"
+          if [ -f "$PAHOLE_FLAGS_SCRIPT" ]; then
+            if ! grep -q "skip_encoding_btf_enum64" "$PAHOLE_FLAGS_SCRIPT"; then
+              echo "Patching pahole-flags.sh..."
+              sed -i 's/^echo \${extra_paholeopt}$/if [ "\${pahole_ver}" -ge "124" ]; then\n    extra_paholeopt="\${extra_paholeopt} --skip_encoding_btf_enum64"\nfi\necho \${extra_paholeopt}/' "$PAHOLE_FLAGS_SCRIPT"
+              echo "✅ 已修补 pahole-flags.sh"
+            else
+              echo "✅ pahole-flags.sh 已包含 skip_encoding_btf_enum64"
+            fi
+          else
+            echo "⚠️ 未找到 pahole-flags.sh，跳过修补"
+          fi
+
           # 3. 修改配置（启用 BTF、KSU Manual Hook，禁用 SUSFS 和 Tracepoint）
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
             --enable KSU \
