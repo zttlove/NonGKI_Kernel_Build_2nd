@@ -115,7 +115,7 @@ jobs:
           grep -A7 "^config KSU_SUSFS$" "$KCONFIG" | head -8
 
       # ============================================================
-      # 3. 配置内核（核心步骤：彻底清理并重新生成配置）
+      # 3. 配置内核（核心步骤：彻底清理、配置、补全 Makefile）
       # ============================================================
       - name: Configure Kernel
         working-directory: kernel
@@ -195,24 +195,7 @@ jobs:
             exit 1
           fi
           
-          # 【关键检查点2】确认 Makefile 中包含 susfs.o 和 kernelsu
-          echo "=== 检查 fs/Makefile ==="
-          if ! grep -q "susfs.o" fs/Makefile; then
-            echo "obj-\$(CONFIG_KSU_SUSFS) += susfs.o" >> fs/Makefile
-            echo "⚠️ 已手动添加 susfs.o 到 fs/Makefile"
-          else
-            echo "✅ fs/Makefile 已包含 susfs.o"
-          fi
-          
-          echo "=== 检查 drivers/Makefile ==="
-          if ! grep -q "kernelsu" drivers/Makefile; then
-            echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
-            echo "⚠️ 已手动添加 kernelsu/ 到 drivers/Makefile"
-          else
-            echo "✅ drivers/Makefile 已包含 kernelsu/"
-          fi
-          
-          # 【关键检查点3】确认 fs/susfs.c 和 include/linux/susfs.h 存在
+          # 【关键检查点2】确认 fs/susfs.c 和 include/linux/susfs.h 存在
           if [ ! -f "fs/susfs.c" ]; then
             echo "::error::fs/susfs.c 不存在！请检查 SUSFS 补丁是否打上"
             exit 1
@@ -223,7 +206,19 @@ jobs:
           fi
           echo "✅ susfs.c 和 susfs.h 文件存在"
           
-          # 【关键检查点4】处理 Kbuild 中的强制报错行
+          # 【关键检查点3】强制补全 fs/Makefile（不依赖 grep，直接追加）
+          echo "=== 补全 fs/Makefile ==="
+          sed -i '/^obj-\$(CONFIG_KSU_SUSFS) += susfs.o/d' fs/Makefile
+          echo "obj-\$(CONFIG_KSU_SUSFS) += susfs.o" >> fs/Makefile
+          echo "✅ 已追加 susfs.o 到 fs/Makefile"
+          
+          # 【关键检查点4】强制补全 drivers/Makefile（不依赖 grep，直接追加）
+          echo "=== 补全 drivers/Makefile ==="
+          sed -i '/^obj-\$(CONFIG_KSU) += kernelsu\//d' drivers/Makefile
+          echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
+          echo "✅ 已追加 kernelsu/ 到 drivers/Makefile"
+          
+          # 【关键检查点5】处理 Kbuild 中的强制报错行
           echo "=== 处理 Kbuild 强制报错 ==="
           if [ -f "drivers/kernelsu/kernel/Kbuild" ]; then
             sed -i '/TP hooks are incompatible with Non-GKI/d' drivers/kernelsu/kernel/Kbuild
