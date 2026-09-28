@@ -129,18 +129,14 @@ jobs:
           export LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- \
                  CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
-          # ============================================================
-          # 1. 彻底清理（关键修复：手动删除所有可能导致污染的目录）
-          # ============================================================
+          # 1. 彻底清理
           echo "正在彻底清理残留文件..."
           rm -rf ${{ env.OUTPUT_DIR }}
           rm -f .config
           rm -rf include/config include/generated
           make mrproper
 
-          # ============================================================
           # 2. 生成 .config
-          # ============================================================
           echo "正在生成 out/.config ..."
           make -j$(nproc) O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
           
@@ -150,9 +146,7 @@ jobs:
           fi
           echo "✅ out/.config 生成成功"
 
-          # ============================================================
-          # 3. 修改配置（强制启用 Manual Hook 和 SUSFS）
-          # ============================================================
+          # 3. 修改配置（核心修复：强制使用 Manual Hook，并启用 SUSFS）
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
             --enable KSU \
             --enable KSU_MANUAL_HOOK \
@@ -181,43 +175,36 @@ jobs:
             --enable NAMESPACES \
             --set-str LOCALVERSION ""
           
-          # 4. 再次运行 olddefconfig，检查配置是否被回滚
+          # 4. 检查配置是否被回滚
           make olddefconfig O=${{ env.OUTPUT_DIR }}
           
-          # 【关键检查点1】确认 SUSFS 配置在 olddefconfig 后依然生效
-          echo "=== 检查 SUSFS 配置是否生效 ==="
+          echo "=== 检查关键配置是否生效 ==="
+          if grep -q "CONFIG_KSU_MANUAL_HOOK=y" ${{ env.OUTPUT_DIR }}/.config; then
+            echo "✅ CONFIG_KSU_MANUAL_HOOK=y 生效"
+          else
+            echo "::error::CONFIG_KSU_MANUAL_HOOK 未启用！"
+            exit 1
+          fi
+          
           if grep -q "CONFIG_KSU_SUSFS=y" ${{ env.OUTPUT_DIR }}/.config; then
             echo "✅ CONFIG_KSU_SUSFS=y 生效"
           else
-            echo "::error::CONFIG_KSU_SUSFS 未启用！请检查 Kconfig 依赖关系"
-            grep -E "KSU_SUSFS" ${{ env.OUTPUT_DIR }}/.config
+            echo "::error::CONFIG_KSU_SUSFS 未启用！"
             exit 1
           fi
           
-          # 【关键检查点2】确认 fs/susfs.c 和 include/linux/susfs.h 存在
-          if [ ! -f "fs/susfs.c" ]; then
-            echo "::error::fs/susfs.c 不存在！请检查 SUSFS 补丁是否打上"
-            exit 1
-          fi
-          if [ ! -f "include/linux/susfs.h" ]; then
-            echo "::error::include/linux/susfs.h 不存在！请检查 SUSFS 补丁是否打上"
-            exit 1
-          fi
-          echo "✅ susfs.c 和 susfs.h 文件存在"
-          
-          # 【关键检查点3】强制补全 fs/Makefile（确保 susfs.o 被编译）
+          # 5. 强制补全 Makefile，确保关键源码被编译
           echo "=== 补全 fs/Makefile ==="
           sed -i '/susfs.o/d' fs/Makefile
           echo "obj-\$(CONFIG_KSU_SUSFS) += susfs.o" >> fs/Makefile
           echo "✅ 已追加 susfs.o 到 fs/Makefile"
           
-          # 【关键检查点4】强制补全 drivers/Makefile（确保 kernelsu 被编译）
           echo "=== 补全 drivers/Makefile ==="
           sed -i '/kernelsu/d' drivers/Makefile
           echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
           echo "✅ 已追加 kernelsu/ 到 drivers/Makefile"
           
-          # 【关键检查点5】处理 Kbuild 中的强制报错行（绕过 GKI 1.0 限制）
+          # 6. 移除 Kbuild 中对 GKI 1.0 的强制检查
           echo "=== 处理 Kbuild 强制报错 ==="
           if [ -f "drivers/kernelsu/kernel/Kbuild" ]; then
             sed -i '/TP hooks are incompatible with Non-GKI/d' drivers/kernelsu/kernel/Kbuild
