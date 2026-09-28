@@ -130,10 +130,12 @@ jobs:
                  CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
           # ============================================================
-          # 1. 彻底清理（关键修复：必须让 mrproper 成功执行）
+          # 1. 彻底清理（关键修复：手动删除所有可能导致污染的目录）
           # ============================================================
           echo "正在彻底清理残留文件..."
           rm -rf ${{ env.OUTPUT_DIR }}
+          rm -f .config
+          rm -rf include/config include/generated
           make mrproper
 
           # ============================================================
@@ -221,24 +223,12 @@ jobs:
           fi
           echo "✅ susfs.c 和 susfs.h 文件存在"
           
-          # 【关键检查点4】确认函数声明在头文件中
-          echo "=== 检查 susfs.h 中的函数声明 ==="
-          grep -n "susfs_is_current_proc_no_su\|susfs_set_current_proc_umounted_for_zygote_next" include/linux/susfs.h || echo "⚠️ 未在 susfs.h 中找到声明"
-          
-          # 【关键检查点5】确认函数实现在 susfs.c 中
-          echo "=== 检查 susfs.c 中的函数实现 ==="
-          grep -n "susfs_is_current_proc_no_su\|susfs_set_current_proc_umounted_for_zygote_next" fs/susfs.c || echo "⚠️ 未在 susfs.c 中找到实现"
-          
-          # 【关键检查点6】处理 Kbuild 中的强制报错行
+          # 【关键检查点4】处理 Kbuild 中的强制报错行
           echo "=== 处理 Kbuild 强制报错 ==="
           if [ -f "drivers/kernelsu/kernel/Kbuild" ]; then
             sed -i '/TP hooks are incompatible with Non-GKI/d' drivers/kernelsu/kernel/Kbuild
             echo "✅ 已移除 Kbuild 中的强制报错行"
           fi
-          
-          # 5. 导出 .config 到内核源码根目录，确保编译时使用的是我们修改过的配置
-          cp ${{ env.OUTPUT_DIR }}/.config .config
-          echo "✅ .config 已复制到源码根目录"
 
       # ============================================================
       # 4. 编译（输出 build.log 便于排查）
