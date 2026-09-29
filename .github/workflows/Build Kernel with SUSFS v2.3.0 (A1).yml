@@ -128,6 +128,7 @@ jobs:
             --enable OVERLAY_FS \
             --enable EXT4_FS \
             --enable NAMESPACES \
+            --disable HEADERS_INSTALL \
             --set-str LOCALVERSION ""
           
           # 5. 校验关键配置（不运行 olddefconfig）
