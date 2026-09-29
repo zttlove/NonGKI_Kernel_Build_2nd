@@ -1,4 +1,4 @@
-name: Build Kernel with ReSukiSU + SUSFS
+name: Build Kernel without KSU (Power Saving)
 
 on:
   workflow_dispatch:
@@ -61,7 +61,7 @@ jobs:
           ${{ env.CLANG_DIR }}/bin/clang --version
 
       # ============================================================
-      # 2. 配置内核
+      # 2. 配置内核（无 KSU，仅省电与基础功能）
       # ============================================================
       - name: Configure Kernel
         working-directory: kernel
@@ -100,16 +100,11 @@ jobs:
           fi
           echo "✅ out/.config 生成成功"
 
-          # 4. 直接修改配置，不运行 olddefconfig
+          # 4. 禁用所有 KSU/SUSFS，启用省电与 BPF
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
-            --enable KSU \
-            --enable KSU_MANUAL_HOOK \
+            --disable KSU \
+            --disable KSU_MANUAL_HOOK \
             --disable KSU_TRACEPOINT_HOOK \
-            --enable KSU_MANUAL_HOOK_AUTO_SETUID_HOOK \
-            --enable KSU_MANUAL_HOOK_AUTO_INITRC_HOOK \
-            --enable KSU_MANUAL_HOOK_AUTO_INPUT_HOOK \
-            --enable KSU_ZYGISK \
-            --enable KSU_SELINUX \
             --disable KSU_SUSFS \
             --disable KSU_SUSFS_SUS_PATH \
             --disable KSU_SUSFS_SUS_MOUNT \
@@ -121,6 +116,8 @@ jobs:
             --disable KSU_SUSFS_ENABLE_LOG \
             --disable KSU_SUSFS_SUS_SU \
             --disable KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+            --disable KSU_ZYGISK \
+            --disable KSU_SELINUX \
             --enable KPROBES \
             --enable HAVE_KPROBES \
             --enable KPROBE_EVENTS \
@@ -152,24 +149,39 @@ jobs:
             --set-val FRAME_WARN 100000 \
             --set-str LOCALVERSION ""
           
-          # 5. 清空 manual_hook_check.mk 绕过强制检查
-          echo "=== 清空 manual_hook_check.mk ==="
-          find . -name "manual_hook_check.mk" -exec sh -c 'echo "# Check bypassed" > "$1"' _ {} \;
-          echo "✅ 已清空所有 manual_hook_check.mk"
+          # 5. 移除任何可能强制编译 KSU 的 Makefile 规则
+          echo "=== 清理 Makefile 中的 KSU 强制编译规则 ==="
+          sed -i '/kernelsu/d' drivers/Makefile 2>/dev/null || true
+          sed -i '/KernelSU/d' drivers/Makefile 2>/dev/null || true
+          echo "✅ 已清理 drivers/Makefile"
           
           # 6. 校验关键配置
           echo "=== 检查关键配置是否生效 ==="
-          if grep -q "CONFIG_KSU_MANUAL_HOOK=y" ${{ env.OUTPUT_DIR }}/.config; then
-            echo "✅ CONFIG_KSU_MANUAL_HOOK=y 生效"
+          if grep -q "CONFIG_KSU=y" ${{ env.OUTPUT_DIR }}/.config; then
+            echo "::error::CONFIG_KSU 居然被启用了！"
+            exit 1
           else
-            echo "::error::CONFIG_KSU_MANUAL_HOOK 未启用！"
+            echo "✅ CONFIG_KSU 已禁用"
+          fi
+
+          if grep -q "CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y" ${{ env.OUTPUT_DIR }}/.config; then
+            echo "✅ 省电调频器 schedutil 已启用"
+          else
+            echo "⚠️ schedutil 未启用，请检查"
+          fi
+
+          if grep -q "CONFIG_BPF_STREAM_PARSER=y" ${{ env.OUTPUT_DIR }}/.config; then
+            echo "✅ CONFIG_BPF_STREAM_PARSER=y 生效"
+          else
+            echo "::error::CONFIG_BPF_STREAM_PARSER 未启用！"
             exit 1
           fi
 
-          if grep -q "CONFIG_FRAME_WARN=100000" ${{ env.OUTPUT_DIR }}/.config; then
-            echo "✅ CONFIG_FRAME_WARN=100000 生效"
+          if grep -q "CONFIG_NET_SOCK_MSG=y" ${{ env.OUTPUT_DIR }}/.config; then
+            echo "✅ CONFIG_NET_SOCK_MSG=y 生效"
           else
-            echo "⚠️ CONFIG_FRAME_WARN 可能未生效，但继续编译"
+            echo "::error::CONFIG_NET_SOCK_MSG 未启用！"
+            exit 1
           fi
 
       # ============================================================
@@ -207,9 +219,9 @@ jobs:
           sed -i 's/^IS_SLOT_DEVICE=0/IS_SLOT_DEVICE=1/' "$AK3_DIR/anykernel.sh"
           sed -i 's/^device.name1=.*/device.name1=star/' "$AK3_DIR/anykernel.sh"
           cd $AK3_DIR
-          zip -r9 "../${{ env.DEVICE_CODENAME }}-ReSukiSU-${TIME}.zip" ./*
+          zip -r9 "../${{ env.DEVICE_CODENAME }}-NoKSU-${TIME}.zip" ./*
           cd ..
-          echo "zip_name=${{ env.DEVICE_CODENAME }}-ReSukiSU-${TIME}.zip" >> $GITHUB_OUTPUT
+          echo "zip_name=${{ env.DEVICE_CODENAME }}-NoKSU-${TIME}.zip" >> $GITHUB_OUTPUT
 
       # ============================================================
       # 5. 上传
@@ -217,8 +229,8 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kernel_resukisu
-          path: ${{ env.DEVICE_CODENAME }}-ReSukiSU-*.zip
+          name: kernel_no_ksu
+          path: ${{ env.DEVICE_CODENAME }}-NoKSU-*.zip
 
       - name: Upload build.log on failure
         if: failure()
@@ -232,14 +244,14 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: resukisu_${{ github.run_number }}
-          name: "ReSukiSU Kernel (省电 + 无 SUSFS)"
+          tag_name: no_ksu_${{ github.run_number }}
+          name: "No-KSU Kernel (Power Saving)"
           body: |
-            ## 测试内核 - 省电 + 基础 KSU
-            - 源码自带 KernelSU
-            - 已启用 schedutil、CPU Idle、LPM 等省电配置
-            - 暂时禁用所有 SUSFS 功能，避免指纹解锁崩溃
+            ## 测试内核 - 无 KSU 省电版
+            - 已禁用所有 KSU/SUSFS 功能
+            - 启用 schedutil、CPU Idle、LPM 等省电配置
+            - 无指纹解锁崩溃风险
             - 刷机有风险，请备份原内核
-          files: ${{ env.DEVICE_CODENAME }}-ReSukiSU-*.zip
+          files: ${{ env.DEVICE_CODENAME }}-NoKSU-*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
