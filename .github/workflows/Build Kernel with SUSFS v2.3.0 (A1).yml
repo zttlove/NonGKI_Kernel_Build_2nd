@@ -151,10 +151,13 @@ jobs:
       # ============================================================
       # 3. 编译
       # ============================================================
+            # ============================================================
+      # 3. 编译
+      # ============================================================
       - name: Build Kernel
         working-directory: kernel
         run: |
-          set -e
+          set +e
           export ARCH=${{ env.KERNEL_ARCH }}
           export PATH="${{ env.CLANG_DIR }}/bin:$PATH"
           export CCACHE_EXEC=$(which ccache)
@@ -163,16 +166,33 @@ jobs:
           export LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- \
                  CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
-          # 【关键修复】olddefconfig 是非交互的，不需要 yes "" 管道
+          # 用 olddefconfig 处理配置补全
           make O=${{ env.OUTPUT_DIR }} olddefconfig
 
-          # 直接重定向，不再使用 tee 管道，避免 Broken pipe
+          # 编译，把完整日志写入 build.log
           make -j$(nproc) O=${{ env.OUTPUT_DIR }} \
                KCFLAGS="-Wno-error" \
                > build.log 2>&1
 
-          # 打印最后 100 行，便于在 Actions 日志里查看结果
-          tail -100 build.log
+          BUILD_STATUS=$?
+
+          # 【关键】无论编译成败，都显示最后 200 行日志
+          echo "===== build.log (最后 200 行) ====="
+          tail -200 build.log
+
+          # 检查编译结果
+          if [ $BUILD_STATUS -ne 0 ]; then
+            echo "::error::编译失败，退出码 $BUILD_STATUS"
+            exit 1
+          fi
+
+          # 检查 Image 是否生成
+          if [ ! -f "${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image" ]; then
+            echo "::error::编译失败，未生成 Image"
+            exit 1
+          fi
+
+          echo "✅ 编译成功，Image 已生成"
 
       # ============================================================
       # 4. 打包 AnyKernel3
