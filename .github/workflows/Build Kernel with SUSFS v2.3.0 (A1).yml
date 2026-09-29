@@ -115,6 +115,7 @@ jobs:
             --enable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
             --enable KSU_SUSFS_ENABLE_LOG \
             --enable KSU_SUSFS_SUS_SU \
+            --enable KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
             --enable KSU_ZYGISK \
             --enable KSU_SELINUX \
             --enable KPROBES \
@@ -191,7 +192,8 @@ jobs:
           export LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- \
                  CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           
-          make -j$(nproc) O=${{ env.OUTPUT_DIR }} \
+          # 使用 yes "" 管道，自动处理配置补全过程中的交互式询问
+          yes "" | make -j$(nproc) O=${{ env.OUTPUT_DIR }} \
                KCFLAGS="-Wno-error -Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-declaration-after-statement" \
                2>&1 | tee build.log
 
