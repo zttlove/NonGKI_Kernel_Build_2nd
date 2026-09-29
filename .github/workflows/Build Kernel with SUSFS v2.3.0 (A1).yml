@@ -60,9 +60,6 @@ jobs:
           rm LLVM-23.1.2-Linux-X64.tar.xz
           ${{ env.CLANG_DIR }}/bin/clang --version
 
-      # ============================================================
-      # 2. 配置内核（无 KSU，仅省电与基础功能）
-      # ============================================================
       - name: Configure Kernel
         working-directory: kernel
         run: |
@@ -75,11 +72,9 @@ jobs:
           export LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- \
                  CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
-          # 清空 ccache 缓存，防止旧目标文件污染编译
           echo "正在清空 ccache 缓存..."
           ccache -C
 
-          # 修复 focaltech_3680 Makefile 缩进问题
           echo "正在修复 focaltech_3680 Makefile..."
           FOCALTECH_MAKEFILE="drivers/input/touchscreen/focaltech_3680/Makefile"
           if [ -f "$FOCALTECH_MAKEFILE" ]; then
@@ -87,14 +82,12 @@ jobs:
             echo "✅ 已修复 focaltech_3680 Makefile 缩进"
           fi
 
-          # 彻底清理
           echo "正在彻底清理残留文件..."
           rm -rf ${{ env.OUTPUT_DIR }}
           rm -f .config
           rm -rf include/config include/generated
           make mrproper
 
-          # 生成 .config
           echo "正在生成 out/.config ..."
           make -j$(nproc) O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
           
@@ -104,7 +97,6 @@ jobs:
           fi
           echo "✅ out/.config 生成成功"
 
-          # 禁用所有 KSU/SUSFS，并关闭 HEADERS_INSTALL 避免 hdrtest 报错
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
             --disable KSU \
             --disable KSU_MANUAL_HOOK \
@@ -123,18 +115,13 @@ jobs:
             --disable HEADERS_INSTALL \
             --set-str LOCALVERSION "-ikun-NekoMake-star-260927-qgqi"
           
-          # 清空 manual_hook_check.mk 绕过强制检查
           echo "=== 清空 manual_hook_check.mk ==="
           find . -name "manual_hook_check.mk" -exec sh -c 'echo "# Check bypassed" > "$1"' _ {} \;
-          echo "✅ 已清空所有 manual_hook_check.mk"
           
-          # 清理 Makefile 中的 KSU 强制编译规则
           echo "=== 清理 Makefile 中的 KSU 强制编译规则 ==="
           sed -i '/kernelsu/d' drivers/Makefile 2>/dev/null || true
           sed -i '/KernelSU/d' drivers/Makefile 2>/dev/null || true
-          echo "✅ 已清理 drivers/Makefile"
           
-          # 校验关键配置
           echo "=== 检查关键配置是否生效 ==="
           if grep -q "CONFIG_KSU=y" ${{ env.OUTPUT_DIR }}/.config; then
             echo "::error::CONFIG_KSU 居然被启用了！"
@@ -145,13 +132,8 @@ jobs:
 
           if grep -q 'CONFIG_LOCALVERSION="-ikun-NekoMake-star-260927-qgqi"' ${{ env.OUTPUT_DIR }}/.config; then
             echo "✅ LOCALVERSION 已匹配原内核"
-          else
-            echo "⚠️ LOCALVERSION 未匹配，但继续编译"
           fi
 
-      # ============================================================
-      # 3. 编译
-      # ============================================================
       - name: Build Kernel
         working-directory: kernel
         run: |
@@ -188,20 +170,65 @@ jobs:
           echo "✅ 编译成功，Image 已生成"
 
       # ============================================================
-      # 4. 打包 AnyKernel3
+      # 4. 打包 AnyKernel3（使用原作者脚本：保留原 ramdisk，只换内核）
       # ============================================================
       - name: Package AnyKernel3
         id: package
         run: |
+          set -e
           TIME=$(date +"%Y.%m.%d")
           AK3_DIR="AnyKernel3"
           IMG_PATH="${{ env.KERNEL_DIR }}/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image"
+          
+          # 克隆官方 AnyKernel3
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git $AK3_DIR
-          cp -f "$IMG_PATH" "$AK3_DIR/Image"
-          sed -i 's/^do.devicecheck=1/do.devicecheck=0/' "$AK3_DIR/anykernel.sh"
-          sed -i 's/^BLOCK=.*/BLOCK=boot/' "$AK3_DIR/anykernel.sh"
-          sed -i 's/^IS_SLOT_DEVICE=0/IS_SLOT_DEVICE=1/' "$AK3_DIR/anykernel.sh"
-          sed -i 's/^device.name1=.*/device.name1=star/' "$AK3_DIR/anykernel.sh"
+          
+          # 【关键】把编译出的未压缩 Image 压缩成 Image.gz（原作者脚本期望的是 Image.gz）
+          gzip -9 -c "$IMG_PATH" > "$AK3_DIR/Image.gz"
+          ls -lh "$AK3_DIR/Image.gz"
+          
+          # 【关键】覆写 anykernel.sh 为原作者的脚本，使用 split_boot + flash_boot
+          cat > "$AK3_DIR/anykernel.sh" << 'AK3EOF'
+          #!/sbin/sh
+
+          ### AnyKernel3 Flashable Kernel Script
+          ## Adapted for Xiaomi Mi 11 Ultra (star)
+
+          properties() { '
+          kernel.string=5.4.302-ikun-NekoMake-star-260927-qgqi+ for Xiaomi 11 Ultra
+          do.devicecheck=1
+          do.modules=0
+          do.systemless=0
+          do.cleanup=1
+          do.cleanuponabort=0
+          device.name1=star
+          device.name2=mars
+          device.name3=
+          device.name4=
+          device.name5=
+          supported.versions=
+          supported.patchlevels=
+          supported.vendorpatchlevels=
+          '; } # end properties
+
+          # boot shell variables
+          BLOCK=boot;
+          IS_SLOT_DEVICE=1;
+          RAMDISK_COMPRESSION=auto;
+          PATCH_VBMETA_FLAG=auto;
+
+          # import functions/variables and setup patching - do not remove
+          . tools/ak3-core.sh;
+
+          # pure kernel swap: keep the existing ramdisk and repack with the new Image.gz
+          split_boot;
+          flash_boot;
+          AK3EOF
+          
+          chmod +x "$AK3_DIR/anykernel.sh"
+          echo "=== 生成的 anykernel.sh ==="
+          cat "$AK3_DIR/anykernel.sh"
+          
           cd $AK3_DIR
           zip -r9 "../${{ env.DEVICE_CODENAME }}-PureStock-${TIME}.zip" ./*
           cd ..
@@ -229,13 +256,12 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: pure_stock_${{ github.run_number }}
-          name: "Pure Stock Kernel (No KSU, No Tweaks)"
+          name: "Pure Stock Kernel (LLVM 23.1.2, Keep Ramdisk)"
           body: |
-            ## 测试内核 - 最严格复刻版
+            ## 测试内核 - 保留原 ramdisk 版
             - 使用与原内核相同的 LLVM 23.1.2 工具链
-            - 完全使用默认配置，不做任何调频器或优化改动
+            - 使用原作者的 anykernel.sh，通过 split_boot + flash_boot 保留原厂 ramdisk
             - 已禁用所有 KSU/SUSFS 功能
-            - 已关闭 HEADERS_INSTALL 避免 hdrtest 报错
             - LOCALVERSION 与原内核保持一致
             - 刷机有风险，请备份原内核
           files: ${{ env.DEVICE_CODENAME }}-PureStock-*.zip
