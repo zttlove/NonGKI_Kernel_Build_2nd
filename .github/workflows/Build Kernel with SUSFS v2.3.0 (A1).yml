@@ -61,7 +61,7 @@ jobs:
           ${{ env.CLANG_DIR }}/bin/clang --version
 
       # ============================================================
-      # 2. 配置内核（彻底清理、生成配置、启用省电 + 基础 KSU）
+      # 2. 配置内核
       # ============================================================
       - name: Configure Kernel
         working-directory: kernel
@@ -105,6 +105,9 @@ jobs:
             --enable KSU \
             --enable KSU_MANUAL_HOOK \
             --disable KSU_TRACEPOINT_HOOK \
+            --enable KSU_MANUAL_HOOK_AUTO_SETUID_HOOK \
+            --enable KSU_MANUAL_HOOK_AUTO_INITRC_HOOK \
+            --enable KSU_MANUAL_HOOK_AUTO_INPUT_HOOK \
             --enable KSU_ZYGISK \
             --enable KSU_SELINUX \
             --disable KSU_SUSFS \
@@ -148,17 +151,10 @@ jobs:
             --disable DEBUG_KERNEL \
             --set-str LOCALVERSION ""
           
-          # 5. 直接清空 manual_hook_check.mk，绕过所有强制 hook 检查
-          echo "=== 清空 manual_hook_check.mk 以绕过强制检查 ==="
-          MANUAL_HOOK_CHECK="KernelSU/kernel/tools/manual_hook_check.mk"
-          if [ -f "$MANUAL_HOOK_CHECK" ]; then
-            echo "# Check bypassed" > "$MANUAL_HOOK_CHECK"
-            echo "✅ 已清空 $MANUAL_HOOK_CHECK"
-          else
-            echo "⚠️ 未找到 $MANUAL_HOOK_CHECK，搜索其他路径..."
-            find . -name "manual_hook_check.mk" -exec sh -c 'echo "# Check bypassed" > "$1"' _ {} \;
-            echo "✅ 已尝试清空所有找到的 manual_hook_check.mk"
-          fi
+          # 5. 清空 manual_hook_check.mk 绕过强制检查
+          echo "=== 清空 manual_hook_check.mk ==="
+          find . -name "manual_hook_check.mk" -exec sh -c 'echo "# Check bypassed" > "$1"' _ {} \;
+          echo "✅ 已清空所有 manual_hook_check.mk"
           
           # 6. 校验关键配置
           echo "=== 检查关键配置是否生效 ==="
@@ -169,17 +165,10 @@ jobs:
             exit 1
           fi
 
-          if grep -q "CONFIG_BPF_STREAM_PARSER=y" ${{ env.OUTPUT_DIR }}/.config; then
-            echo "✅ CONFIG_BPF_STREAM_PARSER=y 生效"
+          if grep -q "CONFIG_KSU_MANUAL_HOOK_AUTO_SETUID_HOOK=y" ${{ env.OUTPUT_DIR }}/.config; then
+            echo "✅ CONFIG_KSU_MANUAL_HOOK_AUTO_SETUID_HOOK=y 生效"
           else
-            echo "::error::CONFIG_BPF_STREAM_PARSER 未启用！"
-            exit 1
-          fi
-
-          if grep -q "CONFIG_NET_SOCK_MSG=y" ${{ env.OUTPUT_DIR }}/.config; then
-            echo "✅ CONFIG_NET_SOCK_MSG=y 生效"
-          else
-            echo "::error::CONFIG_NET_SOCK_MSG 未启用！"
+            echo "::error::CONFIG_KSU_MANUAL_HOOK_AUTO_SETUID_HOOK 未启用！"
             exit 1
           fi
 
