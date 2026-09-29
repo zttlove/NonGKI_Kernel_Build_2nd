@@ -211,11 +211,14 @@ jobs:
           ccache -M 6G
           export LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- \
                  CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
-          
-          yes "" | make -j$(nproc) O=${{ env.OUTPUT_DIR }} \
-               KCFLAGS="-Wno-error -Wno-frame-larger-than -Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-declaration-after-statement" \
-               2>&1 | tee build.log
 
+          # 用 olddefconfig 处理配置补全，而不是靠 yes "" 管道
+          make O=${{ env.OUTPUT_DIR }} olddefconfig
+
+          # 编译时加上 -Wno-default-const-init-var-unsafe 抑制新警告
+          make -j$(nproc) O=${{ env.OUTPUT_DIR }} \
+               KCFLAGS="-Wno-error -Wno-default-const-init-var-unsafe -Wno-frame-larger-than -Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-declaration-after-statement" \
+               2>&1 | tee build.log
       # ============================================================
       # 4. 打包 AnyKernel3
       # ============================================================
