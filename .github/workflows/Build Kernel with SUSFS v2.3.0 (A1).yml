@@ -1,4 +1,4 @@
-name: Build Kernel with ReSukiSU
+name: Build Kernel with ReSukiSU + SUSFS
 
 on:
   workflow_dispatch:
@@ -7,9 +7,9 @@ env:
   TZ: Asia/Shanghai
   DEVICE_CODENAME: "star"
   KERNEL_ARCH: "arm64"
-  KERNEL_REPO: "zttlove/android_kernel_xiaomi_sm8350_miyume.git"
-  KERNEL_BRANCH: "main"
-  DEFCONFIG_NAME: "star_defconfig"
+  KERNEL_REPO: "zttlove/android_kernel_xiaomi_sm8350-hyperos"
+  KERNEL_BRANCH: "dynamic"
+  DEFCONFIG_NAME: "vendor/star_defconfig"
   OUTPUT_DIR: "out"
   CLANG_DIR: "${{ github.workspace }}/clang"
   CCACHE_DIR: "${{ github.workspace }}/.ccache"
@@ -40,8 +40,7 @@ jobs:
           sudo apt install -y \
             bc bison flex libelf-dev libssl-dev libncurses-dev \
             make python3 device-tree-compiler git curl xz-utils \
-            ccache zip unzip \
-            dwarves
+            ccache zip unzip
           echo "正在修复 libtinfo.so.5 依赖..."
           if ! sudo apt install -y libtinfo5; then
             sudo ln -sf /lib/x86_64-linux-gnu/libtinfo.so.6 /lib/x86_64-linux-gnu/libtinfo.so.5
@@ -52,8 +51,6 @@ jobs:
           else
             echo "✅ libtinfo.so.5 修复成功！"
           fi
-          echo "=== pahole 版本 ==="
-          pahole --version
 
       - name: Download Clang (From LLVM GitHub)
         run: |
@@ -64,59 +61,7 @@ jobs:
           ${{ env.CLANG_DIR }}/bin/clang --version
 
       # ============================================================
-      # 2. 安装 ReSukiSU (仅保留 KSU，不集成 SUSFS)
-      # ============================================================
-      - name: Setup ReSukiSU (main)
-        working-directory: kernel
-        run: |
-          set -e
-          rm -rf drivers/kernelsu
-          git clone https://github.com/ReSukiSU/ReSukiSU.git drivers/kernelsu
-          cd drivers/kernelsu
-          git checkout main
-          cd ../..
-          echo "source \"drivers/kernelsu/kernel/Kconfig\"" > drivers/kernelsu/Kconfig
-          echo "obj-\$(CONFIG_KSU) += kernel/" > drivers/kernelsu/Makefile
-          sed -i '/source "drivers\/kernelsu\/Kconfig"/d' drivers/Kconfig || true
-          sed -i '/obj-\$(CONFIG_KSU) += kernelsu\//d' drivers/Makefile || true
-          echo "source \"drivers/kernelsu/Kconfig\"" >> drivers/Kconfig
-          echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
-
-      - name: Patch ReSukiSU Kconfig (move KSU_SUSFS out of choice)
-        working-directory: kernel
-        run: |
-          set -e
-          KCONFIG=drivers/kernelsu/kernel/Kconfig
-          if ! grep -q "^config KSU_SUSFS$" "$KCONFIG"; then
-            echo "::error::Kconfig 中没有找到 config KSU_SUSFS"
-            exit 1
-          fi
-          cp "$KCONFIG" "$KCONFIG.orig"
-          awk '
-            BEGIN { in_susfs=0; skipped=0 }
-            /^config KSU_SUSFS$/ && !in_susfs {
-              print "endchoice"
-              print ""
-              in_susfs=1
-              print
-              next
-            }
-            in_susfs && /^[[:space:]]+depends on .*THREAD_INFO_IN_TASK/ {
-              print "\tdepends on KSU && THREAD_INFO_IN_TASK && 64BIT"
-              next
-            }
-            in_susfs && /^endchoice$/ && !skipped {
-              skipped=1
-              in_susfs=0
-              next
-            }
-            { print }
-          ' "$KCONFIG.orig" > "$KCONFIG"
-          echo "=== 修改后的 choice / config 结构 ==="
-          grep -nE "^(choice|endchoice|config KSU_(TRACEPOINT|MANUAL|SUSFS))" "$KCONFIG"
-
-      # ============================================================
-      # 3. 配置内核（彻底清理、生成配置、修补 Makefile、启用 BTF）
+      # 2. 配置内核（彻底清理、生成配置、启用所有 SUSFS 功能）
       # ============================================================
       - name: Configure Kernel
         working-directory: kernel
@@ -147,53 +92,21 @@ jobs:
           fi
           echo "✅ out/.config 生成成功"
 
-          # ============================================================
-          # 修补 BTF 相关文件，解决链接错误
-          # ============================================================
-          echo "=== 修复 .BTF_ids 对齐问题（内核主文件） ==="
-          BTF_IDS_HEADER="include/linux/btf_ids.h"
-          if [ -f "$BTF_IDS_HEADER" ]; then
-            if ! grep -q "balign 4" "$BTF_IDS_HEADER"; then
-              # 在 BTF_ID_LIST 宏定义处插入对齐声明
-              sed -i '/^#define BTF_ID_LIST(name) /i asm(".pushsection .BTF_ids, \\"a\\", @progbits\\n.balign 4, 0\\n.popsection\\n");' "$BTF_IDS_HEADER"
-              echo "✅ 已修复 .BTF_ids 对齐"
-            else
-              echo "✅ .BTF_ids 对齐已修复，跳过"
-            fi
-          else
-            echo "⚠️ 未找到 $BTF_IDS_HEADER，跳过对齐修复"
-          fi
-
-          echo "=== 修补 pahole-flags.sh ==="
-          PAHOLE_FLAGS_SCRIPT="scripts/pahole-flags.sh"
-          if [ -f "$PAHOLE_FLAGS_SCRIPT" ]; then
-            if ! grep -q "skip_encoding_btf_enum64" "$PAHOLE_FLAGS_SCRIPT"; then
-              echo "Patching pahole-flags.sh..."
-              # 在最终 echo 之前强制插入 enum64 跳过参数
-              sed -i 's|echo ${extra_paholeopt}|extra_paholeopt="${extra_paholeopt} --skip_encoding_btf_enum64"\necho ${extra_paholeopt}|' "$PAHOLE_FLAGS_SCRIPT"
-              echo "✅ 已修补 pahole-flags.sh"
-            else
-              echo "✅ pahole-flags.sh 已包含 skip_encoding_btf_enum64"
-            fi
-          else
-            echo "⚠️ 未找到 pahole-flags.sh，跳过修补"
-          fi
-
-          # 3. 修改配置（启用 BTF、KSU Manual Hook，禁用 SUSFS 和 Tracepoint）
+          # 3. 启用所有 KSU 和 SUSFS 功能（源码已自带，直接打开开关）
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
             --enable KSU \
             --enable KSU_MANUAL_HOOK \
             --disable KSU_TRACEPOINT_HOOK \
-            --disable KSU_SUSFS \
-            --disable KSU_SUSFS_SUS_PATH \
-            --disable KSU_SUSFS_SUS_MOUNT \
-            --disable KSU_SUSFS_SUS_KSTAT \
-            --disable KSU_SUSFS_SPOOF_UNAME \
-            --disable KSU_SUSFS_OPEN_REDIRECT \
-            --disable KSU_SUSFS_SUS_MAP \
-            --disable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
-            --disable KSU_SUSFS_ENABLE_LOG \
-            --disable KSU_SUSFS_SUS_SU \
+            --enable KSU_SUSFS \
+            --enable KSU_SUSFS_SUS_PATH \
+            --enable KSU_SUSFS_SUS_MOUNT \
+            --enable KSU_SUSFS_SUS_KSTAT \
+            --enable KSU_SUSFS_SPOOF_UNAME \
+            --enable KSU_SUSFS_OPEN_REDIRECT \
+            --enable KSU_SUSFS_SUS_MAP \
+            --enable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+            --enable KSU_SUSFS_ENABLE_LOG \
+            --enable KSU_SUSFS_SUS_SU \
             --enable KSU_ZYGISK \
             --enable KSU_SELINUX \
             --enable KPROBES \
@@ -206,12 +119,9 @@ jobs:
             --enable OVERLAY_FS \
             --enable EXT4_FS \
             --enable NAMESPACES \
-            --enable DEBUG_INFO_BTF \
-            --enable DEBUG_INFO \
-            --disable DEBUG_INFO_DWARF5 \
             --set-str LOCALVERSION ""
           
-          # 4. 再次运行 olddefconfig，检查配置是否被回滚
+          # 4. 再次运行 olddefconfig，确保配置生效
           make olddefconfig O=${{ env.OUTPUT_DIR }}
           
           # 5. 校验关键配置
@@ -224,26 +134,37 @@ jobs:
           fi
           
           if grep -q "CONFIG_KSU_SUSFS=y" ${{ env.OUTPUT_DIR }}/.config; then
-            echo "::error::CONFIG_KSU_SUSFS 居然被启用了！"
-            exit 1
+            echo "✅ CONFIG_KSU_SUSFS=y 生效"
           else
-            echo "✅ CONFIG_KSU_SUSFS 已禁用"
+            echo "::error::CONFIG_KSU_SUSFS 未启用！"
+            exit 1
           fi
 
-          if grep -q "CONFIG_DEBUG_INFO_BTF=y" ${{ env.OUTPUT_DIR }}/.config; then
-            echo "✅ CONFIG_DEBUG_INFO_BTF=y 生效"
+          if grep -q "CONFIG_KSU_SUSFS_SUS_PATH=y" ${{ env.OUTPUT_DIR }}/.config; then
+            echo "✅ CONFIG_KSU_SUSFS_SUS_PATH=y 生效"
           else
-            echo "::error::CONFIG_DEBUG_INFO_BTF 未启用！"
+            echo "::error::CONFIG_KSU_SUSFS_SUS_PATH 未启用！"
             exit 1
           fi
           
-          # 6. 强制补全 drivers/Makefile，确保 kernelsu 被编译
-          echo "=== 补全 drivers/Makefile ==="
-          sed -i '/kernelsu/d' drivers/Makefile
-          echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
-          echo "✅ 已追加 kernelsu/ 到 drivers/Makefile"
+          # 6. 确保 Makefile 中包含必要规则（如果源码已配置，此步不会重复）
+          echo "=== 检查并补全 fs/Makefile ==="
+          if ! grep -q "susfs.o" fs/Makefile; then
+            echo "obj-\$(CONFIG_KSU_SUSFS) += susfs.o" >> fs/Makefile
+            echo "⚠️ 已追加 susfs.o 到 fs/Makefile"
+          else
+            echo "✅ fs/Makefile 已包含 susfs.o"
+          fi
           
-          # 7. 移除 Kbuild 中对 GKI 1.0 的强制检查
+          echo "=== 检查并补全 drivers/Makefile ==="
+          if ! grep -q "kernelsu" drivers/Makefile; then
+            echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
+            echo "⚠️ 已追加 kernelsu/ 到 drivers/Makefile"
+          else
+            echo "✅ drivers/Makefile 已包含 kernelsu/"
+          fi
+          
+          # 7. 处理 Kbuild 中对 GKI 1.0 的强制检查（如果存在）
           echo "=== 处理 Kbuild 强制报错 ==="
           if [ -f "drivers/kernelsu/kernel/Kbuild" ]; then
             sed -i '/TP hooks are incompatible with Non-GKI/d' drivers/kernelsu/kernel/Kbuild
@@ -251,7 +172,7 @@ jobs:
           fi
 
       # ============================================================
-      # 4. 编译（输出 build.log 便于排查）
+      # 3. 编译（输出 build.log 便于排查）
       # ============================================================
       - name: Build Kernel
         working-directory: kernel
@@ -270,7 +191,7 @@ jobs:
                2>&1 | tee build.log
 
       # ============================================================
-      # 5. 打包 AnyKernel3
+      # 4. 打包 AnyKernel3
       # ============================================================
       - name: Package AnyKernel3
         id: package
@@ -285,18 +206,18 @@ jobs:
           sed -i 's/^IS_SLOT_DEVICE=0/IS_SLOT_DEVICE=1/' "$AK3_DIR/anykernel.sh"
           sed -i 's/^device.name1=.*/device.name1=star/' "$AK3_DIR/anykernel.sh"
           cd $AK3_DIR
-          zip -r9 "../${{ env.DEVICE_CODENAME }}-ReSukiSU-${TIME}.zip" ./*
+          zip -r9 "../${{ env.DEVICE_CODENAME }}-ReSukiSU-SUSFS-${TIME}.zip" ./*
           cd ..
-          echo "zip_name=${{ env.DEVICE_CODENAME }}-ReSukiSU-${TIME}.zip" >> $GITHUB_OUTPUT
+          echo "zip_name=${{ env.DEVICE_CODENAME }}-ReSukiSU-SUSFS-${TIME}.zip" >> $GITHUB_OUTPUT
 
       # ============================================================
-      # 6. 上传
+      # 5. 上传
       # ============================================================
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kernel_resukisu
-          path: ${{ env.DEVICE_CODENAME }}-ReSukiSU-*.zip
+          name: kernel_resukisu_susfs
+          path: ${{ env.DEVICE_CODENAME }}-ReSukiSU-SUSFS-*.zip
 
       - name: Upload build.log on failure
         if: failure()
@@ -310,15 +231,14 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: resukisu_${{ github.run_number }}
-          name: "ReSukiSU Kernel (No SUSFS + BTF)"
+          tag_name: resukisu_susfs_${{ github.run_number }}
+          name: "ReSukiSU + SUSFS Kernel"
           body: |
-            ## 测试内核 - 仅 ReSukiSU
-            - ReSukiSU main (最新)
+            ## 测试内核 - ReSukiSU + SUSFS 2.3
+            - 源码自带 SUSFS 2.3
             - 手动钩子 (Manual Hook)
-            - 无 SUSFS
-            - 已启用 BTF（解决 BPF 卡锁屏问题）
+            - 开启所有 SUSFS 功能
             - 刷机有风险，请备份原内核
-          files: ${{ env.DEVICE_CODENAME }}-ReSukiSU-*.zip
+          files: ${{ env.DEVICE_CODENAME }}-ReSukiSU-SUSFS-*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
