@@ -61,7 +61,7 @@ jobs:
           ${{ env.CLANG_DIR }}/bin/clang --version
 
       # ============================================================
-      # 2. 配置内核（彻底清理、生成配置、启用所有 SUSFS 功能）
+      # 2. 配置内核（彻底清理、生成配置、启用所有 SUSFS 功能和 BPF）
       # ============================================================
       - name: Configure Kernel
         working-directory: kernel
@@ -129,9 +129,17 @@ jobs:
             --enable EXT4_FS \
             --enable NAMESPACES \
             --disable HEADERS_INSTALL \
+            --enable BPF_SYSCALL \
+            --enable BPF_JIT \
+            --enable BPF_STREAM_PARSER \
+            --enable NET_SOCK_MSG \
+            --enable CGROUP_BPF \
+            --enable NET \
+            --enable INET \
+            --enable UNIX \
             --set-str LOCALVERSION ""
           
-          # 5. 校验关键配置（不运行 olddefconfig）
+          # 5. 校验关键配置
           echo "=== 检查关键配置是否生效 ==="
           if grep -q "CONFIG_KSU_MANUAL_HOOK=y" ${{ env.OUTPUT_DIR }}/.config; then
             echo "✅ CONFIG_KSU_MANUAL_HOOK=y 生效"
@@ -147,10 +155,17 @@ jobs:
             exit 1
           fi
 
-          if grep -q "CONFIG_KSU_SUSFS_SUS_PATH=y" ${{ env.OUTPUT_DIR }}/.config; then
-            echo "✅ CONFIG_KSU_SUSFS_SUS_PATH=y 生效"
+          if grep -q "CONFIG_BPF_STREAM_PARSER=y" ${{ env.OUTPUT_DIR }}/.config; then
+            echo "✅ CONFIG_BPF_STREAM_PARSER=y 生效"
           else
-            echo "::error::CONFIG_KSU_SUSFS_SUS_PATH 未启用！"
+            echo "::error::CONFIG_BPF_STREAM_PARSER 未启用！"
+            exit 1
+          fi
+
+          if grep -q "CONFIG_NET_SOCK_MSG=y" ${{ env.OUTPUT_DIR }}/.config; then
+            echo "✅ CONFIG_NET_SOCK_MSG=y 生效"
+          else
+            echo "::error::CONFIG_NET_SOCK_MSG 未启用！"
             exit 1
           fi
           
@@ -193,7 +208,6 @@ jobs:
           export LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- \
                  CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           
-          # 使用 yes "" 管道，自动处理配置补全过程中的交互式询问
           yes "" | make -j$(nproc) O=${{ env.OUTPUT_DIR }} \
                KCFLAGS="-Wno-error -Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-declaration-after-statement" \
                2>&1 | tee build.log
