@@ -100,7 +100,7 @@ jobs:
           fi
           echo "✅ out/.config 生成成功"
 
-          # 4. 启用所有 KSU 和 SUSFS 功能（源码已自带）
+          # 4. 直接修改配置，不运行 olddefconfig
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
             --enable KSU \
             --enable KSU_MANUAL_HOOK \
@@ -129,10 +129,7 @@ jobs:
             --enable NAMESPACES \
             --set-str LOCALVERSION ""
           
-          # 5. 再次运行 olddefconfig
-          make olddefconfig O=${{ env.OUTPUT_DIR }}
-          
-          # 6. 校验关键配置
+          # 5. 校验关键配置（不运行 olddefconfig）
           echo "=== 检查关键配置是否生效 ==="
           if grep -q "CONFIG_KSU_MANUAL_HOOK=y" ${{ env.OUTPUT_DIR }}/.config; then
             echo "✅ CONFIG_KSU_MANUAL_HOOK=y 生效"
@@ -155,7 +152,7 @@ jobs:
             exit 1
           fi
           
-          # 7. 补全 Makefile（如源码未配置）
+          # 6. 补全 Makefile（如源码未配置）
           echo "=== 检查并补全 fs/Makefile ==="
           if ! grep -q "susfs.o" fs/Makefile; then
             echo "obj-\$(CONFIG_KSU_SUSFS) += susfs.o" >> fs/Makefile
@@ -172,7 +169,7 @@ jobs:
             echo "✅ drivers/Makefile 已包含 kernelsu/"
           fi
           
-          # 8. 处理 Kbuild 强制报错
+          # 7. 处理 Kbuild 强制报错
           echo "=== 处理 Kbuild 强制报错 ==="
           if [ -f "drivers/kernelsu/kernel/Kbuild" ]; then
             sed -i '/TP hooks are incompatible with Non-GKI/d' drivers/kernelsu/kernel/Kbuild
