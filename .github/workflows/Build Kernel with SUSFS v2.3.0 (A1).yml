@@ -75,14 +75,22 @@ jobs:
           export LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- \
                  CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
-          # 1. 彻底清理
+          # 1. 修复 focaltech_3680 Makefile 缩进问题
+          echo "正在修复 focaltech_3680 Makefile..."
+          FOCALTECH_MAKEFILE="drivers/input/touchscreen/focaltech_3680/Makefile"
+          if [ -f "$FOCALTECH_MAKEFILE" ]; then
+            sed -i 's/^ \+/\t/' "$FOCALTECH_MAKEFILE"
+            echo "✅ 已修复 focaltech_3680 Makefile 缩进"
+          fi
+
+          # 2. 彻底清理
           echo "正在彻底清理残留文件..."
           rm -rf ${{ env.OUTPUT_DIR }}
           rm -f .config
           rm -rf include/config include/generated
           make mrproper
 
-          # 2. 生成 .config
+          # 3. 生成 .config
           echo "正在生成 out/.config ..."
           make -j$(nproc) O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
           
@@ -92,7 +100,7 @@ jobs:
           fi
           echo "✅ out/.config 生成成功"
 
-          # 3. 启用所有 KSU 和 SUSFS 功能（源码已自带，直接打开开关）
+          # 4. 启用所有 KSU 和 SUSFS 功能（源码已自带）
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
             --enable KSU \
             --enable KSU_MANUAL_HOOK \
@@ -121,10 +129,10 @@ jobs:
             --enable NAMESPACES \
             --set-str LOCALVERSION ""
           
-          # 4. 再次运行 olddefconfig，确保配置生效
+          # 5. 再次运行 olddefconfig
           make olddefconfig O=${{ env.OUTPUT_DIR }}
           
-          # 5. 校验关键配置
+          # 6. 校验关键配置
           echo "=== 检查关键配置是否生效 ==="
           if grep -q "CONFIG_KSU_MANUAL_HOOK=y" ${{ env.OUTPUT_DIR }}/.config; then
             echo "✅ CONFIG_KSU_MANUAL_HOOK=y 生效"
@@ -147,7 +155,7 @@ jobs:
             exit 1
           fi
           
-          # 6. 确保 Makefile 中包含必要规则（如果源码已配置，此步不会重复）
+          # 7. 补全 Makefile（如源码未配置）
           echo "=== 检查并补全 fs/Makefile ==="
           if ! grep -q "susfs.o" fs/Makefile; then
             echo "obj-\$(CONFIG_KSU_SUSFS) += susfs.o" >> fs/Makefile
@@ -164,7 +172,7 @@ jobs:
             echo "✅ drivers/Makefile 已包含 kernelsu/"
           fi
           
-          # 7. 处理 Kbuild 中对 GKI 1.0 的强制检查（如果存在）
+          # 8. 处理 Kbuild 强制报错
           echo "=== 处理 Kbuild 强制报错 ==="
           if [ -f "drivers/kernelsu/kernel/Kbuild" ]; then
             sed -i '/TP hooks are incompatible with Non-GKI/d' drivers/kernelsu/kernel/Kbuild
@@ -172,7 +180,7 @@ jobs:
           fi
 
       # ============================================================
-      # 3. 编译（输出 build.log 便于排查）
+      # 3. 编译
       # ============================================================
       - name: Build Kernel
         working-directory: kernel
