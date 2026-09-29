@@ -61,7 +61,7 @@ jobs:
           ${{ env.CLANG_DIR }}/bin/clang --version
 
       # ============================================================
-      # 2. 配置内核（无 KSU，仅省电与基础功能）
+      # 2. 配置内核（最严格复刻原内核，仅保留 LOCALVERSION 匹配）
       # ============================================================
       - name: Configure Kernel
         working-directory: kernel
@@ -74,6 +74,10 @@ jobs:
           ccache -M 6G
           export LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- \
                  CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+
+          # 【关键修复1】清空 ccache 缓存，防止旧目标文件污染编译
+          echo "正在清空 ccache 缓存..."
+          ccache -C
 
           # 1. 修复 focaltech_3680 Makefile 缩进问题
           echo "正在修复 focaltech_3680 Makefile..."
@@ -100,8 +104,7 @@ jobs:
           fi
           echo "✅ out/.config 生成成功"
 
-          # 4. 禁用所有 KSU/SUSFS，启用省电与 BPF
-          #    关键：保留原作者的 LOCALVERSION 字符串，避免 VINTF 校验失败
+          # 4. 【关键修复2】只做必须的修改，完全不动调频器和其他优化项
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
             --disable KSU \
             --disable KSU_MANUAL_HOOK \
@@ -117,39 +120,7 @@ jobs:
             --disable KSU_SUSFS_ENABLE_LOG \
             --disable KSU_SUSFS_SUS_SU \
             --disable KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
-            --disable KSU_ZYGISK \
-            --disable KSU_SELINUX \
-            --enable KPROBES \
-            --enable HAVE_KPROBES \
-            --enable KPROBE_EVENTS \
-            --enable KALLSYMS \
-            --enable KALLSYMS_ALL \
-            --enable MODULES \
-            --enable MODULE_UNLOAD \
-            --enable OVERLAY_FS \
-            --enable EXT4_FS \
-            --enable NAMESPACES \
-            --disable HEADERS_INSTALL \
-            --enable BPF_SYSCALL \
-            --enable BPF_JIT \
-            --enable BPF_STREAM_PARSER \
-            --enable NET_SOCK_MSG \
-            --enable CGROUP_BPF \
-            --enable NET \
-            --enable INET \
-            --enable UNIX \
-            --enable CPU_FREQ_DEFAULT_GOV_SCHEDUTIL \
-            --disable CPU_FREQ_DEFAULT_GOV_PERFORMANCE \
-            --enable CPU_IDLE \
-            --enable CPU_IDLE_GOV_MENU \
-            --enable ARM_QCOM_LPM_CPUIDLE \
-            --enable DEVFREQ_GOV_SIMPLE_ONDEMAND \
-            --enable MQ_IOSCHED_KYBER \
-            --disable DEBUG_INFO \
-            --disable DEBUG_KERNEL \
-            --set-val FRAME_WARN 100000 \
-            --set-str LOCALVERSION "-ikun-NekoMake-star-260927-qgqi" \
-            --set-str CONFIG_CC_VERSION_TEXT "clang version 23.1.2"
+            --set-str LOCALVERSION "-ikun-NekoMake-star-260927-qgqi"
           
           # 5. 清空 manual_hook_check.mk 绕过强制检查（虽然 KSU 已禁用，但保留以防万一）
           echo "=== 清空 manual_hook_check.mk ==="
@@ -169,26 +140,6 @@ jobs:
             exit 1
           else
             echo "✅ CONFIG_KSU 已禁用"
-          fi
-
-          if grep -q "CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y" ${{ env.OUTPUT_DIR }}/.config; then
-            echo "✅ 省电调频器 schedutil 已启用"
-          else
-            echo "⚠️ schedutil 未启用，请检查"
-          fi
-
-          if grep -q "CONFIG_BPF_STREAM_PARSER=y" ${{ env.OUTPUT_DIR }}/.config; then
-            echo "✅ CONFIG_BPF_STREAM_PARSER=y 生效"
-          else
-            echo "::error::CONFIG_BPF_STREAM_PARSER 未启用！"
-            exit 1
-          fi
-
-          if grep -q "CONFIG_NET_SOCK_MSG=y" ${{ env.OUTPUT_DIR }}/.config; then
-            echo "✅ CONFIG_NET_SOCK_MSG=y 生效"
-          else
-            echo "::error::CONFIG_NET_SOCK_MSG 未启用！"
-            exit 1
           fi
 
           if grep -q 'CONFIG_LOCALVERSION="-ikun-NekoMake-star-260927-qgqi"' ${{ env.OUTPUT_DIR }}/.config; then
@@ -212,16 +163,17 @@ jobs:
           export LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- \
                  CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
-          # 用 olddefconfig 在编译前处理配置补全，而不是靠 yes "" 管道
+          # 用 olddefconfig 在编译前处理配置补全
           yes "" | make O=${{ env.OUTPUT_DIR }} olddefconfig
 
           # 直接重定向，不再使用 tee 管道，避免 Broken pipe
           make -j$(nproc) O=${{ env.OUTPUT_DIR }} \
-               KCFLAGS="-Wno-error -Wno-default-const-init-var-unsafe -Wno-frame-larger-than -Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-declaration-after-statement" \
+               KCFLAGS="-Wno-error" \
                > build.log 2>&1
 
           # 打印最后 100 行，便于在 Actions 日志里查看结果
           tail -100 build.log
+
       # ============================================================
       # 4. 打包 AnyKernel3
       # ============================================================
@@ -238,9 +190,9 @@ jobs:
           sed -i 's/^IS_SLOT_DEVICE=0/IS_SLOT_DEVICE=1/' "$AK3_DIR/anykernel.sh"
           sed -i 's/^device.name1=.*/device.name1=star/' "$AK3_DIR/anykernel.sh"
           cd $AK3_DIR
-          zip -r9 "../${{ env.DEVICE_CODENAME }}-NoKSU-${TIME}.zip" ./*
+          zip -r9 "../${{ env.DEVICE_CODENAME }}-PureStock-${TIME}.zip" ./*
           cd ..
-          echo "zip_name=${{ env.DEVICE_CODENAME }}-NoKSU-${TIME}.zip" >> $GITHUB_OUTPUT
+          echo "zip_name=${{ env.DEVICE_CODENAME }}-PureStock-${TIME}.zip" >> $GITHUB_OUTPUT
 
       # ============================================================
       # 5. 上传
@@ -248,8 +200,8 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kernel_no_ksu
-          path: ${{ env.DEVICE_CODENAME }}-NoKSU-*.zip
+          name: kernel_pure_stock
+          path: ${{ env.DEVICE_CODENAME }}-PureStock-*.zip
 
       - name: Upload build.log on failure
         if: failure()
@@ -263,15 +215,16 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: no_ksu_${{ github.run_number }}
-          name: "No-KSU Kernel (Power Saving)"
+          tag_name: pure_stock_${{ github.run_number }}
+          name: "Pure Stock Kernel (No KSU, No Tweaks)"
           body: |
-            ## 测试内核 - 无 KSU 省电版（LLVM 23.1.2）
+            ## 测试内核 - 最严格复刻版
             - 使用与原内核相同的 LLVM 23.1.2 工具链
+            - 完全使用默认配置，不做任何调频器或优化改动
             - 已禁用所有 KSU/SUSFS 功能
-            - 启用 schedutil、CPU Idle、LPM 等省电配置
+            - 清空 ccache 缓存，防止旧目标文件污染
             - LOCALVERSION 与原内核保持一致
             - 刷机有风险，请备份原内核
-          files: ${{ env.DEVICE_CODENAME }}-NoKSU-*.zip
+          files: ${{ env.DEVICE_CODENAME }}-PureStock-*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
