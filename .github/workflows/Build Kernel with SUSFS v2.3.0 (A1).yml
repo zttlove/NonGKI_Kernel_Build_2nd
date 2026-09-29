@@ -163,8 +163,8 @@ jobs:
           export LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- \
                  CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
-          # 用 olddefconfig 在编译前处理配置补全
-          yes "" | make O=${{ env.OUTPUT_DIR }} olddefconfig
+          # 【关键修复】olddefconfig 是非交互的，不需要 yes "" 管道
+          make O=${{ env.OUTPUT_DIR }} olddefconfig
 
           # 直接重定向，不再使用 tee 管道，避免 Broken pipe
           make -j$(nproc) O=${{ env.OUTPUT_DIR }} \
