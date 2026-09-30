@@ -69,7 +69,8 @@ jobs:
           echo "ResukiSU cloned, latest commit:"
           cd resukisu && git log --oneline -1
           echo "ResukiSU 仓库版本信息："
-          cat kernel/setup.sh | grep -m1 "versionCode" || echo "（未找到 versionCode 字段）"
+          grep -m1 "versionCode" kernel/setup.sh || echo "（未找到 versionCode 字段）"
+          echo "本地脚本路径：$(readlink -f kernel/setup.sh)"
 
       - name: Integrate ResukiSU into Kernel
         working-directory: kernel
@@ -92,12 +93,16 @@ jobs:
           fi
 
           echo "=== 运行 ResukiSU 集成脚本 (使用本地克隆的 setup.sh) ==="
-          if [ -f "../resukisu/kernel/setup.sh" ]; then
-            echo "本地 ResukiSU 版本 commit: $(cd ../resukisu && git log --oneline -1)"
-            echo "本地 setup.sh 路径: $(readlink -f ../resukisu/kernel/setup.sh)"
-            bash ../resukisu/kernel/setup.sh builtin
+          if [ -f "resukisu/kernel/setup.sh" ]; then
+            echo "本地 ResukiSU 版本 commit: $(cd resukisu && git log --oneline -1)"
+            echo "本地 setup.sh 路径: $(readlink -f resukisu/kernel/setup.sh)"
+            bash resukisu/kernel/setup.sh builtin
           else
-            echo "::error::未找到本地 ../resukisu/kernel/setup.sh，无法集成"
+            echo "::error::未找到本地 resukisu/kernel/setup.sh，无法集成"
+            echo "当前目录内容："
+            ls -la
+            echo "resukisu 目录内容："
+            ls -la resukisu 2>/dev/null || echo "resukisu 目录不存在"
             exit 1
           fi
 
