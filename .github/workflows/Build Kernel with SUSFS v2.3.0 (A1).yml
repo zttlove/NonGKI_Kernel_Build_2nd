@@ -305,7 +305,7 @@ jobs:
           fi
           echo "✅ out/.config 生成成功"
 
-          echo "=== 启用 ReSukiSU 相关配置，并放宽栈帧警告限制 ==="
+          echo "=== 启用 ReSukiSU 相关配置，并放宽栈帧警告限制至 131072 ==="
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
             --enable KSU \
             --enable KSU_MANUAL_HOOK \
@@ -322,7 +322,7 @@ jobs:
             --enable KSU_SUSFS_SUS_SU \
             --enable KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
             --disable HEADERS_INSTALL \
-            --set-val FRAME_WARN 32768 \
+            --set-val FRAME_WARN 131072 \
             --set-str LOCALVERSION "-ikun-NekoMake-star-260927-qgqi"
 
           echo "=== 检查 KSU 配置是否生效 ==="
@@ -341,8 +341,8 @@ jobs:
             echo "✅ LOCALVERSION 已匹配原内核"
           fi
 
-          if grep -q "CONFIG_FRAME_WARN=32768" ${{ env.OUTPUT_DIR }}/.config; then
-            echo "✅ FRAME_WARN 已放宽至 32768"
+          if grep -q "CONFIG_FRAME_WARN=131072" ${{ env.OUTPUT_DIR }}/.config; then
+            echo "✅ FRAME_WARN 已放宽至 131072"
           fi
 
       - name: Build Kernel
@@ -359,11 +359,11 @@ jobs:
 
           echo "=== 开始编译内核（完整日志输出，不截断） ==="
           echo "=== 已禁用警告: default-const-init-var-unsafe, default-const-init-field-unsafe, unused-but-set-global, unused-variable, declaration-after-statement, unused-result, misleading-indentation, uninitialized, compare-distinct-pointer-types, sometimes-uninitialized, unused-function, fortify-source, macro-redefined, unused-label, array-parameter, implicit-enum-enum-cast ==="
-          echo "=== 栈帧警告限制已放宽为 65536 ==="
+          echo "=== 栈帧警告限制已放宽为 131072 ==="
           echo "=== 并行度已调整为 -j8，以减少 Broken pipe 提示 ==="
           set -o pipefail
           make -j8 O=${{ env.OUTPUT_DIR }} \
-               KCFLAGS="-Wno-error -Wno-default-const-init-var-unsafe -Wno-default-const-init-field-unsafe -Wno-unused-but-set-global -Wno-unused-variable -Wno-declaration-after-statement -Wno-unused-result -Wno-misleading-indentation -Wno-uninitialized -Wno-compare-distinct-pointer-types -Wno-sometimes-uninitialized -Wno-unused-function -Wno-fortify-source -Wno-macro-redefined -Wno-unused-label -Wno-array-parameter -Wno-implicit-enum-enum-cast -Wframe-larger-than=65536" \
+               KCFLAGS="-Wno-error -Wno-default-const-init-var-unsafe -Wno-default-const-init-field-unsafe -Wno-unused-but-set-global -Wno-unused-variable -Wno-declaration-after-statement -Wno-unused-result -Wno-misleading-indentation -Wno-uninitialized -Wno-compare-distinct-pointer-types -Wno-sometimes-uninitialized -Wno-unused-function -Wno-fortify-source -Wno-macro-redefined -Wno-unused-label -Wno-array-parameter -Wno-implicit-enum-enum-cast -Wframe-larger-than=131072" \
                HOSTCFLAGS="-Wno-unused-but-set-global -Wno-unused-variable" \
                2>&1 | tee build.log
           BUILD_STATUS=$?
@@ -473,7 +473,7 @@ jobs:
             - 通过官方 setup.sh 脚本以 builtin 模式集成
             - 启用 KSU_MANUAL_HOOK + SUSFS 全套功能
             - LOCALVERSION 与原内核保持一致
-            - 栈帧警告限制已放宽，避免 LZ4 相关链接警告
+            - 栈帧警告限制已放宽至 131072，避免 LZ4 相关链接警告
             - 刷机有风险，请备份原内核
           files: ${{ env.DEVICE_CODENAME }}-ReSukiSU-*.zip
         env:
