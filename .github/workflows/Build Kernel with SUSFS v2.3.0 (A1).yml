@@ -68,6 +68,8 @@ jobs:
           git clone --depth=1 --branch ${{ env.RESUKISU_BRANCH }} ${{ env.RESUKISU_REPO }} resukisu
           echo "ResukiSU cloned, latest commit:"
           cd resukisu && git log --oneline -1
+          echo "ResukiSU 仓库版本信息："
+          cat kernel/setup.sh | grep -m1 "versionCode" || echo "（未找到 versionCode 字段）"
 
       - name: Integrate ResukiSU into Kernel
         working-directory: kernel
@@ -89,9 +91,16 @@ jobs:
             echo "ℹ️ seccomp_types.h 已存在，跳过"
           fi
 
-          echo "=== 运行 ResukiSU 集成脚本 (builtin 内置构建) ==="
-          curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s builtin
-          
+          echo "=== 运行 ResukiSU 集成脚本 (使用本地克隆的 setup.sh) ==="
+          if [ -f "../resukisu/kernel/setup.sh" ]; then
+            echo "本地 ResukiSU 版本 commit: $(cd ../resukisu && git log --oneline -1)"
+            echo "本地 setup.sh 路径: $(readlink -f ../resukisu/kernel/setup.sh)"
+            bash ../resukisu/kernel/setup.sh builtin
+          else
+            echo "::error::未找到本地 ../resukisu/kernel/setup.sh，无法集成"
+            exit 1
+          fi
+
           echo "=== 检查集成结果 ==="
           if [ -d "drivers/kernelsu" ]; then
             echo "✅ drivers/kernelsu 目录已存在"
@@ -484,7 +493,7 @@ jobs:
           body: |
             ## 测试内核 - ResukiSU 集成版
             - 使用 ResukiSU main 分支最新版本（克隆时自动获取最新提交）
-            - 通过官方 setup.sh 脚本以 builtin 模式集成
+            - 通过本地 setup.sh 脚本以 builtin 模式集成，版本与 main 分支完全一致
             - 启用 KSU_MANUAL_HOOK + SUSFS 全套功能
             - LOCALVERSION 与原内核保持一致
             - 栈帧警告限制已放宽至 131072，避免 LZ4 相关链接警告
