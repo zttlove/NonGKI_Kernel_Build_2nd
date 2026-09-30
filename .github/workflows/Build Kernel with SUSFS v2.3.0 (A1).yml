@@ -92,6 +92,13 @@ jobs:
             exit 1
           fi
 
+          echo "=== 修复 Clang 23 的 default-const-init-var-unsafe 警告 (修改 typecheck.h) ==="
+          if [ -f "include/linux/typecheck.h" ]; then
+            # 将 typeof(x) __dummy2; 修改为 typeof(x) __dummy2 = (typeof(x))0;
+            sed -i 's/typeof(x) __dummy2; \\/typeof(x) __dummy2 = (typeof(x))0; \\/' include/linux/typecheck.h || true
+            echo "✅ 已尝试修复 typecheck.h"
+          fi
+
           echo "正在清空 ccache 缓存..."
           ccache -C
 
@@ -167,10 +174,10 @@ jobs:
           # 不再执行 make olddefconfig，避免出现 "override ... changes choice state" 警告
           # 因为 scripts/config 已经直接修改了 .config，直接编译即可
 
-          echo "=== 开始编译内核（完整日志输出，不截断） ==="
+          echo "=== 开始编译内核（完整日志输出，不截断，已追加 -Wno-default-const-init-var-unsafe） ==="
           set -o pipefail
           make -j$(nproc) O=${{ env.OUTPUT_DIR }} \
-               KCFLAGS="-Wno-error" \
+               KCFLAGS="-Wno-error -Wno-default-const-init-var-unsafe" \
                2>&1 | tee build.log
           BUILD_STATUS=$?
 
