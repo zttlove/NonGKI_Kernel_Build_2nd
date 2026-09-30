@@ -81,6 +81,14 @@ jobs:
           export LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- \
                  CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
+          echo "=== 手动创建 seccomp_types.h 以规避 grep 警告 ==="
+          if [ ! -f "include/linux/seccomp_types.h" ]; then
+            touch "include/linux/seccomp_types.h"
+            echo "✅ 已创建空的 seccomp_types.h"
+          else
+            echo "ℹ️ seccomp_types.h 已存在，跳过"
+          fi
+
           echo "=== 运行 ResukiSU 集成脚本 (builtin 内置构建) ==="
           curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s builtin
           
