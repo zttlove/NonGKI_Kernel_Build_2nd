@@ -97,6 +97,20 @@ jobs:
             echo "本地 ResukiSU 版本 commit: $(cd resukisu && git log --oneline -1)"
             echo "本地 setup.sh 路径: $(readlink -f resukisu/kernel/setup.sh)"
             bash resukisu/kernel/setup.sh builtin
+             # 强制修改驱动版本号
+          echo "=== 强制修改内核驱动版本号到 35187 ==="
+          find drivers/kernelsu -type f \( -name "*.h" -o -name "*.c" -o -name "Makefile" -o -name "Kconfig" \) | while read file; do
+            if grep -q "35149" "$file" 2>/dev/null; then
+              sed -i 's/35149/35187/g' "$file"
+              echo "✅ 已修改 $file"
+            fi
+          done
+          # 额外检查 version.h 等常见位置
+          if [ -f "drivers/kernelsu/kernel/version.h" ]; then
+            sed -i 's/35149/35187/g' drivers/kernelsu/kernel/version.h
+          fi
+          echo "✅ 版本号修改完成"
+          
           else
             echo "::error::未找到本地 resukisu/kernel/setup.sh，无法集成"
             echo "当前目录内容："
