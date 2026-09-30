@@ -121,6 +121,7 @@ jobs:
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
             --enable KSU \
             --enable KSU_MANUAL_HOOK \
+            --disable KSU_TRACEPOINT_HOOK \
             --enable KSU_SUSFS \
             --enable KSU_SUSFS_SUS_PATH \
             --enable KSU_SUSFS_SUS_MOUNT \
@@ -163,16 +164,17 @@ jobs:
           export LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- \
                  CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
-          make O=${{ env.OUTPUT_DIR }} olddefconfig
+          # 不再执行 make olddefconfig，避免出现 "override ... changes choice state" 警告
+          # 因为 scripts/config 已经直接修改了 .config，直接编译即可
 
+          echo "=== 开始编译内核（完整日志输出，不截断） ==="
+          set -o pipefail
           make -j$(nproc) O=${{ env.OUTPUT_DIR }} \
                KCFLAGS="-Wno-error" \
-               > build.log 2>&1
-
+               2>&1 | tee build.log
           BUILD_STATUS=$?
 
-          echo "===== build.log (最后 200 行) ====="
-          tail -200 build.log
+          echo "===== 完整 build.log 已保存至 kernel/build.log，并已在上面完整输出 ====="
 
           if [ $BUILD_STATUS -ne 0 ]; then
             echo "::error::编译失败，退出码 $BUILD_STATUS"
