@@ -325,6 +325,10 @@ jobs:
             --set-val FRAME_WARN 131072 \
             --set-str LOCALVERSION "-ikun-NekoMake-star-260927-qgqi"
 
+          echo "=== 同步配置，避免构建时因 .config 不同步而进入交互模式 ==="
+          make O=${{ env.OUTPUT_DIR }} olddefconfig 2>&1 | tee olddefconfig.log
+          echo "✅ 配置已同步"
+
           echo "=== 检查 KSU 配置是否生效 ==="
           if grep -q "CONFIG_KSU=y" ${{ env.OUTPUT_DIR }}/.config; then
             echo "✅ CONFIG_KSU 已启用"
@@ -358,7 +362,7 @@ jobs:
                  CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
           echo "=== 开始编译内核（完整日志输出，不截断） ==="
-          echo "=== 已禁用警告: ... ==="
+          echo "=== 已禁用警告: default-const-init-var-unsafe, default-const-init-field-unsafe, unused-but-set-global, unused-variable, declaration-after-statement, unused-result, misleading-indentation, uninitialized, compare-distinct-pointer-types, sometimes-uninitialized, unused-function, fortify-source, macro-redefined, unused-label, array-parameter, implicit-enum-enum-cast ==="
           echo "=== 栈帧警告限制已放宽为 131072 ==="
           echo "=== 并行度已调整为 -j8，并改为先写文件再输出 ==="
 
