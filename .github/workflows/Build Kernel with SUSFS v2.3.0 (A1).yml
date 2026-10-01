@@ -305,7 +305,7 @@ jobs:
             --enable KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
             --disable HEADERS_INSTALL \
             --set-val FRAME_WARN 131072 \
-            --set-str LOCALVERSION "-ikun-NekoMake-star-260927-qgqi"
+            --set-str LOCALVERSION "-edwin-star-260927-qgqi"
 
           echo "=== 同步配置，避免构建时因 .config 不同步而进入交互模式 ==="
           make O=${{ env.OUTPUT_DIR }} olddefconfig 2>&1 | tee olddefconfig.log
@@ -323,7 +323,7 @@ jobs:
             echo "✅ CONFIG_KSU_MANUAL_HOOK 已启用"
           fi
 
-          if grep -q 'CONFIG_LOCALVERSION="-ikun-NekoMake-star-260927-qgqi"' ${{ env.OUTPUT_DIR }}/.config; then
+          if grep -q 'CONFIG_LOCALVERSION="-edwin-star-260927-qgqi"' ${{ env.OUTPUT_DIR }}/.config; then
             echo "✅ LOCALVERSION 已匹配原内核"
           fi
 
