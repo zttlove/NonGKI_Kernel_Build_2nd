@@ -54,12 +54,12 @@ jobs:
             echo "✅ libtinfo.so.5 修复成功！"
           fi
 
-      - name: Download Clang 23.1.2 (From LLVM GitHub)
+      - name: Download Clang 17.0.6 (Official Kernel Toolchain)
         run: |
           mkdir -p ${{ env.CLANG_DIR }}
-          curl -L --retry 3 -o LLVM-23.1.2-Linux-X64.tar.xz "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.2/LLVM-23.1.2-Linux-X64.tar.xz"
-          tar -xf LLVM-23.1.2-Linux-X64.tar.xz -C ${{ env.CLANG_DIR }} --strip-components=1
-          rm LLVM-23.1.2-Linux-X64.tar.xz
+          curl -L --retry 3 -o clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-22.04.tar.xz "https://github.com/llvm/llvm-project/releases/download/llvmorg-17.0.6/clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-22.04.tar.xz"
+          tar -xf clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-22.04.tar.xz -C ${{ env.CLANG_DIR }} --strip-components=1
+          rm clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-22.04.tar.xz
           ${{ env.CLANG_DIR }}/bin/clang --version
 
       - name: Clone ResukiSU (main branch)
@@ -97,20 +97,6 @@ jobs:
             echo "本地 ResukiSU 版本 commit: $(cd resukisu && git log --oneline -1)"
             echo "本地 setup.sh 路径: $(readlink -f resukisu/kernel/setup.sh)"
             bash resukisu/kernel/setup.sh builtin
-             # 强制修改驱动版本号
-          echo "=== 强制修改内核驱动版本号到 35187 ==="
-          find drivers/kernelsu -type f \( -name "*.h" -o -name "*.c" -o -name "Makefile" -o -name "Kconfig" \) | while read file; do
-            if grep -q "35149" "$file" 2>/dev/null; then
-              sed -i 's/35149/35187/g' "$file"
-              echo "✅ 已修改 $file"
-            fi
-          done
-          # 额外检查 version.h 等常见位置
-          if [ -f "drivers/kernelsu/kernel/version.h" ]; then
-            sed -i 's/35149/35187/g' drivers/kernelsu/kernel/version.h
-          fi
-          echo "✅ 版本号修改完成"
-          
           else
             echo "::error::未找到本地 resukisu/kernel/setup.sh，无法集成"
             echo "当前目录内容："
@@ -126,12 +112,6 @@ jobs:
           else
             echo "::error::集成失败，drivers/kernelsu 目录不存在"
             exit 1
-          fi
-
-          echo "=== 修复 Clang 23 的 default-const-init-var-unsafe 警告 (修改 typecheck.h) ==="
-          if [ -f "include/linux/typecheck.h" ]; then
-            sed -i 's/typeof(x) __dummy2; \\/typeof(x) __dummy2 = (typeof(x))0; \\/' include/linux/typecheck.h || true
-            echo "✅ 已尝试修复 typecheck.h"
           fi
 
           echo "正在清空 ccache 缓存..."
@@ -155,28 +135,6 @@ jobs:
             fi
           else
             echo "ℹ️ 未找到 lz4p Makefile，跳过"
-          fi
-
-          echo "=== 为 cpuidle 子目录追加 -Wno-default-const-init-field-unsafe ==="
-          CPUIDLE_MAKEFILE="drivers/cpuidle/Makefile"
-          if [ -f "$CPUIDLE_MAKEFILE" ]; then
-            if ! grep -q "Wno-default-const-init-field-unsafe" "$CPUIDLE_MAKEFILE"; then
-              echo "ccflags-y += -Wno-default-const-init-field-unsafe" >> "$CPUIDLE_MAKEFILE"
-              echo "✅ 已为 cpuidle Makefile 追加警告禁用选项"
-            else
-              echo "ℹ️ cpuidle Makefile 已包含该选项，跳过"
-            fi
-          else
-            echo "ℹ️ 未找到 cpuidle Makefile，跳过"
-          fi
-
-          echo "=== 修复 sde_rm.c 中 pp_cfg 未初始化警告 ==="
-          SDE_RM_FILE="techpack/display/msm/sde/sde_rm.c"
-          if [ -f "$SDE_RM_FILE" ]; then
-            sed -i 's/const struct sde_pingpong_cfg \*pp_cfg;/const struct sde_pingpong_cfg *pp_cfg = NULL;/' "$SDE_RM_FILE"
-            echo "✅ 已修复 sde_rm.c 中 pp_cfg 未初始化警告"
-          else
-            echo "ℹ️ 未找到 sde_rm.c，跳过"
           fi
 
           echo "=== 为 coresight 子目录追加 -Wno-sometimes-uninitialized ==="
@@ -398,12 +356,12 @@ jobs:
                  CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
           echo "=== 开始编译内核（完整日志输出，不截断） ==="
-          echo "=== 已禁用警告: default-const-init-var-unsafe, default-const-init-field-unsafe, unused-but-set-global, unused-variable, declaration-after-statement, unused-result, misleading-indentation, uninitialized, compare-distinct-pointer-types, sometimes-uninitialized, unused-function, fortify-source, macro-redefined, unused-label, array-parameter, implicit-enum-enum-cast ==="
+          echo "=== 已禁用警告: unused-variable, declaration-after-statement, unused-result, misleading-indentation, uninitialized, sometimes-uninitialized, unused-function, fortify-source, macro-redefined, unused-label, array-parameter, implicit-enum-enum-cast ==="
           echo "=== 栈帧警告限制已放宽为 131072 ==="
           echo "=== 并行度已调整为 -j8，并改为先写文件再输出 ==="
 
           make -j8 O=${{ env.OUTPUT_DIR }} \
-               KCFLAGS="-Wno-error -Wno-default-const-init-var-unsafe -Wno-default-const-init-field-unsafe -Wno-unused-but-set-global -Wno-unused-variable -Wno-declaration-after-statement -Wno-unused-result -Wno-misleading-indentation -Wno-uninitialized -Wno-compare-distinct-pointer-types -Wno-sometimes-uninitialized -Wno-unused-function -Wno-fortify-source -Wno-macro-redefined -Wno-unused-label -Wno-array-parameter -Wno-implicit-enum-enum-cast -Wframe-larger-than=131072" \
+               KCFLAGS="-Wno-error -Wno-unused-variable -Wno-declaration-after-statement -Wno-unused-result -Wno-misleading-indentation -Wno-uninitialized -Wno-compare-distinct-pointer-types -Wno-sometimes-uninitialized -Wno-unused-function -Wno-fortify-source -Wno-macro-redefined -Wno-unused-label -Wno-array-parameter -Wno-implicit-enum-enum-cast -Wframe-larger-than=131072" \
                HOSTCFLAGS="-Wno-unused-but-set-global -Wno-unused-variable" \
                > build.log 2>&1
           BUILD_STATUS=$?
@@ -508,14 +466,14 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: resukisu_${{ github.run_number }}
-          name: "ResukiSU Kernel (LLVM 23.1.2, main branch)"
+          name: "ResukiSU Kernel (LLVM 17.0.6, main branch)"
           body: |
             ## 测试内核 - ResukiSU 集成版
             - 使用 ResukiSU main 分支最新版本（克隆时自动获取最新提交）
             - 通过本地 setup.sh 脚本以 builtin 模式集成，版本与 main 分支完全一致
             - 启用 KSU_MANUAL_HOOK + SUSFS 全套功能
             - LOCALVERSION 与原内核保持一致
-            - 栈帧警告限制已放宽至 131072，避免 LZ4 相关链接警告
+            - 已切换回官方 Clang 17.0.6 工具链，编译更稳定
             - 刷机有风险，请备份原内核
           files: ${{ env.DEVICE_CODENAME }}-ResukiSU-*.zip
         env:
