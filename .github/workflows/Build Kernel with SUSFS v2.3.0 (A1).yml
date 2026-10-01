@@ -200,19 +200,7 @@ jobs:
             echo "ℹ️ 未找到 cyttsp5 Makefile，跳过"
           fi
 
-          echo "=== 为 v4l2-core 子目录追加 -Wno-default-const-init-field-unsafe ==="
-          V4L2_CORE_MAKEFILE="drivers/media/v4l2-core/Makefile"
-          if [ -f "$V4L2_CORE_MAKEFILE" ]; then
-            if ! grep -q "Wno-default-const-init-field-unsafe" "$V4L2_CORE_MAKEFILE"; then
-              echo "ccflags-y += -Wno-default-const-init-field-unsafe" >> "$V4L2_CORE_MAKEFILE"
-              echo "✅ 已为 v4l2-core Makefile 追加警告禁用选项"
-            else
-              echo "ℹ️ v4l2-core Makefile 已包含该选项，跳过"
-            fi
-          else
-            echo "ℹ️ 未找到 v4l2-core Makefile，跳过"
-          fi
-
+          
           echo "=== 为 thermal 子目录追加 -Wno-fortify-source ==="
           THERMAL_MAKEFILE="drivers/thermal/Makefile"
           if [ -f "$THERMAL_MAKEFILE" ]; then
