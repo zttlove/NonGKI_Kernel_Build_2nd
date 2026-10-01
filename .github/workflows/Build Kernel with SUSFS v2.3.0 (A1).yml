@@ -353,7 +353,7 @@ jobs:
           export CCACHE_DIR="${{ env.CCACHE_DIR }}"
           ccache -M 6G
           export LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- \
-                 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
           echo "=== 开始编译内核（完整日志输出，不截断） ==="
           echo "=== 已禁用警告: unused-variable, declaration-after-statement, unused-result, misleading-indentation, uninitialized, sometimes-uninitialized, unused-function, fortify-source, macro-redefined, unused-label, array-parameter, implicit-enum-enum-cast ==="
@@ -361,9 +361,9 @@ jobs:
           echo "=== 并行度已调整为 -j8，并改为先写文件再输出 ==="
 
           make -j8 O=${{ env.OUTPUT_DIR }} \
-               KCFLAGS="-Wno-error -Wno-unused-variable -Wno-declaration-after-statement -Wno-unused-result -Wno-misleading-indentation -Wno-uninitialized -Wno-compare-distinct-pointer-types -Wno-sometimes-uninitialized -Wno-unused-function -Wno-fortify-source -Wno-macro-redefined -Wno-unused-label -Wno-array-parameter -Wno-implicit-enum-enum-cast -Wframe-larger-than=131072" \
-               HOSTCFLAGS="-Wno-unused-but-set-global -Wno-unused-variable" \
-               > build.log 2>&1
+          KCFLAGS="-Wno-error -Wno-unused-variable -Wno-declaration-after-statement -Wno-unused-result -Wno-misleading-indentation -Wno-uninitialized -Wno-compare-distinct-pointer-types -Wno-sometimes-uninitialized -Wno-unused-function -Wno-fortify-source -Wno-macro-redefined -Wno-unused-label -Wno-array-parameter -Wno-implicit-enum-enum-cast -Wframe-larger-than=131072" \
+          HOSTCFLAGS="-Wno-unused-variable" \
+          > build.log 2>&1
           BUILD_STATUS=$?
 
           echo "===== 完整 build.log 开始输出 ====="
@@ -371,13 +371,13 @@ jobs:
           echo "===== 完整 build.log 输出结束 ====="
 
           if [ $BUILD_STATUS -ne 0 ]; then
-            echo "::error::编译失败，退出码 $BUILD_STATUS"
-            exit 1
+          echo "::error::编译失败，退出码 $BUILD_STATUS"
+          exit 1
           fi
 
           if [ ! -f "${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image" ]; then
-            echo "::error::编译失败，未生成 Image"
-            exit 1
+          echo "::error::编译失败，未生成 Image"
+          exit 1
           fi
 
           echo "✅ 编译成功，Image 已生成"
