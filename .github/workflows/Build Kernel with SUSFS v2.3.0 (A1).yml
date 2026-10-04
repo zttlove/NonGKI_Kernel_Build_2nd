@@ -177,7 +177,7 @@ jobs:
           echo "=== 为 aw8697_haptic 子目录追加 -Wno-unused-function ==="
           AW8697_MAKEFILE="drivers/input/misc/aw8697_haptic/Makefile"
           if [ -f "$AW8697_MAKEFILE" ]; then
-            if ! grep -q "Wno-unused-function" "$AW8697_MAKEFILE"; then
+          if ! grep -q "Wno-unused-function" "$AW8697_MAKEFILE"; then
               echo "ccflags-y += -Wno-unused-function" >> "$AW8697_MAKEFILE"
               echo "✅ 已为 aw8697_haptic Makefile 追加警告禁用选项"
             else
@@ -200,7 +200,6 @@ jobs:
             echo "ℹ️ 未找到 cyttsp5 Makefile，跳过"
           fi
 
-          
           echo "=== 为 thermal 子目录追加 -Wno-fortify-source ==="
           THERMAL_MAKEFILE="drivers/thermal/Makefile"
           if [ -f "$THERMAL_MAKEFILE" ]; then
@@ -253,7 +252,7 @@ jobs:
             echo "ℹ️ 未找到 qcacld-3.0 Makefile，跳过"
           fi
 
-          echo "=== 为 qca-wifi-host-cmn 子目录追加 -Wno-unused-function 和 -Wno-implicit-enum-enum-cast ==="
+          echo "=== 为 qca-wifi-host-cmn 子目录追加 -Wno-unused-function ==="
           QCA_WIFI_MAKEFILE="drivers/staging/qca-wifi-host-cmn/Makefile"
           if [ -f "$QCA_WIFI_MAKEFILE" ]; then
             if ! grep -q "Wno-unused-function" "$QCA_WIFI_MAKEFILE"; then
@@ -261,12 +260,6 @@ jobs:
               echo "✅ 已为 qca-wifi-host-cmn Makefile 追加 -Wno-unused-function"
             else
               echo "ℹ️ qca-wifi-host-cmn Makefile 已包含 -Wno-unused-function，跳过"
-            fi
-            if ! grep -q "Wno-implicit-enum-enum-cast" "$QCA_WIFI_MAKEFILE"; then
-              echo "ccflags-y += -Wno-implicit-enum-enum-cast" >> "$QCA_WIFI_MAKEFILE"
-              echo "✅ 已为 qca-wifi-host-cmn Makefile 追加 -Wno-implicit-enum-enum-cast"
-            else
-              echo "ℹ️ qca-wifi-host-cmn Makefile 已包含 -Wno-implicit-enum-enum-cast，跳过"
             fi
           else
             echo "ℹ️ 未找到 qca-wifi-host-cmn Makefile，跳过"
@@ -287,7 +280,7 @@ jobs:
           fi
           echo "✅ out/.config 生成成功"
 
-          echo "=== 启用 ResukiSU 相关配置，并放宽栈帧警告限制至 131072 ==="
+          echo "=== 启用 ResukiSU 相关配置，并设置自定义 LOCALVERSION ==="
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
             --enable KSU \
             --enable KSU_MANUAL_HOOK \
@@ -324,7 +317,7 @@ jobs:
           fi
 
           if grep -q 'CONFIG_LOCALVERSION="-edwin-star-260927-qgqi"' ${{ env.OUTPUT_DIR }}/.config; then
-            echo "✅ LOCALVERSION 已匹配原内核"
+            echo "✅ LOCALVERSION 已设置为 -edwin-star-260927-qgqi"
           fi
 
           if grep -q "CONFIG_FRAME_WARN=131072" ${{ env.OUTPUT_DIR }}/.config; then
@@ -341,17 +334,17 @@ jobs:
           export CCACHE_DIR="${{ env.CCACHE_DIR }}"
           ccache -M 6G
           export LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- \
-          CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+                 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
           echo "=== 开始编译内核（完整日志输出，不截断） ==="
-          echo "=== 已禁用警告: unused-variable, declaration-after-statement, unused-result, misleading-indentation, uninitialized, sometimes-uninitialized, unused-function, fortify-source, macro-redefined, unused-label, array-parameter, implicit-enum-enum-cast ==="
+          echo "=== 已禁用警告: unused-variable, declaration-after-statement, unused-result, misleading-indentation, uninitialized, sometimes-uninitialized, unused-function, fortify-source, macro-redefined, unused-label, array-parameter ==="
           echo "=== 栈帧警告限制已放宽为 131072 ==="
           echo "=== 并行度已调整为 -j8，并改为先写文件再输出 ==="
 
           make -j8 O=${{ env.OUTPUT_DIR }} \
-          KCFLAGS="-Wno-error -Wno-unused-variable -Wno-declaration-after-statement -Wno-unused-result -Wno-misleading-indentation -Wno-uninitialized -Wno-compare-distinct-pointer-types -Wno-sometimes-uninitialized -Wno-unused-function -Wno-fortify-source -Wno-macro-redefined -Wno-unused-label -Wno-array-parameter -Wframe-larger-than=131072" \
-          HOSTCFLAGS="-Wno-unused-variable" \
-          > build.log 2>&1
+               KCFLAGS="-Wno-error -Wno-unused-variable -Wno-declaration-after-statement -Wno-unused-result -Wno-misleading-indentation -Wno-uninitialized -Wno-compare-distinct-pointer-types -Wno-sometimes-uninitialized -Wno-unused-function -Wno-fortify-source -Wno-macro-redefined -Wno-unused-label -Wno-array-parameter -Wframe-larger-than=131072" \
+               HOSTCFLAGS="-Wno-unused-variable" \
+               > build.log 2>&1
           BUILD_STATUS=$?
 
           echo "===== 完整 build.log 开始输出 ====="
@@ -359,13 +352,13 @@ jobs:
           echo "===== 完整 build.log 输出结束 ====="
 
           if [ $BUILD_STATUS -ne 0 ]; then
-          echo "::error::编译失败，退出码 $BUILD_STATUS"
-          exit 1
+            echo "::error::编译失败，退出码 $BUILD_STATUS"
+            exit 1
           fi
 
           if [ ! -f "${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image" ]; then
-          echo "::error::编译失败，未生成 Image"
-          exit 1
+            echo "::error::编译失败，未生成 Image"
+            exit 1
           fi
 
           echo "✅ 编译成功，Image 已生成"
@@ -393,7 +386,7 @@ jobs:
           ## Adapted for Xiaomi Mi 11 Ultra (star) with ResukiSU
 
           properties() { '
-          kernel.string=5.4.302-ikun-NekoMake-star-260927-qgqi+ ResukiSU for Xiaomi 11 Ultra
+          kernel.string=5.4.302-edwin-star-260927-qgqi+ ResukiSU for Xiaomi 11 Ultra
           do.devicecheck=1
           do.modules=0
           do.systemless=0
@@ -460,7 +453,7 @@ jobs:
             - 使用 ResukiSU main 分支最新版本（克隆时自动获取最新提交）
             - 通过本地 setup.sh 脚本以 builtin 模式集成，版本与 main 分支完全一致
             - 启用 KSU_MANUAL_HOOK + SUSFS 全套功能
-            - LOCALVERSION 与原内核保持一致
+            - LOCALVERSION 已自定义为 -edwin-star-260927-qgqi
             - 已切换回官方 Clang 17.0.6 工具链，编译更稳定
             - 刷机有风险，请备份原内核
           files: ${{ env.DEVICE_CODENAME }}-ResukiSU-*.zip
