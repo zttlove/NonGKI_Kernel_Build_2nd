@@ -1,4 +1,4 @@
-name: Build Kernel with ResukiSU (Power Saving)
+name: Build Kernel with BakaSU (Power Saving)
 
 on:
   workflow_dispatch:
@@ -14,7 +14,7 @@ env:
   CLANG_DIR: "${{ github.workspace }}/clang"
   CCACHE_DIR: "${{ github.workspace }}/.ccache"
   KERNEL_DIR: "${{ github.workspace }}/kernel"
-  RESUKISU_REPO: "https://github.com/ReSukiSU/ReSukiSU.git"
+  RESUKISU_REPO: "https://github.com/Baka-SU/BakaSU.git"
   RESUKISU_BRANCH: "main"
 
 jobs:
@@ -62,17 +62,14 @@ jobs:
           rm clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-22.04.tar.xz
           ${{ env.CLANG_DIR }}/bin/clang --version
 
-      - name: Clone ResukiSU (main branch)
+      - name: Clone BakaSU (main branch)
         run: |
           cd ${{ env.KERNEL_DIR }}
           git clone --depth=1 --branch ${{ env.RESUKISU_BRANCH }} ${{ env.RESUKISU_REPO }} resukisu
-          echo "ResukiSU cloned, latest commit:"
+          echo "BakaSU cloned, latest commit:"
           cd resukisu && git log --oneline -1
-          echo "ResukiSU 仓库版本信息："
-          grep -m1 "versionCode" kernel/setup.sh || echo "（未找到 versionCode 字段）"
-          echo "本地脚本路径：$(readlink -f kernel/setup.sh)"
 
-      - name: Integrate ResukiSU into Kernel
+      - name: Integrate BakaSU into Kernel
         working-directory: kernel
         run: |
           set -e
@@ -92,15 +89,11 @@ jobs:
             echo "ℹ️ seccomp_types.h 已存在，跳过"
           fi
 
-          echo "=== 运行 ResukiSU 集成脚本 (使用本地克隆的 setup.sh) ==="
+          echo "=== 运行 BakaSU 集成脚本 (使用本地克隆的 setup.sh) ==="
           if [ -f "resukisu/kernel/setup.sh" ]; then
-            echo "本地 ResukiSU 版本 commit: $(cd resukisu && git log --oneline -1)"
+            echo "本地 BakaSU 版本 commit: $(cd resukisu && git log --oneline -1)"
             echo "本地 setup.sh 路径: $(readlink -f resukisu/kernel/setup.sh)"
             bash resukisu/kernel/setup.sh builtin
-            # 在 setup.sh 运行后，强制对齐版本号
-            echo "=== 强制将内核驱动版本号修改为 35203 ==="
-            find drivers/kernelsu -type f \( -name "*.h" -o -name "*.c" -o -name "Makefile" -o -name "Kconfig" \) -exec sed -i 's/35149/35203/g' {} +
-            echo "✅ 版本号已强制对齐为 35203"
           else
             echo "::error::未找到本地 resukisu/kernel/setup.sh，无法集成"
             echo "当前目录内容："
@@ -121,154 +114,6 @@ jobs:
           echo "正在清空 ccache 缓存..."
           ccache -C
 
-          echo "正在修复 focaltech_3680 Makefile..."
-          FOCALTECH_MAKEFILE="drivers/input/touchscreen/focaltech_3680/Makefile"
-          if [ -f "$FOCALTECH_MAKEFILE" ]; then
-            sed -i 's/^ \+/\t/' "$FOCALTECH_MAKEFILE"
-            echo "✅ 已修复 focaltech_3680 Makefile 缩进"
-          fi
-
-          echo "=== 为 lz4p 子目录追加 -Wno-declaration-after-statement ==="
-          LZ4P_MAKEFILE="drivers/block/zram/lz4p/Makefile"
-          if [ -f "$LZ4P_MAKEFILE" ]; then
-            if ! grep -q "Wno-declaration-after-statement" "$LZ4P_MAKEFILE"; then
-              echo "ccflags-y += -Wno-declaration-after-statement" >> "$LZ4P_MAKEFILE"
-              echo "✅ 已为 lz4p Makefile 追加警告禁用选项"
-            else
-              echo "ℹ️ lz4p Makefile 已包含该选项，跳过"
-            fi
-          else
-            echo "ℹ️ 未找到 lz4p Makefile，跳过"
-          fi
-
-          echo "=== 为 coresight 子目录追加 -Wno-sometimes-uninitialized ==="
-          CORESIGHT_MAKEFILE="drivers/hwtracing/coresight/Makefile"
-          if [ -f "$CORESIGHT_MAKEFILE" ]; then
-            if ! grep -q "Wno-sometimes-uninitialized" "$CORESIGHT_MAKEFILE"; then
-              echo "ccflags-y += -Wno-sometimes-uninitialized" >> "$CORESIGHT_MAKEFILE"
-              echo "✅ 已为 coresight Makefile 追加警告禁用选项"
-            else
-              echo "ℹ️ coresight Makefile 已包含该选项，跳过"
-            fi
-          else
-            echo "ℹ️ 未找到 coresight Makefile，跳过"
-          fi
-
-          echo "=== 为 mi_disp 子目录追加 -Wno-misleading-indentation ==="
-          MI_DISP_MAKEFILE="techpack/display/msm/mi_disp/Makefile"
-          if [ -f "$MI_DISP_MAKEFILE" ]; then
-            if ! grep -q "Wno-misleading-indentation" "$MI_DISP_MAKEFILE"; then
-              echo "ccflags-y += -Wno-misleading-indentation" >> "$MI_DISP_MAKEFILE"
-              echo "✅ 已为 mi_disp Makefile 追加警告禁用选项"
-            else
-              echo "ℹ️ mi_disp Makefile 已包含该选项，跳过"
-            fi
-          else
-            echo "ℹ️ 未找到 mi_disp Makefile，尝试上层目录"
-            TECH_DISP_MAKEFILE="techpack/display/msm/Makefile"
-            if [ -f "$TECH_DISP_MAKEFILE" ]; then
-              if ! grep -q "Wno-misleading-indentation" "$TECH_DISP_MAKEFILE"; then
-                echo "ccflags-y += -Wno-misleading-indentation" >> "$TECH_DISP_MAKEFILE"
-                echo "✅ 已为 techpack/display/msm Makefile 追加警告禁用选项"
-              else
-                echo "ℹ️ techpack/display/msm Makefile 已包含该选项，跳过"
-              fi
-            else
-              echo "ℹ️ 未找到 techpack/display/msm Makefile，跳过"
-            fi
-          fi
-
-          echo "=== 为 aw8697_haptic 子目录追加 -Wno-unused-function ==="
-          AW8697_MAKEFILE="drivers/input/misc/aw8697_haptic/Makefile"
-          if [ -f "$AW8697_MAKEFILE" ]; then
-          if ! grep -q "Wno-unused-function" "$AW8697_MAKEFILE"; then
-              echo "ccflags-y += -Wno-unused-function" >> "$AW8697_MAKEFILE"
-              echo "✅ 已为 aw8697_haptic Makefile 追加警告禁用选项"
-            else
-              echo "ℹ️ aw8697_haptic Makefile 已包含该选项，跳过"
-            fi
-          else
-            echo "ℹ️ 未找到 aw8697_haptic Makefile，跳过"
-          fi
-
-          echo "=== 为 cyttsp5 子目录追加 -Wno-misleading-indentation ==="
-          CYTTSP5_MAKEFILE="drivers/input/touchscreen/cyttsp5/Makefile"
-          if [ -f "$CYTTSP5_MAKEFILE" ]; then
-            if ! grep -q "Wno-misleading-indentation" "$CYTTSP5_MAKEFILE"; then
-              echo "ccflags-y += -Wno-misleading-indentation" >> "$CYTTSP5_MAKEFILE"
-              echo "✅ 已为 cyttsp5 Makefile 追加警告禁用选项"
-            else
-              echo "ℹ️ cyttsp5 Makefile 已包含该选项，跳过"
-            fi
-          else
-            echo "ℹ️ 未找到 cyttsp5 Makefile，跳过"
-          fi
-
-          echo "=== 为 thermal 子目录追加 -Wno-fortify-source ==="
-          THERMAL_MAKEFILE="drivers/thermal/Makefile"
-          if [ -f "$THERMAL_MAKEFILE" ]; then
-            if ! grep -q "Wno-fortify-source" "$THERMAL_MAKEFILE"; then
-              echo "ccflags-y += -Wno-fortify-source" >> "$THERMAL_MAKEFILE"
-              echo "✅ 已为 thermal Makefile 追加警告禁用选项"
-            else
-              echo "ℹ️ thermal Makefile 已包含该选项，跳过"
-            fi
-          else
-            echo "ℹ️ 未找到 thermal Makefile，跳过"
-          fi
-
-          echo "=== 为 8250 串口子目录追加 -Wno-macro-redefined ==="
-          SERIAL_8250_MAKEFILE="drivers/tty/serial/8250/Makefile"
-          if [ -f "$SERIAL_8250_MAKEFILE" ]; then
-            if ! grep -q "Wno-macro-redefined" "$SERIAL_8250_MAKEFILE"; then
-              echo "ccflags-y += -Wno-macro-redefined" >> "$SERIAL_8250_MAKEFILE"
-              echo "✅ 已为 8250 Makefile 追加警告禁用选项"
-            else
-              echo "ℹ️ 8250 Makefile 已包含该选项，跳过"
-            fi
-          else
-            echo "ℹ️ 未找到 8250 Makefile，跳过"
-          fi
-
-          echo "=== 为 dwc3 子目录追加 -Wno-unused-label ==="
-          DWC3_MAKEFILE="drivers/usb/dwc3/Makefile"
-          if [ -f "$DWC3_MAKEFILE" ]; then
-            if ! grep -q "Wno-unused-label" "$DWC3_MAKEFILE"; then
-              echo "ccflags-y += -Wno-unused-label" >> "$DWC3_MAKEFILE"
-              echo "✅ 已为 dwc3 Makefile 追加警告禁用选项"
-            else
-              echo "ℹ️ dwc3 Makefile 已包含该选项，跳过"
-            fi
-          else
-            echo "ℹ️ 未找到 dwc3 Makefile，跳过"
-          fi
-
-          echo "=== 为 qcacld-3.0 子目录追加 -Wno-array-parameter ==="
-          QCACLD_MAKEFILE="drivers/staging/qcacld-3.0/Makefile"
-          if [ -f "$QCACLD_MAKEFILE" ]; then
-            if ! grep -q "Wno-array-parameter" "$QCACLD_MAKEFILE"; then
-              echo "ccflags-y += -Wno-array-parameter" >> "$QCACLD_MAKEFILE"
-              echo "✅ 已为 qcacld-3.0 Makefile 追加警告禁用选项"
-            else
-              echo "ℹ️ qcacld-3.0 Makefile 已包含该选项，跳过"
-            fi
-          else
-            echo "ℹ️ 未找到 qcacld-3.0 Makefile，跳过"
-          fi
-
-          echo "=== 为 qca-wifi-host-cmn 子目录追加 -Wno-unused-function ==="
-          QCA_WIFI_MAKEFILE="drivers/staging/qca-wifi-host-cmn/Makefile"
-          if [ -f "$QCA_WIFI_MAKEFILE" ]; then
-            if ! grep -q "Wno-unused-function" "$QCA_WIFI_MAKEFILE"; then
-              echo "ccflags-y += -Wno-unused-function" >> "$QCA_WIFI_MAKEFILE"
-              echo "✅ 已为 qca-wifi-host-cmn Makefile 追加 -Wno-unused-function"
-            else
-              echo "ℹ️ qca-wifi-host-cmn Makefile 已包含 -Wno-unused-function，跳过"
-            fi
-          else
-            echo "ℹ️ 未找到 qca-wifi-host-cmn Makefile，跳过"
-          fi
-
           echo "正在彻底清理残留文件..."
           rm -rf ${{ env.OUTPUT_DIR }}
           rm -f .config
@@ -284,7 +129,7 @@ jobs:
           fi
           echo "✅ out/.config 生成成功"
 
-          echo "=== 启用 ResukiSU 相关配置，并设置自定义 LOCALVERSION ==="
+          echo "=== 启用 BakaSU 相关配置，并设置自定义 LOCALVERSION ==="
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
             --enable KSU \
             --enable KSU_MANUAL_HOOK \
@@ -341,7 +186,7 @@ jobs:
                  CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
           echo "=== 开始编译内核（完整日志输出，不截断） ==="
-          echo "=== 已禁用警告: unused-variable, declaration-after-statement, unused-result, misleading-indentation, uninitialized, sometimes-uninitialized, unused-function, fortify-source, macro-redefined, unused-label, array-parameter ==="
+           echo "=== 已禁用警告: unused-variable, declaration-after-statement, unused-result, misleading-indentation, uninitialized, sometimes-uninitialized, unused-function, fortify-source, macro-redefined, unused-label, array-parameter ==="
           echo "=== 栈帧警告限制已放宽为 131072 ==="
           echo "=== 并行度已调整为 -j8，并改为先写文件再输出 ==="
 
@@ -387,10 +232,10 @@ jobs:
           #!/sbin/sh
 
           ### AnyKernel3 Flashable Kernel Script
-          ## Adapted for Xiaomi Mi 11 Ultra (star) with ResukiSU
+          ## Adapted for Xiaomi Mi 11 Ultra (star) with BakaSU
 
           properties() { '
-          kernel.string=5.4.302-edwin-star-260927-qgqi+ ResukiSU for Xiaomi 11 Ultra
+          kernel.string=5.4.302-edwin-star-260927-qgqi+ BakaSU for Xiaomi 11 Ultra
           do.devicecheck=1
           do.modules=0
           do.systemless=0
@@ -425,9 +270,9 @@ jobs:
           cat "$AK3_DIR/anykernel.sh"
           
           cd $AK3_DIR
-          zip -r9 "../${{ env.DEVICE_CODENAME }}-ResukiSU-${TIME}.zip" ./*
+          zip -r9 "../${{ env.DEVICE_CODENAME }}-BakaSU-${TIME}.zip" ./*
           cd ..
-          echo "zip_name=${{ env.DEVICE_CODENAME }}-ResukiSU-${TIME}.zip" >> $GITHUB_OUTPUT
+          echo "zip_name=${{ env.DEVICE_CODENAME }}-BakaSU-${TIME}.zip" >> $GITHUB_OUTPUT
 
       # ============================================================
       # 5. 上传
@@ -435,8 +280,8 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kernel_resukisu
-          path: ${{ env.DEVICE_CODENAME }}-ResukiSU-*.zip
+          name: kernel_bakasu
+          path: ${{ env.DEVICE_CODENAME }}-BakaSU-*.zip
 
       - name: Upload build.log on failure
         if: failure()
@@ -450,16 +295,16 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: resukisu_${{ github.run_number }}
-          name: "ResukiSU Kernel (LLVM 17.0.6, main branch)"
+          tag_name: bakasu_${{ github.run_number }}
+          name: "BakaSU Kernel (LLVM 17.0.6, main branch)"
           body: |
-            ## 测试内核 - ResukiSU 集成版
-            - 使用 ResukiSU main 分支最新版本（克隆时自动获取最新提交）
-            - 通过本地 setup.sh 脚本以 builtin 模式集成，版本与 main 分支完全一致
+            ## 测试内核 - BakaSU 集成版
+            - 使用 BakaSU main 分支最新版本（ReSukiSU 已迁移至 BakaSU）
+            - 通过本地 setup.sh 脚本以 builtin 模式集成
             - 启用 KSU_MANUAL_HOOK + SUSFS 全套功能
             - LOCALVERSION 已自定义为 -edwin-star-260927-qgqi
             - 已切换回官方 Clang 17.0.6 工具链，编译更稳定
             - 刷机有风险，请备份原内核
-          files: ${{ env.DEVICE_CODENAME }}-ResukiSU-*.zip
+          files: ${{ env.DEVICE_CODENAME }}-BakaSU-*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
