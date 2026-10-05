@@ -94,6 +94,13 @@ jobs:
             echo "本地 BakaSU 版本 commit: $(cd resukisu && git log --oneline -1)"
             echo "本地 setup.sh 路径: $(readlink -f resukisu/kernel/setup.sh)"
             bash resukisu/kernel/setup.sh builtin
+
+            # ======= 强制对齐版本号 =======
+            echo "=== 强制将内核驱动版本号修改为 35203 以匹配管理器 ==="
+            find drivers/kernelsu -type f \( -name "*.h" -o -name "*.c" -o -name "Makefile" \) -exec sed -i 's/35149/35203/g' {} +
+            echo "✅ 版本号已强制对齐为 35203"
+            # =============================
+
           else
             echo "::error::未找到本地 resukisu/kernel/setup.sh，无法集成"
             echo "当前目录内容："
@@ -310,6 +317,7 @@ jobs:
             - 通过本地 setup.sh 脚本以 builtin 模式集成
             - 启用 KSU_MANUAL_HOOK + SUSFS 全套功能
             - LOCALVERSION 已自定义为 -edwin-star-260927-qgqi
+            - 已强制对齐内核驱动版本号为 35203，与最新管理器匹配
             - 已切换回官方 Clang 17.0.6 工具链，编译更稳定
             - 刷机有风险，请备份原内核
           files: ${{ env.DEVICE_CODENAME }}-BakaSU-*.zip
