@@ -114,6 +114,13 @@ jobs:
           echo "正在清空 ccache 缓存..."
           ccache -C
 
+          echo "正在修复 focaltech_3680 Makefile..."
+          FOCALTECH_MAKEFILE="drivers/input/touchscreen/focaltech_3680/Makefile"
+          if [ -f "$FOCALTECH_MAKEFILE" ]; then
+            sed -i 's/^ \+/\t/' "$FOCALTECH_MAKEFILE"
+            echo "✅ 已修复 focaltech_3680 Makefile 缩进"
+          fi
+
           echo "正在彻底清理残留文件..."
           rm -rf ${{ env.OUTPUT_DIR }}
           rm -f .config
@@ -186,7 +193,7 @@ jobs:
                  CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
           echo "=== 开始编译内核（完整日志输出，不截断） ==="
-           echo "=== 已禁用警告: unused-variable, declaration-after-statement, unused-result, misleading-indentation, uninitialized, sometimes-uninitialized, unused-function, fortify-source, macro-redefined, unused-label, array-parameter ==="
+          echo "=== 已禁用警告: unused-variable, declaration-after-statement, unused-result, misleading-indentation, uninitialized, sometimes-uninitialized, unused-function, fortify-source, macro-redefined, unused-label, array-parameter ==="
           echo "=== 栈帧警告限制已放宽为 131072 ==="
           echo "=== 并行度已调整为 -j8，并改为先写文件再输出 ==="
 
