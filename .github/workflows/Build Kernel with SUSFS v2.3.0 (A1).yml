@@ -14,8 +14,6 @@ env:
   CLANG_DIR: "${{ github.workspace }}/clang"
   CCACHE_DIR: "${{ github.workspace }}/.ccache"
   KERNEL_DIR: "${{ github.workspace }}/kernel"
-  RESUKISU_REPO: "https://github.com/Baka-SU/BakaSU.git"
-  RESUKISU_BRANCH: "main"
 
 jobs:
   build:
@@ -62,14 +60,7 @@ jobs:
           rm clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-22.04.tar.xz
           ${{ env.CLANG_DIR }}/bin/clang --version
 
-      - name: Clone BakaSU (main branch)
-        run: |
-          cd ${{ env.KERNEL_DIR }}
-          git clone --depth=1 --branch ${{ env.RESUKISU_BRANCH }} ${{ env.RESUKISU_REPO }} resukisu
-          echo "BakaSU cloned, latest commit:"
-          cd resukisu && git log --oneline -1
-
-      - name: Integrate BakaSU into Kernel
+      - name: Integrate BakaSU into Kernel (curl method)
         working-directory: kernel
         run: |
           set -e
@@ -89,19 +80,8 @@ jobs:
             echo "ℹ️ seccomp_types.h 已存在，跳过"
           fi
 
-          echo "=== 运行 BakaSU 集成脚本 (使用本地克隆的 setup.sh) ==="
-          if [ -f "resukisu/kernel/setup.sh" ]; then
-            echo "本地 BakaSU 版本 commit: $(cd resukisu && git log --oneline -1)"
-            echo "本地 setup.sh 路径: $(readlink -f resukisu/kernel/setup.sh)"
-            bash resukisu/kernel/setup.sh
-          else
-            echo "::error::未找到本地 resukisu/kernel/setup.sh，无法集成"
-            echo "当前目录内容："
-            ls -la
-            echo "resukisu 目录内容："
-            ls -la resukisu 2>/dev/null || echo "resukisu 目录不存在"
-            exit 1
-          fi
+          echo "=== 使用 curl 方式集成 BakaSU ==="
+          curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/main/kernel/setup.sh" | bash
 
           echo "=== 检查集成结果 ==="
           if [ -d "drivers/kernelsu" ]; then
@@ -110,13 +90,6 @@ jobs:
             echo "::error::集成失败，drivers/kernelsu 目录不存在"
             exit 1
           fi
-
-          echo "=== 强制修改内核驱动版本号 ==="
-          echo "替换前查找 35149："
-          grep -rn "35149" drivers/kernelsu/ 2>/dev/null || echo "未找到 35149"
-          find drivers/kernelsu -type f -exec sed -i 's/35149/35203/g' {} +
-          echo "替换后验证 35203："
-          grep -rn "35203" drivers/kernelsu/ 2>/dev/null | head -5 || echo "未找到 35203"
 
           echo "正在清空 ccache 缓存..."
           ccache -C
@@ -313,11 +286,10 @@ jobs:
           name: "BakaSU Kernel (LLVM 17.0.6, main branch)"
           body: |
             ## 测试内核 - BakaSU 集成版
-            - 使用 BakaSU main 分支最新版本（ReSukiSU 已迁移至 BakaSU）
-            - 通过本地 setup.sh 脚本以 builtin 模式集成
+            - 使用 BakaSU main 分支最新版本（通过 curl 直接拉取 setup.sh）
+            - 通过官方 setup.sh 脚本以默认模式集成
             - 启用 KSU_MANUAL_HOOK + SUSFS 全套功能
             - LOCALVERSION 已自定义为 -edwin-star-260927-qgqi
-            - 已尝试强制修改内核驱动版本号为 35203
             - 已切换回官方 Clang 17.0.6 工具链，编译更稳定
             - 刷机有风险，请备份原内核
           files: ${{ env.DEVICE_CODENAME }}-BakaSU-*.zip
