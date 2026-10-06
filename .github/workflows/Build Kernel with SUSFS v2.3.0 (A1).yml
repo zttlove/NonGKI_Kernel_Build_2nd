@@ -93,7 +93,7 @@ jobs:
           if [ -f "resukisu/kernel/setup.sh" ]; then
             echo "本地 BakaSU 版本 commit: $(cd resukisu && git log --oneline -1)"
             echo "本地 setup.sh 路径: $(readlink -f resukisu/kernel/setup.sh)"
-            bash resukisu/kernel/setup.sh builtin
+            bash resukisu/kernel/setup.sh
           else
             echo "::error::未找到本地 resukisu/kernel/setup.sh，无法集成"
             echo "当前目录内容："
