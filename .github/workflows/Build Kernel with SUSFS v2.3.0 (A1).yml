@@ -80,12 +80,19 @@ jobs:
             echo "ℹ️ seccomp_types.h 已存在，跳过"
           fi
 
+          echo "=== 删除内核源码中自带的旧版 KernelSU/ReSukiSU 目录 ==="
+          rm -rf KernelSU
+          rm -rf drivers/kernelsu
+          rm -rf drivers/KernelSU
+          echo "✅ 旧版目录已清理干净"
+
           echo "=== 使用 curl 方式集成 BakaSU ==="
           curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/main/kernel/setup.sh" | bash
 
           echo "=== 检查集成结果 ==="
           if [ -d "drivers/kernelsu" ]; then
             echo "✅ drivers/kernelsu 目录已存在"
+            echo "软链接指向：$(readlink -f drivers/kernelsu)"
           else
             echo "::error::集成失败，drivers/kernelsu 目录不存在"
             exit 1
@@ -290,6 +297,7 @@ jobs:
             - 通过官方 setup.sh 脚本以默认模式集成
             - 启用 KSU_MANUAL_HOOK + SUSFS 全套功能
             - LOCALVERSION 已自定义为 -edwin-star-260927-qgqi
+            - 已清理内核源码中自带的旧版 KernelSU 目录
             - 已切换回官方 Clang 17.0.6 工具链，编译更稳定
             - 刷机有风险，请备份原内核
           files: ${{ env.DEVICE_CODENAME }}-BakaSU-*.zip
