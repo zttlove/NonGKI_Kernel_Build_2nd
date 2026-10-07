@@ -199,12 +199,11 @@ jobs:
                  CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
           echo "=== 开始编译内核（实时输出，显示所有警告，全速执行） ==="
-          echo "=== 警告将全部显示，但不影响编译（-Wno-error） ==="
           echo "=== 栈帧警告限制已放宽为 131072 ==="
           echo "=== 并行度 -j$(nproc)（全速） ==="
 
           make -j$(nproc) O=${{ env.OUTPUT_DIR }} \
-               KCFLAGS="-Wno-error -Wframe-larger-than=131072" \
+               KCFLAGS="-Wno-error -Wframe-larger-than=131072 -Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-array-parameter -Wno-declaration-after-statement -Wno-sometimes-uninitialized" \
                HOSTCFLAGS="" \
                2>&1 | tee build.log
           BUILD_STATUS=${PIPESTATUS[0]}
@@ -316,6 +315,7 @@ jobs:
             - 已添加 ksu_selinux_status_lock 定义修复链接错误
             - 已切换回官方 Clang 17.0.6 工具链，编译更稳定
             - 全速并行编译（-j$(nproc)）
+            - 已加入多种警告禁用选项以保持日志干净
             - 刷机有风险，请备份原内核
           files: ${{ env.DEVICE_CODENAME }}-BakaSU-*.zip
         env:
