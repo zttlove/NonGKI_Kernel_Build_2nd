@@ -198,12 +198,12 @@ jobs:
           export LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- \
                  CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
-          echo "=== 开始编译内核（实时输出，显示所有警告） ==="
+          echo "=== 开始编译内核（实时输出，显示所有警告，全速执行） ==="
           echo "=== 警告将全部显示，但不影响编译（-Wno-error） ==="
           echo "=== 栈帧警告限制已放宽为 131072 ==="
-          echo "=== 并行度 -j8 ==="
+          echo "=== 并行度 -j$(nproc)（全速） ==="
 
-          make -j8 O=${{ env.OUTPUT_DIR }} \
+          make -j$(nproc) O=${{ env.OUTPUT_DIR }} \
                KCFLAGS="-Wno-error -Wframe-larger-than=131072" \
                HOSTCFLAGS="" \
                2>&1 | tee build.log
@@ -315,6 +315,7 @@ jobs:
             - 已清理内核源码中自带的旧版 KernelSU 目录
             - 已添加 ksu_selinux_status_lock 定义修复链接错误
             - 已切换回官方 Clang 17.0.6 工具链，编译更稳定
+            - 全速并行编译（-j$(nproc)）
             - 刷机有风险，请备份原内核
           files: ${{ env.DEVICE_CODENAME }}-BakaSU-*.zip
         env:
