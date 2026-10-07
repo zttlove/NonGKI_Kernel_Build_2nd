@@ -80,25 +80,6 @@ jobs:
             echo "ℹ️ seccomp_types.h 已存在，跳过"
           fi
 
-          echo "=== 修复 ksu_selinux_status_lock 未定义问题 ==="
-          KSU_SELINUX_FILE="drivers/kernelsu/selinux/selinux.c"
-          if [ -f "$KSU_SELINUX_FILE" ]; then
-            if ! grep -q "DEFINE_SPINLOCK(ksu_selinux_status_lock)" "$KSU_SELINUX_FILE"; then
-              echo "DEFINE_SPINLOCK(ksu_selinux_status_lock);" >> "$KSU_SELINUX_FILE"
-              echo "✅ 已添加 ksu_selinux_status_lock 定义"
-            else
-              echo "ℹ️ ksu_selinux_status_lock 已存在，跳过"
-            fi
-          else
-              echo "⚠️ 未找到 $KSU_SELINUX_FILE，尝试查找其他位置"
-              find drivers/kernelsu -name "*.c" -exec grep -l "ksu_selinux_status_lock" {} \; | while read f; do
-          if ! grep -q "DEFINE_SPINLOCK(ksu_selinux_status_lock)" "$f"; then
-            echo "DEFINE_SPINLOCK(ksu_selinux_status_lock);" >> "$f"
-            echo "✅ 已在 $f 中添加定义"
-          fi
-            done
-          fi
-
           echo "=== 删除内核源码中自带的旧版 KernelSU/ReSukiSU 目录 ==="
           rm -rf KernelSU
           rm -rf drivers/kernelsu
@@ -115,6 +96,25 @@ jobs:
           else
             echo "::error::集成失败，drivers/kernelsu 目录不存在"
             exit 1
+          fi
+
+          echo "=== 修复 ksu_selinux_status_lock 未定义问题（在集成后执行） ==="
+          KSU_SELINUX_FILE="drivers/kernelsu/selinux/selinux.c"
+          if [ -f "$KSU_SELINUX_FILE" ]; then
+            if ! grep -q "DEFINE_SPINLOCK(ksu_selinux_status_lock)" "$KSU_SELINUX_FILE"; then
+              echo "DEFINE_SPINLOCK(ksu_selinux_status_lock);" >> "$KSU_SELINUX_FILE"
+              echo "✅ 已添加 ksu_selinux_status_lock 定义"
+            else
+              echo "ℹ️ ksu_selinux_status_lock 已存在，跳过"
+            fi
+          else
+            echo "⚠️ 未找到 $KSU_SELINUX_FILE，尝试查找其他位置"
+            find drivers/kernelsu -name "*.c" -exec grep -l "ksu_selinux_status_lock" {} \; | while read f; do
+              if ! grep -q "DEFINE_SPINLOCK(ksu_selinux_status_lock)" "$f"; then
+                echo "DEFINE_SPINLOCK(ksu_selinux_status_lock);" >> "$f"
+                echo "✅ 已在 $f 中添加定义"
+              fi
+            done
           fi
 
           echo "正在清空 ccache 缓存..."
@@ -317,6 +317,7 @@ jobs:
             - 启用 KSU_MANUAL_HOOK + SUSFS 全套功能
             - LOCALVERSION 已自定义为 -edwin-star-260927-qgqi
             - 已清理内核源码中自带的旧版 KernelSU 目录
+            - 已添加 ksu_selinux_status_lock 定义修复链接错误
             - 已切换回官方 Clang 17.0.6 工具链，编译更稳定
             - 刷机有风险，请备份原内核
           files: ${{ env.DEVICE_CODENAME }}-BakaSU-*.zip
