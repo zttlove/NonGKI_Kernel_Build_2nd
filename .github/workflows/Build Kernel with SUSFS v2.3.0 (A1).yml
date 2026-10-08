@@ -202,12 +202,8 @@ jobs:
           echo "=== 栈帧警告限制已放宽为 131072 ==="
           echo "=== 并行度 -j$(nproc)（全速） ==="
 
-          make -j$(nproc) O=${{ env.OUTPUT_DIR }} \
-          KCFLAGS="-Wno-error -Wframe-larger-than=131072 -Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-array-parameter -Wno-declaration-after-statement -Wno-sometimes-uninitialized -Wno-unused-variable" \
-          HOSTCFLAGS="" \
-          2>&1 | tee build.log
-          BUILD_STATUS=${PIPESTATUS[0]}
-
+          KCFLAGS="-Wno-error -Wframe-larger-than=131072 -Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-array-parameter -Wno-declaration-after-statement -Wno-sometimes-uninitialized -Wno-unused-variable -Wno-misleading-indentation -Wno-fortify-source"
+          
           if [ $BUILD_STATUS -ne 0 ]; then
             echo "::error::编译失败，退出码 $BUILD_STATUS"
             exit 1
