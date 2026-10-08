@@ -166,6 +166,19 @@ jobs:
             echo "ℹ️ 未找到 techpack/bootinfo/Makefile，跳过"
           fi
 
+          echo "=== 为 dwc3 子目录追加 -Wno-unused-label ==="
+          DWC3_MAKEFILE="drivers/usb/dwc3/Makefile"
+          if [ -f "$DWC3_MAKEFILE" ]; then
+            if ! grep -q "Wno-unused-label" "$DWC3_MAKEFILE"; then
+              echo "ccflags-y += -Wno-unused-label" >> "$DWC3_MAKEFILE"
+              echo "✅ 已为 drivers/usb/dwc3 Makefile 追加 -Wno-unused-label"
+            else
+              echo "ℹ️ drivers/usb/dwc3 Makefile 已包含该选项，跳过"
+            fi
+          else
+            echo "ℹ️ 未找到 drivers/usb/dwc3/Makefile，跳过"
+          fi
+
           echo "正在彻底清理残留文件..."
           rm -rf ${{ env.OUTPUT_DIR }}
           rm -f .config
@@ -242,7 +255,7 @@ jobs:
           echo "=== 并行度 -j$(nproc)（全速） ==="
 
           make -j$(nproc) O=${{ env.OUTPUT_DIR }} \
-               KCFLAGS="-Wno-error -Wframe-larger-than=131072 -Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-array-parameter -Wno-declaration-after-statement -Wno-sometimes-uninitialized -Wno-unused-variable -Wno-misleading-indentation -Wno-fortify-source -Wno-macro-redefined -Wno-unused-result" \
+               KCFLAGS="-Wno-error -Wframe-larger-than=131072 -Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-array-parameter -Wno-declaration-after-statement -Wno-sometimes-uninitialized -Wno-unused-variable -Wno-misleading-indentation -Wno-fortify-source -Wno-macro-redefined -Wno-unused-result -Wno-unused-label" \
                HOSTCFLAGS="" \
                2>&1 | tee build.log
           BUILD_STATUS=${PIPESTATUS[0]}
