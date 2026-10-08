@@ -2,14 +2,31 @@ name: Build Kernel with BakaSU (perfect)
 
 on:
   workflow_dispatch:
+    inputs:
+      device:
+        description: '设备代号 (star / mars)'
+        required: true
+        default: 'star'
+        type: choice
+        options:
+          - star
+          - mars
+      bakasu_ref:
+        description: 'BakaSU 分支或标签'
+        required: false
+        default: 'main'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   TZ: Asia/Shanghai
-  DEVICE_CODENAME: "star"
+  DEVICE_CODENAME: ${{ github.event.inputs.device || 'star' }}
   KERNEL_ARCH: "arm64"
   KERNEL_REPO: "zttlove/android_kernel_xiaomi_sm8350-hyperos"
   KERNEL_BRANCH: "dynamic"
-  DEFCONFIG_NAME: "vendor/star_defconfig"
+  DEFCONFIG_NAME: "vendor/${{ github.event.inputs.device || 'star' }}_defconfig"
   OUTPUT_DIR: "out"
   CLANG_DIR: "${{ github.workspace }}/clang"
   CCACHE_DIR: "${{ github.workspace }}/.ccache"
@@ -18,6 +35,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-22.04
+    timeout-minutes: 60
     steps:
 
       - name: Checkout Kernel Source
@@ -52,7 +70,15 @@ jobs:
             echo "✅ libtinfo.so.5 修复成功！"
           fi
 
+      - name: Cache Clang 17.0.6
+        id: cache-clang
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CLANG_DIR }}
+          key: clang-17.0.6-ubuntu-22.04
+
       - name: Download Clang 17.0.6 (Official Kernel Toolchain)
+        if: steps.cache-clang.outputs.cache-hit != 'true'
         run: |
           mkdir -p ${{ env.CLANG_DIR }}
           curl -L --retry 3 -o clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-22.04.tar.xz "https://github.com/llvm/llvm-project/releases/download/llvmorg-17.0.6/clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-22.04.tar.xz"
@@ -86,8 +112,8 @@ jobs:
           rm -rf drivers/KernelSU
           echo "✅ 旧版目录已清理干净"
 
-          echo "=== 使用 curl 方式集成 BakaSU ==="
-          curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/main/kernel/setup.sh" | bash
+          echo "=== 使用 curl 方式集成 BakaSU (${{ github.event.inputs.bakasu_ref || 'main' }}) ==="
+          curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/${{ github.event.inputs.bakasu_ref || 'main' }}/kernel/setup.sh" | bash
 
           echo "=== 检查集成结果 ==="
           if [ -d "drivers/kernelsu" ]; then
@@ -116,6 +142,13 @@ jobs:
               fi
             done
           fi
+
+          echo "=== 导出 BakaSU 版本信息 ==="
+          echo "BAKASU_COMMIT=$(cd KernelSU && git rev-parse --short HEAD 2>/dev/null || echo 'unknown')" >> $GITHUB_ENV
+          BAKASU_VERSION=$(grep -r "versionCode" drivers/kernelsu/ 2>/dev/null | head -n1 | awk -F= '{print $2}' | tr -d ' ;' || echo 'unknown')
+          echo "BAKASU_VERSION=${BAKASU_VERSION}" >> $GITHUB_ENV
+          echo "✅ BakaSU 提交: ${{ env.BAKASU_COMMIT }}"
+          echo "✅ BakaSU 版本: ${{ env.BAKASU_VERSION }}"
 
           echo "正在清空 ccache 缓存..."
           ccache -C
@@ -252,9 +285,16 @@ jobs:
 
           echo "=== 开始编译内核（实时输出，显示所有警告，全速执行） ==="
           echo "=== 栈帧警告限制已放宽为 131072 ==="
-          echo "=== 并行度 -j$(nproc)（全速） ==="
 
-          make -j$(nproc) O=${{ env.OUTPUT_DIR }} \
+          MEM_GB=$(free -g | awk '/^Mem:/{print $2}')
+          if [ "$MEM_GB" -lt 8 ]; then
+            JOBS=4
+          else
+            JOBS=$(nproc)
+          fi
+          echo "=== 检测到内存 ${MEM_GB}GB，使用 -j${JOBS} ==="
+
+          make -j${JOBS} O=${{ env.OUTPUT_DIR }} \
                KCFLAGS="-Wno-error -Wframe-larger-than=131072 -Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-array-parameter -Wno-declaration-after-statement -Wno-sometimes-uninitialized -Wno-unused-variable -Wno-misleading-indentation -Wno-fortify-source -Wno-macro-redefined -Wno-unused-result -Wno-unused-label" \
                HOSTCFLAGS="" \
                2>&1 | tee build.log
@@ -332,6 +372,11 @@ jobs:
           cd $AK3_DIR
           zip -r9 "../${{ env.DEVICE_CODENAME }}-BakaSU-${TIME}.zip" ./*
           cd ..
+          
+          sha256sum "../${{ env.DEVICE_CODENAME }}-BakaSU-${TIME}.zip" > "../SHA256SUMS.txt"
+          echo "=== SHA256 校验值 ==="
+          cat ../SHA256SUMS.txt
+
           echo "zip_name=${{ env.DEVICE_CODENAME }}-BakaSU-${TIME}.zip" >> $GITHUB_OUTPUT
 
       # ============================================================
@@ -341,7 +386,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: kernel_bakasu
-          path: ${{ env.DEVICE_CODENAME }}-BakaSU-*.zip
+          path: |
+            ${{ env.DEVICE_CODENAME }}-BakaSU-*.zip
+            SHA256SUMS.txt
 
       - name: Upload build.log on failure
         if: failure()
@@ -359,14 +406,30 @@ jobs:
           name: "BakaSU Kernel (LLVM 17.0.6, main branch)"
           body: |
             ## 测试内核 - BakaSU 集成版
-            - 使用 BakaSU main 分支最新版本
-            - 启用 KSU_MANUAL_HOOK + SUSFS 全套功能
-            - Backport BPF (Kernel5.10)
+
+            ### 内核信息
+            - 内核版本：5.4.302
+            - 编译工具链：Clang 17.0.6 + LLD 17.0.6
+            - LOCALVERSION：`-edwin-star-260927-qgqi`
+            - BakaSU 提交：${{ env.BAKASU_COMMIT }}
+            - BakaSU 版本：${{ env.BAKASU_VERSION }}
+
+            ### 特性
+            - BakaSU main 分支最新代码
+            - KSU_MANUAL_HOOK + SUSFS v2.3.0 全套隐藏功能
+            - Backport BPF（源自 Kernel 5.10）
             - 启用 LTO (ThinLTO)
             - 启用 f2fs 文件系统优化
-            - 支持 HyperOS 4.0 Android 17
-            - 测试 Miui Android 13 及更高正常 
-            - 刷机有风险，请备份原内核
-          files: ${{ env.DEVICE_CODENAME }}-BakaSU-*.zip
+
+            ### 兼容性
+            - 支持 HyperOS 4.0 / Android 17
+            - MIUI Android 13 及以上测试正常
+
+            ### 刷机提示
+            - 刷机有风险，请务必先备份原 boot 分区
+            - 首次刷机后建议重启两次，让 SUSFS 初始化完成
+          files: |
+            ${{ env.DEVICE_CODENAME }}-BakaSU-*.zip
+            SHA256SUMS.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
