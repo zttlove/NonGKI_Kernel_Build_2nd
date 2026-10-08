@@ -1,4 +1,4 @@
-name: Build Kernel with BakaSU (Power Saving)
+name: Build Kernel with BakaSU (perfect)
 
 on:
   workflow_dispatch:
