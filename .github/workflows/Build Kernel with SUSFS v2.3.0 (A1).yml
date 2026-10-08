@@ -153,6 +153,19 @@ jobs:
             echo "ℹ️ 未找到 drivers/thermal/Makefile，跳过"
           fi
 
+          echo "=== 为 bootinfo 子目录追加 -Wno-unused-result ==="
+          BOOTINFO_MAKEFILE="techpack/bootinfo/Makefile"
+          if [ -f "$BOOTINFO_MAKEFILE" ]; then
+            if ! grep -q "Wno-unused-result" "$BOOTINFO_MAKEFILE"; then
+              echo "ccflags-y += -Wno-unused-result" >> "$BOOTINFO_MAKEFILE"
+              echo "✅ 已为 techpack/bootinfo Makefile 追加 -Wno-unused-result"
+            else
+              echo "ℹ️ techpack/bootinfo Makefile 已包含该选项，跳过"
+            fi
+          else
+            echo "ℹ️ 未找到 techpack/bootinfo/Makefile，跳过"
+          fi
+
           echo "正在彻底清理残留文件..."
           rm -rf ${{ env.OUTPUT_DIR }}
           rm -f .config
@@ -229,7 +242,7 @@ jobs:
           echo "=== 并行度 -j$(nproc)（全速） ==="
 
           make -j$(nproc) O=${{ env.OUTPUT_DIR }} \
-               KCFLAGS="-Wno-error -Wframe-larger-than=131072 -Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-array-parameter -Wno-declaration-after-statement -Wno-sometimes-uninitialized -Wno-unused-variable -Wno-misleading-indentation -Wno-fortify-source -Wno-macro-redefined" \
+               KCFLAGS="-Wno-error -Wframe-larger-than=131072 -Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-array-parameter -Wno-declaration-after-statement -Wno-sometimes-uninitialized -Wno-unused-variable -Wno-misleading-indentation -Wno-fortify-source -Wno-macro-redefined -Wno-unused-result" \
                HOSTCFLAGS="" \
                2>&1 | tee build.log
           BUILD_STATUS=${PIPESTATUS[0]}
