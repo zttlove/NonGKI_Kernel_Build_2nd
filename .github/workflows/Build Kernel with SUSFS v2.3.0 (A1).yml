@@ -140,6 +140,19 @@ jobs:
             echo "ℹ️ 未找到 drivers/soc/qcom/Makefile，跳过"
           fi
 
+          echo "=== 为 thermal 子目录追加 -Wno-fortify-source ==="
+          THERMAL_MAKEFILE="drivers/thermal/Makefile"
+          if [ -f "$THERMAL_MAKEFILE" ]; then
+            if ! grep -q "Wno-fortify-source" "$THERMAL_MAKEFILE"; then
+              echo "ccflags-y += -Wno-fortify-source" >> "$THERMAL_MAKEFILE"
+              echo "✅ 已为 drivers/thermal Makefile 追加 -Wno-fortify-source"
+            else
+              echo "ℹ️ drivers/thermal Makefile 已包含该选项，跳过"
+            fi
+          else
+            echo "ℹ️ 未找到 drivers/thermal/Makefile，跳过"
+          fi
+
           echo "正在彻底清理残留文件..."
           rm -rf ${{ env.OUTPUT_DIR }}
           rm -f .config
