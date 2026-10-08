@@ -360,8 +360,12 @@ jobs:
           body: |
             ## 测试内核 - BakaSU 集成版
             - 使用 BakaSU main 分支最新版本
-            - 通过官方 setup.sh 脚本以默认模式集成
             - 启用 KSU_MANUAL_HOOK + SUSFS 全套功能
+            - Backport BPF (Kernel5.10)
+            - 启用 LTO (ThinLTO)
+            - 启用 f2fs 文件系统优化
+            - 支持 HyperOS 4.0 Android 17
+            - 测试 Miui Android 13 及更高正常 
             - 刷机有风险，请备份原内核
           files: ${{ env.DEVICE_CODENAME }}-BakaSU-*.zip
         env:
