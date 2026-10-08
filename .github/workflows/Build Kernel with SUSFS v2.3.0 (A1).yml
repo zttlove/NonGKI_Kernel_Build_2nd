@@ -127,6 +127,19 @@ jobs:
             echo "✅ 已修复 focaltech_3680 Makefile 缩进"
           fi
 
+          echo "=== 为 msm_minidump 子目录追加 -Wno-unused-variable ==="
+          MINIDUMP_MAKEFILE="drivers/soc/qcom/Makefile"
+          if [ -f "$MINIDUMP_MAKEFILE" ]; then
+            if ! grep -q "Wno-unused-variable" "$MINIDUMP_MAKEFILE"; then
+              echo "ccflags-y += -Wno-unused-variable" >> "$MINIDUMP_MAKEFILE"
+              echo "✅ 已为 drivers/soc/qcom Makefile 追加 -Wno-unused-variable"
+            else
+              echo "ℹ️ drivers/soc/qcom Makefile 已包含该选项，跳过"
+            fi
+          else
+            echo "ℹ️ 未找到 drivers/soc/qcom/Makefile，跳过"
+          fi
+
           echo "正在彻底清理残留文件..."
           rm -rf ${{ env.OUTPUT_DIR }}
           rm -f .config
@@ -202,8 +215,12 @@ jobs:
           echo "=== 栈帧警告限制已放宽为 131072 ==="
           echo "=== 并行度 -j$(nproc)（全速） ==="
 
-          KCFLAGS="-Wno-error -Wframe-larger-than=131072 -Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-array-parameter -Wno-declaration-after-statement -Wno-sometimes-uninitialized -Wno-unused-variable -Wno-misleading-indentation -Wno-fortify-source"
-          
+          make -j$(nproc) O=${{ env.OUTPUT_DIR }} \
+               KCFLAGS="-Wno-error -Wframe-larger-than=131072 -Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-array-parameter -Wno-declaration-after-statement -Wno-sometimes-uninitialized -Wno-unused-variable -Wno-misleading-indentation -Wno-fortify-source -Wno-macro-redefined" \
+               HOSTCFLAGS="" \
+               2>&1 | tee build.log
+          BUILD_STATUS=${PIPESTATUS[0]}
+
           if [ $BUILD_STATUS -ne 0 ]; then
             echo "::error::编译失败，退出码 $BUILD_STATUS"
             exit 1
