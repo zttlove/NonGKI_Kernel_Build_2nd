@@ -359,15 +359,9 @@ jobs:
           name: "BakaSU Kernel (LLVM 17.0.6, main branch)"
           body: |
             ## 测试内核 - BakaSU 集成版
-            - 使用 BakaSU main 分支最新版本（通过 curl 直接拉取 setup.sh）
+            - 使用 BakaSU main 分支最新版本
             - 通过官方 setup.sh 脚本以默认模式集成
             - 启用 KSU_MANUAL_HOOK + SUSFS 全套功能
-            - LOCALVERSION 已自定义为 -edwin-star-260927-qgqi
-            - 已清理内核源码中自带的旧版 KernelSU 目录
-            - 已添加 ksu_selinux_status_lock 定义修复链接错误
-            - 已切换回官方 Clang 17.0.6 工具链，编译更稳定
-            - 全速并行编译（-j$(nproc)）
-            - 已加入多种警告禁用选项以保持日志干净
             - 刷机有风险，请备份原内核
           files: ${{ env.DEVICE_CODENAME }}-BakaSU-*.zip
         env:
