@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       device:
-        description: '设备代号 (star / mars)'
+        description: 'star'
         required: true
         default: 'star'
         type: choice
@@ -371,7 +371,6 @@ jobs:
           
           cd $AK3_DIR
           zip -r9 "../${{ env.DEVICE_CODENAME }}-BakaSU-${TIME}.zip" ./*
-          cd ..
           
           sha256sum "../${{ env.DEVICE_CODENAME }}-BakaSU-${TIME}.zip" > "../SHA256SUMS.txt"
           echo "=== SHA256 校验值 ==="
