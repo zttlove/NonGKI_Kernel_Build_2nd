@@ -11,7 +11,7 @@ on:
         options:
           - star
           - mars
-      bakasu_ref:
+      bakasu_ref:dev
         description: 'BakaSU 分支或标签'
         required: false
         default: 'main'
