@@ -11,10 +11,10 @@ on:
         options:
           - star
           - mars
-      bakasu_ref:dev
+      bakasu_ref:
         description: 'BakaSU 分支或标签'
         required: false
-        default: 'main'
+        default: 'dev'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
