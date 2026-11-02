@@ -132,6 +132,17 @@ jobs:
             echo "::warning::未找到 $PREINIT_H，跳过修改"
           fi
 
+          echo "=== 强制剔除 BakaSU preinit 模块，防止路径迷失导致编译中断 ==="
+          # 找到所有相关的 Makefile
+          KSU_MAKEFILE="drivers/kernelsu/Makefile"
+          if [ -f "$KSU_MAKEFILE" ]; then
+            # 注释掉 preinit 目录的编译
+            sed -i 's/^\(obj-.*preinit.*\)/# \1/' "$KSU_MAKEFILE"
+            # 强制把 CONFIG_KSU_PREINIT 置为 n（如果有的话）
+            sed -i 's/obj-\$(CONFIG_KSU_PREINIT)/# obj-$(CONFIG_KSU_PREINIT)/' "$KSU_MAKEFILE"
+            echo "✅ 已在 $KSU_MAKEFILE 中剔除 preinit"
+          fi
+
           echo "=== 精准注释 manual_hook_check.mk 中的报错行 ==="
           CHECK_FILES=$(find drivers/kernelsu -name "manual_hook_check.mk" 2>/dev/null)
           for CHECK_MK in $CHECK_FILES; do
@@ -225,6 +236,11 @@ jobs:
             --disable HEADERS_INSTALL \
             --set-val FRAME_WARN 131072 \
             --set-str LOCALVERSION "-edwin-hide-$(date +%m%d)"
+
+          # 确保 preinit 被关闭
+          if grep -q "CONFIG_KSU_PREINIT" ${{ env.OUTPUT_DIR }}/.config 2>/dev/null; then
+             scripts/config --file ${{ env.OUTPUT_DIR }}/.config --disable KSU_PREINIT
+          fi
 
           make O=${{ env.OUTPUT_DIR }} olddefconfig 2>&1 | tee olddefconfig.log
 
@@ -354,7 +370,7 @@ jobs:
             ## 测试内核 - BakaSU (仅保留 SELinux Hide)
             - 包含 BakaSU 核心 Root 功能和 SELinux Hide 隐藏
             - **已彻底移除 SUSFS 功能，以排查重启问题**
-            - 修复 preinit.h 的 void 返回值错误
+            - 剔除 preinit 模块，防止编译路径迷失
             - 注入安全加固：为锁操作增加空指针检查，降低崩溃概率
             - LOCALVERSION: `-edwin-hide-日期`
             - 刷机有风险，请备份原内核
