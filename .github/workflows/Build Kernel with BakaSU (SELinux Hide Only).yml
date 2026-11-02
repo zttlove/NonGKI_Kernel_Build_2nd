@@ -102,7 +102,6 @@ jobs:
 
           echo "=== 应用官方 Manual Hook 补丁 ==="
           
-          # 1. Hook fs/stat.c
           STAT_C="fs/stat.c"
           if [ -f "$STAT_C" ]; then
             sed -i '/SYSCALL_DEFINE4(newfstatat/i \
@@ -125,7 +124,6 @@ jobs:
           #endif' "$STAT_C"
           fi
 
-          # 2. Hook fs/exec.c
           EXEC_C="fs/exec.c"
           if [ -f "$EXEC_C" ]; then
             sed -i '/int do_execveat_common/i \
@@ -144,7 +142,6 @@ jobs:
           #endif' "$EXEC_C"
           fi
 
-          # 3. Hook fs/open.c
           OPEN_C="fs/open.c"
           if [ -f "$OPEN_C" ]; then
             sed -i '/SYSCALL_DEFINE3(faccessat,/i \
@@ -158,7 +155,6 @@ jobs:
           #endif' "$OPEN_C"
           fi
 
-          # 4. Hook kernel/reboot.c
           REBOOT_C="kernel/reboot.c"
           if [ -f "$REBOOT_C" ]; then
             sed -i '/SYSCALL_DEFINE4(reboot,/i \
@@ -171,7 +167,6 @@ jobs:
           #endif' "$REBOOT_C"
           fi
 
-          # 5. 导出 SELinux 静态符号
           SELINUXFS_C="security/selinux/selinuxfs.c"
           if [ -f "$SELINUXFS_C" ]; then
              sed -i 's/^static ssize_t (\*write_op\[\])/ssize_t (*write_op[])/' "$SELINUXFS_C"
@@ -191,17 +186,25 @@ jobs:
           echo "✅ 官方 Hook 补丁已全部应用"
 
           # ============================================================
-          # 物理删除 manual_hook_check.mk 自检拦截
+          # 暴力清除 preinit 及其相关工具
           # ============================================================
-          echo "=== 物理删除 manual_hook_check.mk 自检 ==="
-          # 这里使用 realpath 穿透软链接直接找到真实文件
           REAL_KSU_DIR=$(realpath drivers/kernelsu)
-          find "$REAL_KSU_DIR" -name "manual_hook_check.mk" -exec rm -f {} \;
-          echo "✅ 已从物理路径 $REAL_KSU_DIR 删除所有 manual_hook_check.mk"
           
-          # 并且在原来的位置建个假的占位，防止 make 找不到文件报错
+          echo "=== 物理删除 manual_hook_check.mk 及 preinit 目录 ==="
+          # 1. 删掉自检脚本
+          find "$REAL_KSU_DIR" -name "manual_hook_check.mk" -exec rm -f {} \;
           find "$REAL_KSU_DIR" -type d -name "tools" -exec touch {}/manual_hook_check.mk \;
-          echo "✅ 已创建空占位文件"
+          
+          # 2. 删掉 preinit_runner 及 preinit 模块
+          rm -rf "$REAL_KSU_DIR/tools/code_generation/preinit_runner"
+          rm -rf "$REAL_KSU_DIR/preinit"
+          echo "✅ 已物理删除 preinit 相关目录"
+
+          # 3. 在 Kbuild/Makefile 层面强行把 preinit 踢出去
+          find "$REAL_KSU_DIR" -name "Makefile" -o -name "Kbuild" | xargs sed -i '/preinit/d' || true
+          find "$REAL_KSU_DIR" -name "Kconfig" | xargs sed -i '/preinit/d' || true
+          
+          echo "✅ 已清理 Makefile 中的 preinit 引用"
 
           # ============================================================
           # 针对 SELinux Hide 的修复与安全加固
@@ -230,7 +233,6 @@ jobs:
           FOCALTECH_MAKEFILE="drivers/input/touchscreen/focaltech_3680/Makefile"
           if [ -f "$FOCALTECH_MAKEFILE" ]; then
             sed -i 's/^ \+/\t/' "$FOCALTECH_MAKEFILE"
-            echo "✅ 已修复 focaltech_3680 Makefile"
           fi
 
           echo "=== 清理并生成配置 ==="
@@ -369,7 +371,7 @@ jobs:
             ## 测试内核 - BakaSU (仅保留 SELinux Hide)
             - 包含 BakaSU 核心 Root 功能和 SELinux Hide 隐藏
             - **已彻底移除 SUSFS 功能，以排查重启问题**
-            - 物理删除自检脚本，强制通过 fstat64 拦截
+            - 物理删除 preinit_runner 目录及其在 Makefile 中的引用
             - 注入安全加固：为锁操作增加空指针检查，降低崩溃概率
             - LOCALVERSION: `-edwin-hide-日期`
             - 刷机有风险，请备份原内核
