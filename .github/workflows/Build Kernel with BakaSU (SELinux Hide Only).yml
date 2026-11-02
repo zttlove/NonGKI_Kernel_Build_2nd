@@ -83,11 +83,6 @@ jobs:
           export LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- \
                  CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
-          echo "=== 强制拉取最新版 BakaSU ==="
-          rm -rf BakaSU_src
-          git clone --depth=1 https://github.com/Baka-SU/BakaSU.git BakaSU_src
-          echo "BakaSU HEAD: $(cd BakaSU_src && git log --oneline -1)"
-
           echo "=== 手动创建 seccomp_types.h 以规避 grep 警告 ==="
           if [ ! -f "include/linux/seccomp_types.h" ]; then
             touch "include/linux/seccomp_types.h"
@@ -100,17 +95,9 @@ jobs:
           rm -rf drivers/KernelSU
           echo "✅ 旧版目录已清理干净"
 
-          echo "=== 手动建立软链接与构建配置 ==="
-          ln -sf ../BakaSU_src/kernel drivers/kernelsu
-          echo "✅ 软链接: $(readlink -f drivers/kernelsu)"
-
-          if ! grep -q "kernelsu" drivers/Makefile; then
-            printf "\nobj-\$(CONFIG_KSU) += kernelsu/\n" >> drivers/Makefile
-          fi
-
-          if ! grep -q 'source "drivers/kernelsu/Kconfig"' drivers/Kconfig; then
-            sed -i '/^endmenu/i\source "drivers/kernelsu/Kconfig"' drivers/Kconfig
-          fi
+          echo "=== 使用官方 setup.sh 自动注入 Manual Hook ==="
+          curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/main/kernel/setup.sh" | bash
+          echo "✅ setup.sh 执行完毕，Hook 已注入"
 
           # ============================================================
           # 针对 SELinux Hide 的非 GKI 修复与安全加固
@@ -151,30 +138,6 @@ jobs:
           sed -i 's/^\(\s*\)mutex_unlock(ksu_selinux_status_lock);/\1if (ksu_selinux_status_lock) mutex_unlock(ksu_selinux_status_lock);/' "$HIDE_FILE"
           
           echo "✅ 已清理 static 声明，注入全局定义，并增加空指针安全锁检查"
-          
-          # 5. 确保 selinux_hide.o 被编译
-          HIDE_DIR=$(dirname "$HIDE_FILE")
-          SELINUX_MK="$HIDE_DIR/Makefile"
-          if [ ! -f "$SELINUX_MK" ]; then
-            SEARCH_DIR="$HIDE_DIR"
-            while [ "$SEARCH_DIR" != "." ] && [ "$SEARCH_DIR" != "/" ] && [ "$SEARCH_DIR" != "$KSU_SRC_DIR" ]; do
-              if [ -f "$SEARCH_DIR/Makefile" ]; then
-                SELINUX_MK="$SEARCH_DIR/Makefile"
-                break
-              fi
-              SEARCH_DIR=$(dirname "$SEARCH_DIR")
-            done
-          fi
-          
-          if [ -n "$SELINUX_MK" ] && [ -f "$SELINUX_MK" ]; then
-            MK_DIR=$(dirname "$SELINUX_MK")
-            HIDE_REL=$(realpath --relative-to="$MK_DIR" "$HIDE_FILE")
-            HIDE_OBJ="${HIDE_REL%.c}.o"
-            if ! grep -q "$HIDE_OBJ" "$SELINUX_MK"; then
-              echo "obj-y += $HIDE_OBJ" >> "$SELINUX_MK"
-              echo "✅ 已强制 $HIDE_OBJ 编译到 $SELINUX_MK"
-            fi
-          fi
           # ============================================================
 
           echo "=== 清理 ccache 并修复源码编译警告 ==="
@@ -349,6 +312,7 @@ jobs:
             ## 测试内核 - BakaSU (仅保留 SELinux Hide)
             - 包含 BakaSU 核心 Root 功能和 SELinux Hide 隐藏
             - **已彻底移除 SUSFS 功能，以排查重启问题**
+            - 采用官方 setup.sh 注入 Manual Hook
             - 注入安全加固：为锁操作增加空指针检查，降低崩溃概率
             - LOCALVERSION: `-edwin-hide-日期`
             - 刷机有风险，请备份原内核
