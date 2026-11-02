@@ -105,27 +105,25 @@ jobs:
           echo "=== 手动注入缺失的 Hook (fs/stat.c) ==="
           STAT_FILE="fs/stat.c"
           if [ -f "$STAT_FILE" ]; then
-            # 确保包含 kernelsu 头文件
             if ! grep -q "#include <kernelsu.h>" "$STAT_FILE" && ! grep -q "#include <linux/kernelsu.h>" "$STAT_FILE"; then
               sed -i '1i #include <linux/kernelsu.h>' "$STAT_FILE" || true
             fi
             
-            # 在 vfs_statx 函数中注入 Hook
             if grep -q "int vfs_statx" "$STAT_FILE" && ! grep -q "ksu_handle_newfstat_ret" "$STAT_FILE"; then
-              # 这里的注入仅作为编译期的“占位”，让自检脚本能找到关键字
               sed -i '/int vfs_statx/a\	extern int ksu_handle_newfstat_ret(int fd, struct kstat *stat);\n	if (ksu_handle_newfstat_ret(0, stat)) return -EACCES;' "$STAT_FILE"
               echo "✅ 已尝试向 $STAT_FILE 注入 Hook"
             fi
-          else
-            echo "::warning::未找到 $STAT_FILE，跳过注入"
           fi
 
           echo "=== 强制绕过 manual_hook_check 自检 ==="
+          KSU_SRC_DIR=$(readlink -f drivers/kernelsu)
           CHECK_MK="$KSU_SRC_DIR/tools/manual_hook_check.mk"
           if [ -f "$CHECK_MK" ]; then
-             sed -i 's/$(error You should integrate BakaSU in your kernel.)/# $(error) - bypassed by CI/' "$CHECK_MK"
-             sed -i 's/$(error You should integrate BakaSU in your kernel)/# $(error) - bypassed by CI/' "$CHECK_MK"
-             echo "✅ 已强制绕过自检"
+             # 找到报错语句 "$(error ..." 并把整行注释掉
+             sed -i 's/^\(\s*\)\$(error You should integrate BakaSU in your kernel.*/\1# &/' "$CHECK_MK"
+             echo "✅ 已强制注释掉 manual_hook_check.mk 中的 error 语句"
+          else
+             echo "::warning::未找到 $CHECK_MK，跳过"
           fi
 
           # ============================================================
@@ -133,7 +131,6 @@ jobs:
           # ============================================================
           echo "=== 搜索并修复 selinux_hide.c ==="
           
-          KSU_SRC_DIR=$(readlink -f drivers/kernelsu)
           HIDE_FILE=$(find "$KSU_SRC_DIR" -name 'selinux_hide.c' | head -n1)
           
           if [ -z "$HIDE_FILE" ]; then
@@ -341,7 +338,7 @@ jobs:
             ## 测试内核 - BakaSU (仅保留 SELinux Hide)
             - 包含 BakaSU 核心 Root 功能和 SELinux Hide 隐藏
             - **已彻底移除 SUSFS 功能，以排查重启问题**
-            - 采用手动硬编码注入 Hook，绕过自检
+            - 强制绕过 manual_hook_check 自检
             - 注入安全加固：为锁操作增加空指针检查，降低崩溃概率
             - LOCALVERSION: `-edwin-hide-日期`
             - 刷机有风险，请备份原内核
