@@ -186,20 +186,25 @@ jobs:
           echo "✅ 官方 Hook 补丁已全部应用"
 
           # ============================================================
-          # 暴力清除 preinit 及其相关工具
+          # 物理绕过 manual_hook_check.mk 及 preinit 目录
           # ============================================================
           REAL_KSU_DIR=$(realpath drivers/kernelsu)
           
-          echo "=== 物理删除 manual_hook_check.mk 及 preinit 目录 ==="
-          # 1. 删掉自检脚本
+          echo "=== 物理绕过 manual_hook_check.mk 及 preinit 目录 ==="
+          
+          # 1. 删掉自检脚本，创建空文件占位
           find "$REAL_KSU_DIR" -name "manual_hook_check.mk" -exec rm -f {} \;
           find "$REAL_KSU_DIR" -type d -name "tools" -exec touch {}/manual_hook_check.mk \;
           
-          # 2. 删掉 preinit_runner 及 preinit 模块
-          rm -rf "$REAL_KSU_DIR/tools/code_generation/preinit_runner"
-          rm -rf "$REAL_KSU_DIR/preinit"
-          echo "✅ 已物理删除 preinit 相关目录"
-
+          # 2. 暴力清空 preinit_runner 目录里的内容，而不是删掉它
+          PREINIT_DIR="$REAL_KSU_DIR/tools/code_generation/preinit_runner"
+          if [ -d "$PREINIT_DIR" ]; then
+            rm -rf "$PREINIT_DIR"/*
+            touch "$PREINIT_DIR/preinit_runner.mk"
+            echo "# Disabled by CI" > "$PREINIT_DIR/preinit_runner.mk"
+            echo "✅ 已清空 preinit_runner 目录并创建空占位文件"
+          fi
+          
           # 3. 在 Kbuild/Makefile 层面强行把 preinit 踢出去
           find "$REAL_KSU_DIR" -name "Makefile" -o -name "Kbuild" | xargs sed -i '/preinit/d' || true
           find "$REAL_KSU_DIR" -name "Kconfig" | xargs sed -i '/preinit/d' || true
@@ -371,7 +376,7 @@ jobs:
             ## 测试内核 - BakaSU (仅保留 SELinux Hide)
             - 包含 BakaSU 核心 Root 功能和 SELinux Hide 隐藏
             - **已彻底移除 SUSFS 功能，以排查重启问题**
-            - 物理删除 preinit_runner 目录及其在 Makefile 中的引用
+            - 清空 preinit_runner 并创建空占位文件，绕过路径迷失报错
             - 注入安全加固：为锁操作增加空指针检查，降低崩溃概率
             - LOCALVERSION: `-edwin-hide-日期`
             - 刷机有风险，请备份原内核
