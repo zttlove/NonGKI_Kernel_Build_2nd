@@ -103,9 +103,25 @@ jobs:
           echo "✅ BakaSU 软链接和 Makefile 配置完成"
 
           echo "=== 手动注入缺失的 Hook (fs/stat.c) ==="
+          
+          # 1. 创建头文件软链接，解决找不到 'linux/kernelsu.h' 的问题
+          mkdir -p include/linux
+          KSU_HEADER_SRC="drivers/kernelsu/include/kernelsu.h"
+          if [ ! -f "$KSU_HEADER_SRC" ]; then
+            KSU_HEADER_SRC=$(find drivers/kernelsu -name "kernelsu.h" | head -n1)
+          fi
+          
+          if [ -n "$KSU_HEADER_SRC" ] && [ -f "$KSU_HEADER_SRC" ]; then
+            ln -sf "../../$KSU_HEADER_SRC" include/linux/kernelsu.h
+            echo "✅ 已创建软链接：include/linux/kernelsu.h -> $KSU_HEADER_SRC"
+          else
+            echo "::warning::未找到 kernelsu.h，跳过软链接"
+          fi
+
+          # 2. 注入 Hook 到 fs/stat.c
           STAT_FILE="fs/stat.c"
           if [ -f "$STAT_FILE" ]; then
-            if ! grep -q "#include <kernelsu.h>" "$STAT_FILE" && ! grep -q "#include <linux/kernelsu.h>" "$STAT_FILE"; then
+            if ! grep -q "#include <linux/kernelsu.h>" "$STAT_FILE"; then
               sed -i '1i #include <linux/kernelsu.h>' "$STAT_FILE" || true
             fi
             
@@ -131,14 +147,12 @@ jobs:
           echo "=== 彻底拔除 preinit_runner (解决路径迷失报错) ==="
           PREINIT_MK="drivers/kernelsu/tools/code_generation/preinit_runner/preinit_runner.mk"
           if [ -f "$PREINIT_MK" ]; then
-             # 直接清空该文件内容，让它变成死代码
              echo "# Disabled by CI" > "$PREINIT_MK"
              echo "✅ 已清空 $PREINIT_MK"
           fi
 
           KSU_MAKEFILE="drivers/kernelsu/Makefile"
           if [ -f "$KSU_MAKEFILE" ]; then
-            # 暴力注释掉所有包含 preinit 的编译规则
             sed -i 's/^\(.*preinit.*\)/# \1/' "$KSU_MAKEFILE"
             echo "✅ 已在 $KSU_MAKEFILE 中注释掉 preinit 规则"
           fi
@@ -365,7 +379,7 @@ jobs:
             ## 测试内核 - BakaSU (仅保留 SELinux Hide)
             - 包含 BakaSU 核心 Root 功能和 SELinux Hide 隐藏
             - **已彻底移除 SUSFS 功能，以排查重启问题**
-            - 彻底清空 preinit_runner 脚本，防止路径迷失导致中断
+            - 修复内核头文件找不到的问题
             - 注入安全加固：为锁操作增加空指针检查，降低崩溃概率
             - LOCALVERSION: `-edwin-hide-日期`
             - 刷机有风险，请备份原内核
