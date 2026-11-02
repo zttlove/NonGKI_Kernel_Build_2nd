@@ -100,68 +100,37 @@ jobs:
             sed -i '/^endmenu/i\source "drivers/kernelsu/Kconfig"' drivers/Kconfig
           fi
 
-          echo "=== 应用官方 Manual Hook 补丁 ==="
+          echo "=== 应用官方 Manual Hook 补丁 (使用 perl 精准注入) ==="
           
-          # 1. Hook fs/stat.c (只注入 newfstatat)
+          # 1. Hook fs/stat.c (只注入 newfstatat，放弃容易出错的 newfstat_ret)
           STAT_C="fs/stat.c"
           if [ -f "$STAT_C" ]; then
-            sed -i '/SYSCALL_DEFINE4(newfstatat/i \
-          #ifdef CONFIG_KSU_MANUAL_HOOK\
-          __attribute__((hot))\
-          extern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);\
-          #endif' "$STAT_C"
-            sed -i '/error = vfs_fstatat(dfd, filename, &stat, flag);/i \
-          #ifdef CONFIG_KSU_MANUAL_HOOK\
-            ksu_handle_stat(\&dfd, \&filename, \&flag);\
-          #endif' "$STAT_C"
-            
-            # 删掉之前可能注入的 newfstat_ret 代码
+            perl -0pi -e 's/(SYSCALL_DEFINE4\(newfstatat,.*?\{)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_stat(&dfd, &filename, &flag);\n#endif\n/s' "$STAT_C"
             sed -i '/ksu_handle_newfstat_ret/d' "$STAT_C"
           fi
 
+          # 2. Hook fs/exec.c (利用 perl 限定在 do_execveat_common 内部，避开全局匹配错误)
           EXEC_C="fs/exec.c"
           if [ -f "$EXEC_C" ]; then
-            sed -i '/int do_execveat_common/i \
-          #ifdef CONFIG_KSU_MANUAL_HOOK\
-          __attribute__((hot))\
-          extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags);\
-          extern int ksu_handle_post_execveat(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags, int *retval);\
-          #endif' "$EXEC_C"
-            sed -i '/if (IS_ERR(filename))/i \
-          #ifdef CONFIG_KSU_MANUAL_HOOK\
-            ksu_handle_execveat(\&fd, \&filename, \&argv, \&envp, \&flags);\
-          #endif' "$EXEC_C"
-            sed -i '/putname(filename);/i \
-          #ifdef CONFIG_KSU_MANUAL_HOOK\
-            ksu_handle_post_execveat(\&fd, \&filename, \&argv, \&envp, \&flags, \&retval);\
-          #endif' "$EXEC_C"
+            # 在 do_execveat_common 函数内部注入 execveat
+            perl -0pi -e 's/(static int do_execveat_common.*?struct files_struct \*displaced;.*?int retval;)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);\n#endif\n/s' "$EXEC_C"
+            # 在 do_execveat_common 的 out_ret 标签处注入 post_execveat
+            perl -0pi -e 's/(out_ret:.*?)(putname\(filename\);)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_post_execveat(&fd, &filename, &argv, &envp, &flags, &retval);\n#endif\n\t$2/s' "$EXEC_C"
           fi
 
+          # 3. Hook fs/open.c
           OPEN_C="fs/open.c"
           if [ -f "$OPEN_C" ]; then
-            sed -i '/SYSCALL_DEFINE3(faccessat,/i \
-          #ifdef CONFIG_KSU_MANUAL_HOOK\
-          __attribute__((hot))\
-          extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode, int *flags);\
-          #endif' "$OPEN_C"
-            sed -i '/return do_faccessat(dfd, filename, mode);/i \
-          #ifdef CONFIG_KSU_MANUAL_HOOK\
-            ksu_handle_faccessat(\&dfd, \&filename, \&mode, NULL);\
-          #endif' "$OPEN_C"
+            perl -0pi -e 's/(SYSCALL_DEFINE3\(faccessat,.*?\{)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_faccessat(&dfd, &filename, &mode, NULL);\n#endif\n/s' "$OPEN_C"
           fi
 
+          # 4. Hook kernel/reboot.c
           REBOOT_C="kernel/reboot.c"
           if [ -f "$REBOOT_C" ]; then
-            sed -i '/SYSCALL_DEFINE4(reboot,/i \
-          #ifdef CONFIG_KSU_MANUAL_HOOK\
-          extern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user **arg);\
-          #endif' "$REBOOT_C"
-            sed -i '/char buffer\[256\];/i \
-          #ifdef CONFIG_KSU_MANUAL_HOOK\
-            ksu_handle_sys_reboot(magic1, magic2, cmd, \&arg);\
-          #endif' "$REBOOT_C"
+            perl -0pi -e 's/(SYSCALL_DEFINE4\(reboot,.*?\{.*?char buffer\[256\];.*?int ret = 0;)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_sys_reboot(magic1, magic2, cmd, &arg);\n#endif\n/s' "$REBOOT_C"
           fi
 
+          # 5. 导出 SELinux 静态符号
           SELINUXFS_C="security/selinux/selinuxfs.c"
           if [ -f "$SELINUXFS_C" ]; then
              sed -i 's/^static ssize_t (\*write_op\[\])/ssize_t (*write_op[])/' "$SELINUXFS_C"
@@ -371,7 +340,7 @@ jobs:
             ## 测试内核 - BakaSU (仅保留 SELinux Hide)
             - 包含 BakaSU 核心 Root 功能和 SELinux Hide 隐藏
             - **已彻底移除 SUSFS 功能，以排查重启问题**
-            - 移除对 newfstat_ret 的注入，解决 fs/stat.c 的语法报错
+            - 使用 perl 精准注入 execve 钩子，解决变量未定义错误
             - 注入安全加固：为锁操作增加空指针检查，降低崩溃概率
             - LOCALVERSION: `-edwin-hide-日期`
             - 刷机有风险，请备份原内核
