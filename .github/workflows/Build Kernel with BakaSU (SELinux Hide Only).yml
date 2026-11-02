@@ -190,14 +190,14 @@ jobs:
 
           # 3. 为 preinit 加上伪装的空桩 (Shim)，防止因生成失败导致链接缺失
           cat > "$REAL_KSU_DIR/preinit/preinit_shim.c" << 'EOF'
-#include <linux/kernel.h>
-#include <linux/module.h>
-int ksu_preinit_init(void) { return 0; }
-void ksu_preinit_exit(void) {}
-int ksu_preinit_handle_execve_manual(void *a) { return 0; }
-void ksu_preinit_release(void) {}
-bool ksu_preinit_enabled_param = false;
-EOF
+          #include <linux/kernel.h>
+          #include <linux/module.h>
+          int ksu_preinit_init(void) { return 0; }
+          void ksu_preinit_exit(void) {}
+          int ksu_preinit_handle_execve_manual(void *a) { return 0; }
+          void ksu_preinit_release(void) {}
+          bool ksu_preinit_enabled_param = false;
+          EOF
           # 把 shim 加入编译列表
           echo "obj-y += preinit_shim.o" >> "$REAL_KSU_DIR/Makefile"
           echo "✅ 已注入 preinit 空实现桩文件"
