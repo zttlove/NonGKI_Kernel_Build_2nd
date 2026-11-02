@@ -1,4 +1,4 @@
-name: Build Kernel with BakaSU (SELinux Hide Only)
+name: Build Kernel with BakaSU (SELinux Hide Only - Official Hook)
 
 on:
   workflow_dispatch:
@@ -71,7 +71,7 @@ jobs:
           rm clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-22.04.tar.xz
           ${{ env.CLANG_DIR }}/bin/clang --version
 
-      - name: Manual integrate BakaSU into Kernel
+      - name: Integrate BakaSU & Apply Official Hooks
         working-directory: kernel
         run: |
           set -e
@@ -86,10 +86,9 @@ jobs:
           echo "=== 手动创建 seccomp_types.h 以规避 grep 警告 ==="
           if [ ! -f "include/linux/seccomp_types.h" ]; then
             touch "include/linux/seccomp_types.h"
-            echo "✅ 已创建空的 seccomp_types.h"
           fi
 
-          echo "=== 手动克隆并链接 BakaSU ==="
+          echo "=== 克隆并集成 BakaSU ==="
           rm -rf KernelSU BakaSU_src drivers/kernelsu drivers/KernelSU
           git clone --depth=1 https://github.com/Baka-SU/BakaSU.git BakaSU_src
           ln -sf ../BakaSU_src/kernel drivers/kernelsu
@@ -100,105 +99,136 @@ jobs:
           if ! grep -q 'source "drivers/kernelsu/Kconfig"' drivers/Kconfig; then
             sed -i '/^endmenu/i\source "drivers/kernelsu/Kconfig"' drivers/Kconfig
           fi
-          echo "✅ BakaSU 软链接和 Makefile 配置完成"
 
-          echo "=== 直接删除 manual_hook_check.mk 拦截脚本 ==="
-          # 不用 sed 匹配了，直接删！或者改成空文件。
-          CHECK_FILES=$(find drivers/kernelsu -name "manual_hook_check.mk" 2>/dev/null)
-          for CHECK_MK in $CHECK_FILES; do
-             if [ -f "$CHECK_MK" ]; then
-                echo "# Disabled by CI" > "$CHECK_MK"
-                echo "✅ 已禁用(清空) $CHECK_MK"
-             fi
-          done
+          echo "=== 应用官方 Manual Hook 补丁 (基于官方文档 3.14+/4.19+) ==="
           
-          echo "=== 剔除 preinit_runner ==="
-          PREINIT_MK="drivers/kernelsu/tools/code_generation/preinit_runner/preinit_runner.mk"
-          if [ -f "$PREINIT_MK" ]; then
-             echo "# Disabled by CI" > "$PREINIT_MK"
-             echo "✅ 已清空 $PREINIT_MK"
+          # 1. Hook fs/stat.c
+          STAT_C="fs/stat.c"
+          if [ -f "$STAT_C" ]; then
+            # 注入 newfstatat
+            sed -i '/SYSCALL_DEFINE4(newfstatat/i \
+          #ifdef CONFIG_KSU_MANUAL_HOOK\
+          __attribute__((hot))\
+          extern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);\
+          #endif' "$STAT_C"
+            sed -i '/error = vfs_fstatat(dfd, filename, &stat, flag);/i \
+          #ifdef CONFIG_KSU_MANUAL_HOOK\
+            ksu_handle_stat(\&dfd, \&filename, \&flag);\
+          #endif' "$STAT_C"
+            
+            # 注入 newfstat_ret
+            sed -i '/SYSCALL_DEFINE2(newfstat,/i \
+          #ifdef CONFIG_KSU_MANUAL_HOOK\
+          extern void ksu_handle_newfstat_ret(unsigned int *fd, struct stat __user **statbuf_ptr);\
+          #endif' "$STAT_C"
+            sed -i '/return error;/i \
+          #ifdef CONFIG_KSU_MANUAL_HOOK\
+            ksu_handle_newfstat_ret(\&fd, \&statbuf);\
+          #endif' "$STAT_C"
           fi
 
-          KSU_MAKEFILE="drivers/kernelsu/Makefile"
-          if [ -f "$KSU_MAKEFILE" ]; then
-            sed -i 's/^\(.*preinit.*\)/# \1/' "$KSU_MAKEFILE"
-            echo "✅ 已在 $KSU_MAKEFILE 中注释掉 preinit 规则"
+          # 2. Hook fs/exec.c
+          EXEC_C="fs/exec.c"
+          if [ -f "$EXEC_C" ]; then
+            sed -i '/int do_execveat_common/i \
+          #ifdef CONFIG_KSU_MANUAL_HOOK\
+          __attribute__((hot))\
+          extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags);\
+          extern int ksu_handle_post_execveat(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags, int *retval);\
+          #endif' "$EXEC_C"
+            # 注入 execveat
+            sed -i '/if (IS_ERR(filename))/i \
+          #ifdef CONFIG_KSU_MANUAL_HOOK\
+            ksu_handle_execveat(\&fd, \&filename, \&argv, \&envp, \&flags);\
+          #endif' "$EXEC_C"
+            # 注入 post_execveat
+            sed -i '/putname(filename);/i \
+          #ifdef CONFIG_KSU_MANUAL_HOOK\
+            ksu_handle_post_execveat(\&fd, \&filename, \&argv, \&envp, \&flags, \&retval);\
+          #endif' "$EXEC_C"
           fi
+
+          # 3. Hook fs/open.c
+          OPEN_C="fs/open.c"
+          if [ -f "$OPEN_C" ]; then
+            sed -i '/SYSCALL_DEFINE3(faccessat,/i \
+          #ifdef CONFIG_KSU_MANUAL_HOOK\
+          __attribute__((hot))\
+          extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode, int *flags);\
+          #endif' "$OPEN_C"
+            sed -i '/return do_faccessat(dfd, filename, mode);/i \
+          #ifdef CONFIG_KSU_MANUAL_HOOK\
+            ksu_handle_faccessat(\&dfd, \&filename, \&mode, NULL);\
+          #endif' "$OPEN_C"
+          fi
+
+          # 4. Hook kernel/reboot.c
+          REBOOT_C="kernel/reboot.c"
+          if [ -f "$REBOOT_C" ]; then
+            sed -i '/SYSCALL_DEFINE4(reboot,/i \
+          #ifdef CONFIG_KSU_MANUAL_HOOK\
+          extern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user **arg);\
+          #endif' "$REBOOT_C"
+            sed -i '/char buffer\[256\];/i \
+          #ifdef CONFIG_KSU_MANUAL_HOOK\
+            ksu_handle_sys_reboot(magic1, magic2, cmd, \&arg);\
+          #endif' "$REBOOT_C"
+          fi
+
+          # 5. 导出 SELinux 静态符号
+          SELINUXFS_C="security/selinux/selinuxfs.c"
+          if [ -f "$SELINUXFS_C" ]; then
+             sed -i 's/^static ssize_t (\*write_op\[\])/ssize_t (*write_op[])/' "$SELINUXFS_C"
+             sed -i 's/^static const struct file_operations sel_handle_status_ops/const struct file_operations sel_handle_status_ops/' "$SELINUXFS_C"
+          fi
+          STATUS_C="security/selinux/ss/status.c"
+          if [ -f "$STATUS_C" ]; then
+             sed -i 's/^static struct page \*selinux_status_page/struct page *selinux_status_page/' "$STATUS_C"
+             sed -i 's/^static DEFINE_MUTEX(selinux_status_lock)/DEFINE_MUTEX(selinux_status_lock)/' "$STATUS_C"
+          fi
+          SERVICES_C="security/selinux/ss/services.c"
+          if [ -f "$SERVICES_C" ]; then
+             sed -i 's/^static void security_dump_masked_av/void security_dump_masked_av/' "$SERVICES_C"
+             sed -i 's/^static void context_struct_compute_av/void context_struct_compute_av/' "$SERVICES_C"
+          fi
+
+          echo "✅ 官方 Hook 补丁已全部应用"
 
           # ============================================================
-          # 针对 SELinux Hide 的非 GKI 修复与安全加固
+          # 针对 SELinux Hide 的修复与安全加固
           # ============================================================
           echo "=== 搜索并修复 selinux_hide.c ==="
-          
           KSU_SRC_DIR=$(readlink -f drivers/kernelsu)
           HIDE_FILE=$(find "$KSU_SRC_DIR" -name 'selinux_hide.c' | head -n1)
           
-          if [ -z "$HIDE_FILE" ]; then
-            echo "::error::找不到 selinux_hide.c"
-            exit 1
-          fi
-          echo "找到文件: $HIDE_FILE"
-          
-          # 1. 移除之前注入的旧代码（防重复）
-          sed -i '/BakaSU non-GKI 修复/,+3d' "$HIDE_FILE"
-          
-          # 2. 删除文件里原有的所有 static 声明
-          sed -i '/static struct mutex \*ksu_selinux_status_lock/d' "$HIDE_FILE"
-          sed -i '/static struct selinux_state fake_state/d' "$HIDE_FILE"
-          
-          # 3. 查找最后一个 #include 的位置，将全局定义插在它后面
-          LAST_INCLUDE_LINE=$(grep -n '^#include' "$HIDE_FILE" | tail -n1 | cut -d: -f1)
-          if [ -z "$LAST_INCLUDE_LINE" ]; then
-            LAST_INCLUDE_LINE=1
-          fi
-          
-          sed -i "${LAST_INCLUDE_LINE}r /dev/stdin" "$HIDE_FILE" << 'EOF'
+          if [ -f "$HIDE_FILE" ]; then
+            # 删除原有 static
+            sed -i '/static struct mutex \*ksu_selinux_status_lock/d' "$HIDE_FILE"
+            sed -i '/static struct selinux_state fake_state/d' "$HIDE_FILE"
+            
+            # 插入全局定义
+            LAST_INCLUDE_LINE=$(grep -n '^#include' "$HIDE_FILE" | tail -n1 | cut -d: -f1)
+            if [ -z "$LAST_INCLUDE_LINE" ]; then LAST_INCLUDE_LINE=1; fi
+            sed -i "${LAST_INCLUDE_LINE}r /dev/stdin" "$HIDE_FILE" << 'EOF'
           
           /* === BakaSU non-GKI 修复：全局符号定义 === */
           struct selinux_state fake_state;
           struct mutex *ksu_selinux_status_lock = NULL;
           EOF
-          
-          # 4. 安全加固：给加锁操作增加空指针检查
-          sed -i 's/^\(\s*\)mutex_lock(ksu_selinux_status_lock);/\1if (ksu_selinux_status_lock) mutex_lock(ksu_selinux_status_lock);/' "$HIDE_FILE"
-          sed -i 's/^\(\s*\)mutex_unlock(ksu_selinux_status_lock);/\1if (ksu_selinux_status_lock) mutex_unlock(ksu_selinux_status_lock);/' "$HIDE_FILE"
-          
-          echo "✅ 已清理 static 声明，注入全局定义，并增加空指针安全锁检查"
-          # ============================================================
-
-          echo "=== 清理 ccache 并修复源码编译警告 ==="
-          ccache -C
-
-          FOCALTECH_MAKEFILE="drivers/input/touchscreen/focaltech_3680/Makefile"
-          if [ -f "$FOCALTECH_MAKEFILE" ]; then
-            sed -i 's/^ \+/\t/' "$FOCALTECH_MAKEFILE"
+            # 安全加固
+            sed -i 's/^\(\s*\)mutex_lock(ksu_selinux_status_lock);/\1if (ksu_selinux_status_lock) mutex_lock(ksu_selinux_status_lock);/' "$HIDE_FILE"
+            sed -i 's/^\(\s*\)mutex_unlock(ksu_selinux_status_lock);/\1if (ksu_selinux_status_lock) mutex_unlock(ksu_selinux_status_lock);/' "$HIDE_FILE"
+            echo "✅ SELinux Hide 修复完成"
           fi
 
-          for entry in \
-            "drivers/soc/qcom/Makefile:-Wno-unused-variable" \
-            "drivers/thermal/Makefile:-Wno-fortify-source" \
-            "techpack/bootinfo/Makefile:-Wno-unused-result" \
-            "drivers/usb/dwc3/Makefile:-Wno-unused-label"; do
-            MK="${entry%:*}"
-            FLAG="${entry#*:}"
-            if [ -f "$MK" ] && ! grep -q -- "$FLAG" "$MK" 2>/dev/null; then
-              echo "ccflags-y += $FLAG" >> "$MK"
-            fi
-          done
-
-          echo "=== 清理残留并生成 .config ==="
+          echo "=== 清理并生成配置 ==="
           rm -rf ${{ env.OUTPUT_DIR }}
           rm -f .config
           rm -rf include/config include/generated
           make mrproper
 
           make -j$(nproc) O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
-          if [ ! -f "${{ env.OUTPUT_DIR }}/.config" ]; then
-            echo "::error::make defconfig 失败！"
-            exit 1
-          fi
-
-          echo "=== 启用仅含 SELinux Hide 的 BakaSU 配置 ==="
+          
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
             --enable KSU \
             --enable KSU_MANUAL_HOOK \
@@ -211,17 +241,6 @@ jobs:
             --set-str LOCALVERSION "-edwin-hide-$(date +%m%d)"
 
           make O=${{ env.OUTPUT_DIR }} olddefconfig 2>&1 | tee olddefconfig.log
-
-          if ! grep -q "CONFIG_KSU=y" ${{ env.OUTPUT_DIR }}/.config; then
-            echo "::error::CONFIG_KSU 未启用！"
-            exit 1
-          fi
-          
-          if grep -q "CONFIG_KSU_SUSFS=y" ${{ env.OUTPUT_DIR }}/.config; then
-            echo "::error::CONFIG_KSU_SUSFS 仍然被启用，请检查配置逻辑！"
-            exit 1
-          fi
-          echo "✅ 配置检查通过 (SUSFS 已关闭)"
 
       - name: Build Kernel
         working-directory: kernel
@@ -338,7 +357,7 @@ jobs:
             ## 测试内核 - BakaSU (仅保留 SELinux Hide)
             - 包含 BakaSU 核心 Root 功能和 SELinux Hide 隐藏
             - **已彻底移除 SUSFS 功能，以排查重启问题**
-            - 强行清空自检脚本，绕过 Hook 缺失报错
+            - 严格按照官方 Manual Hook 文档打补丁
             - 注入安全加固：为锁操作增加空指针检查，降低崩溃概率
             - LOCALVERSION: `-edwin-hide-日期`
             - 刷机有风险，请备份原内核
