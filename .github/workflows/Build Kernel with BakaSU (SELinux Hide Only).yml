@@ -105,30 +105,37 @@ jobs:
           echo "=== 手动注入缺失的 Hook (fs/stat.c) ==="
           STAT_FILE="fs/stat.c"
           if [ -f "$STAT_FILE" ]; then
-            # 确保包含 kernelsu 头文件
             if ! grep -q "#include <kernelsu.h>" "$STAT_FILE" && ! grep -q "#include <linux/kernelsu.h>" "$STAT_FILE"; then
               sed -i '1i #include <linux/kernelsu.h>' "$STAT_FILE" || true
             fi
             
-            # 注入 newfstat_ret
             if grep -q "int vfs_statx" "$STAT_FILE" && ! grep -q "ksu_handle_newfstat_ret" "$STAT_FILE"; then
               sed -i '/int vfs_statx/a\	extern int ksu_handle_newfstat_ret(int fd, struct kstat *stat);\n	if (ksu_handle_newfstat_ret(0, stat)) return -EACCES;' "$STAT_FILE"
             fi
             
-            # 注入 fstat64_ret
             if ! grep -q "ksu_handle_fstat64_ret" "$STAT_FILE"; then
-              # 在 include 之后伪造一个声明，骗过检查
               sed -i '/#include <linux\/kernelsu.h>/a\	extern int ksu_handle_fstat64_ret(struct kstat *stat);' "$STAT_FILE"
             fi
             echo "✅ 已尝试向 $STAT_FILE 注入 Hook"
           fi
 
+          echo "=== 修复 preinit.h 的 void 返回值错误 ==="
+          PREINIT_H="drivers/kernelsu/preinit/preinit.h"
+          if [ -f "$PREINIT_H" ]; then
+            if grep -q "static inline void ksu_preinit_handle_execve_manual" "$PREINIT_H"; then
+              sed -i 's/static inline void ksu_preinit_handle_execve_manual/static inline bool ksu_preinit_handle_execve_manual/' "$PREINIT_H"
+              echo "✅ 已将 ksu_preinit_handle_execve_manual 的返回类型从 void 改为 bool"
+            else
+              echo "ℹ️ 未找到对应的 void 函数定义，跳过修改"
+            fi
+          else
+            echo "::warning::未找到 $PREINIT_H，跳过修改"
+          fi
+
           echo "=== 精准注释 manual_hook_check.mk 中的报错行 ==="
-          # 全盘搜索 manual_hook_check.mk
           CHECK_FILES=$(find drivers/kernelsu -name "manual_hook_check.mk" 2>/dev/null)
           for CHECK_MK in $CHECK_FILES; do
              if [ -f "$CHECK_MK" ]; then
-                # 只注释以 "$(error" 开头的行，保留其余逻辑
                 sed -i 's/^\(\s*\)\$(error/\1# $(error/' "$CHECK_MK"
                 echo "✅ 已注释 $CHECK_MK 中的 error 语句"
              fi
@@ -347,7 +354,7 @@ jobs:
             ## 测试内核 - BakaSU (仅保留 SELinux Hide)
             - 包含 BakaSU 核心 Root 功能和 SELinux Hide 隐藏
             - **已彻底移除 SUSFS 功能，以排查重启问题**
-            - 精准注释自检报错，保留编译结构
+            - 修复 preinit.h 的 void 返回值错误
             - 注入安全加固：为锁操作增加空指针检查，降低崩溃概率
             - LOCALVERSION: `-edwin-hide-日期`
             - 刷机有风险，请备份原内核
