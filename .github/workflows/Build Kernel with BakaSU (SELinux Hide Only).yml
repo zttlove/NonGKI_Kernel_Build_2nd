@@ -117,7 +117,6 @@ jobs:
           # 2. Hook fs/exec.c
           EXEC_C="fs/exec.c"
           if [ -f "$EXEC_C" ]; then
-            # 注入声明，使用 sed 在最匹配的 do_execveat_common 前插入
             sed -i '/static int do_execveat_common/i \
             #ifdef CONFIG_KSU_MANUAL_HOOK\
             __attribute__((hot))\
@@ -125,8 +124,6 @@ jobs:
             extern int ksu_handle_post_execveat(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags, int *retval);\
             #endif\
             ' "$EXEC_C"
-            
-            # 注入调用，用 perl 限定在函数体内
             perl -0pi -e 's/(static int\s+do_execveat_common\(.*?)(\tif\s*\(IS_ERR\(filename\)\))/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);\n#endif\n\n$2/s' "$EXEC_C"
             perl -0pi -e 's/(static int\s+do_execveat_common\(.*?)(\tputname\(filename\);)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_post_execveat(&fd, &filename, &argv, &envp, &flags, &retval);\n#endif\n$2/s' "$EXEC_C"
           fi
@@ -174,30 +171,36 @@ jobs:
           echo "✅ 官方 Hook 补丁已全部应用"
 
           # ============================================================
-          # 物理绕过 manual_hook_check.mk 及 preinit 目录
+          # 绕过自检脚本和 preinit 生成工具，但保留 preinit 目录编译
           # ============================================================
           REAL_KSU_DIR=$(realpath drivers/kernelsu)
           
-          echo "=== 物理绕过 manual_hook_check.mk 及 preinit 目录 ==="
+          echo "=== 绕过自检脚本和 preinit 生成工具 ==="
           
-          # 1. 删掉自检脚本，创建空文件占位
+          # 1. 删除 manual_hook_check.mk 自检
           find "$REAL_KSU_DIR" -name "manual_hook_check.mk" -exec rm -f {} \;
           find "$REAL_KSU_DIR" -type d -name "tools" -exec touch {}/manual_hook_check.mk \;
           
-          # 2. 暴力清空 preinit_runner 目录里的内容，而不是删掉它
-          PREINIT_DIR="$REAL_KSU_DIR/tools/code_generation/preinit_runner"
-          if [ -d "$PREINIT_DIR" ]; then
-            rm -rf "$PREINIT_DIR"/*
-            touch "$PREINIT_DIR/preinit_runner.mk"
-            echo "# Disabled by CI" > "$PREINIT_DIR/preinit_runner.mk"
-            echo "✅ 已清空 preinit_runner 目录并创建空占位文件"
+          # 2. 禁用 preinit_runner.mk 的代码生成（防止路径迷失中断编译）
+          PREINIT_RUNNER_MK="$REAL_KSU_DIR/tools/code_generation/preinit_runner/preinit_runner.mk"
+          if [ -f "$PREINIT_RUNNER_MK" ]; then
+             echo "# Disabled by CI" > "$PREINIT_RUNNER_MK"
+             echo "✅ 已禁用 preinit_runner.mk"
           fi
-          
-          # 3. 在 Kbuild/Makefile 层面强行把 preinit 踢出去
-          find "$REAL_KSU_DIR" -name "Makefile" -o -name "Kbuild" | xargs sed -i '/preinit/d' || true
-          find "$REAL_KSU_DIR" -name "Kconfig" | xargs sed -i '/preinit/d' || true
-          
-          echo "✅ 已清理 Makefile 中的 preinit 引用"
+
+          # 3. 为 preinit 加上伪装的空桩 (Shim)，防止因生成失败导致链接缺失
+          cat > "$REAL_KSU_DIR/preinit/preinit_shim.c" << 'EOF'
+#include <linux/kernel.h>
+#include <linux/module.h>
+int ksu_preinit_init(void) { return 0; }
+void ksu_preinit_exit(void) {}
+int ksu_preinit_handle_execve_manual(void *a) { return 0; }
+void ksu_preinit_release(void) {}
+bool ksu_preinit_enabled_param = false;
+EOF
+          # 把 shim 加入编译列表
+          echo "obj-y += preinit_shim.o" >> "$REAL_KSU_DIR/Makefile"
+          echo "✅ 已注入 preinit 空实现桩文件"
 
           # ============================================================
           # 针对 SELinux Hide 的修复与安全加固
@@ -364,7 +367,7 @@ jobs:
             ## 测试内核 - BakaSU (仅保留 SELinux Hide)
             - 包含 BakaSU 核心 Root 功能和 SELinux Hide 隐藏
             - **已彻底移除 SUSFS 功能，以排查重启问题**
-            - 使用 sed 和 perl 更精准地注入 execve 钩子声明
+            - 注入 preinit 空实现桩，解决未定义符号链接错误
             - 注入安全加固：为锁操作增加空指针检查，降低崩溃概率
             - LOCALVERSION: `-edwin-hide-日期`
             - 刷机有风险，请备份原内核
