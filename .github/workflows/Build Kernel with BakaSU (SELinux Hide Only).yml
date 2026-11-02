@@ -105,7 +105,6 @@ jobs:
           # 1. Hook fs/stat.c
           STAT_C="fs/stat.c"
           if [ -f "$STAT_C" ]; then
-            # 注入 newfstatat
             sed -i '/SYSCALL_DEFINE4(newfstatat/i \
           #ifdef CONFIG_KSU_MANUAL_HOOK\
           __attribute__((hot))\
@@ -116,7 +115,6 @@ jobs:
             ksu_handle_stat(\&dfd, \&filename, \&flag);\
           #endif' "$STAT_C"
             
-            # 注入 newfstat_ret
             sed -i '/SYSCALL_DEFINE2(newfstat,/i \
           #ifdef CONFIG_KSU_MANUAL_HOOK\
           extern void ksu_handle_newfstat_ret(unsigned int *fd, struct stat __user **statbuf_ptr);\
@@ -136,12 +134,10 @@ jobs:
           extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags);\
           extern int ksu_handle_post_execveat(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags, int *retval);\
           #endif' "$EXEC_C"
-            # 注入 execveat
             sed -i '/if (IS_ERR(filename))/i \
           #ifdef CONFIG_KSU_MANUAL_HOOK\
             ksu_handle_execveat(\&fd, \&filename, \&argv, \&envp, \&flags);\
           #endif' "$EXEC_C"
-            # 注入 post_execveat
             sed -i '/putname(filename);/i \
           #ifdef CONFIG_KSU_MANUAL_HOOK\
             ksu_handle_post_execveat(\&fd, \&filename, \&argv, \&envp, \&flags, \&retval);\
@@ -202,11 +198,9 @@ jobs:
           HIDE_FILE=$(find "$KSU_SRC_DIR" -name 'selinux_hide.c' | head -n1)
           
           if [ -f "$HIDE_FILE" ]; then
-            # 删除原有 static
             sed -i '/static struct mutex \*ksu_selinux_status_lock/d' "$HIDE_FILE"
             sed -i '/static struct selinux_state fake_state/d' "$HIDE_FILE"
             
-            # 插入全局定义
             LAST_INCLUDE_LINE=$(grep -n '^#include' "$HIDE_FILE" | tail -n1 | cut -d: -f1)
             if [ -z "$LAST_INCLUDE_LINE" ]; then LAST_INCLUDE_LINE=1; fi
             sed -i "${LAST_INCLUDE_LINE}r /dev/stdin" "$HIDE_FILE" << 'EOF'
@@ -215,10 +209,16 @@ jobs:
           struct selinux_state fake_state;
           struct mutex *ksu_selinux_status_lock = NULL;
           EOF
-            # 安全加固
             sed -i 's/^\(\s*\)mutex_lock(ksu_selinux_status_lock);/\1if (ksu_selinux_status_lock) mutex_lock(ksu_selinux_status_lock);/' "$HIDE_FILE"
             sed -i 's/^\(\s*\)mutex_unlock(ksu_selinux_status_lock);/\1if (ksu_selinux_status_lock) mutex_unlock(ksu_selinux_status_lock);/' "$HIDE_FILE"
             echo "✅ SELinux Hide 修复完成"
+          fi
+
+          echo "=== 修复 focaltech_3680 Makefile 缩进 ==="
+          FOCALTECH_MAKEFILE="drivers/input/touchscreen/focaltech_3680/Makefile"
+          if [ -f "$FOCALTECH_MAKEFILE" ]; then
+            sed -i 's/^ \+/\t/' "$FOCALTECH_MAKEFILE"
+            echo "✅ 已修复 focaltech_3680 Makefile"
           fi
 
           echo "=== 清理并生成配置 ==="
@@ -358,6 +358,7 @@ jobs:
             - 包含 BakaSU 核心 Root 功能和 SELinux Hide 隐藏
             - **已彻底移除 SUSFS 功能，以排查重启问题**
             - 严格按照官方 Manual Hook 文档打补丁
+            - 修复 focaltech 触摸屏驱动的 Makefile 缩进
             - 注入安全加固：为锁操作增加空指针检查，降低崩溃概率
             - LOCALVERSION: `-edwin-hide-日期`
             - 刷机有风险，请备份原内核
