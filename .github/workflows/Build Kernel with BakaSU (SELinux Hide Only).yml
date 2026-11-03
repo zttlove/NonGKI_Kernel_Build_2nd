@@ -101,7 +101,7 @@ jobs:
           fi
 
           echo "=== 应用官方 Manual Hook 补丁 (使用 sed 和 perl 精准注入) ==="
-          
+
           # 1. Hook fs/stat.c
           STAT_C="fs/stat.c"
           if [ -f "$STAT_C" ]; then
@@ -171,92 +171,110 @@ jobs:
           echo "✅ 官方 Hook 补丁已全部应用"
 
           # ============================================================
-          # 注入 preinit 空实现桩（Shim），并确保其被编译链接
+          # non-GKI preinit 符号：直接把定义追加到 core/init.c 末尾
           # ============================================================
           REAL_KSU_DIR=$(realpath drivers/kernelsu)
-          echo "=== 注入并注册 preinit 空实现桩 (Shim) ==="
+          echo "=== 处理 non-GKI preinit 符号（追加定义到 core/init.c）==="
 
           # 1. 清理自检脚本
-          find "$REAL_KSU_DIR" -name "manual_hook_check.mk" -exec rm -f {} \;
-          find "$REAL_KSU_DIR" -type d -name "tools" -exec touch {}/manual_hook_check.mk \;
+          find "$REAL_KSU_DIR" -name "manual_hook_check.mk" -exec rm -f {} \; 2>/dev/null || true
+          find "$REAL_KSU_DIR" -type d -name "tools" -exec touch {}/manual_hook_check.mk \; 2>/dev/null || true
 
-          # 2. 禁用 preinit_runner，防止与 shim 重复定义
+          # 2. 禁用 preinit_runner，防止它动态生成符号与我们冲突
           PREINIT_RUNNER_MK="$REAL_KSU_DIR/tools/code_generation/preinit_runner/preinit_runner.mk"
           if [ -f "$PREINIT_RUNNER_MK" ]; then
-             echo "# Disabled by CI" > "$PREINIT_RUNNER_MK"
+             echo "# Disabled by CI for non-GKI" > "$PREINIT_RUNNER_MK"
           fi
 
-          # 3. 创建 preinit_shim.c，显式导出所有需要的符号
-          cat > "$REAL_KSU_DIR/preinit_shim.c" << 'KSU_SHIM_EOF'
-          #include <linux/module.h>
-          #include <linux/kernel.h>
+          # 3. 把 shim 定义直接追加到 core/init.c（已被引用，必定被编译进 vmlinux.o）
+          CORE_INIT="$REAL_KSU_DIR/core/init.c"
+          if [ ! -f "$CORE_INIT" ]; then
+            echo "::error::找不到 $CORE_INIT"
+            exit 1
+          fi
+
+          # 幂等：若已注入则跳过
+          if grep -q "CI_NON_GKI_PREINIT_SHIM" "$CORE_INIT"; then
+            echo "⚠️ core/init.c 里已存在 shim，跳过"
+          else
+            cat >> "$CORE_INIT" << 'KSU_SHIM_EOF'
+
+          /* === CI_NON_GKI_PREINIT_SHIM: non-GKI preinit 空实现（保证链接通过）=== */
           #include <linux/export.h>
 
-          /* non-GKI 内核 preinit 空实现，保证链接通过 */
           int ksu_preinit_init(void)
           {
-           return 0;
+          	return 0;
           }
           EXPORT_SYMBOL(ksu_preinit_init);
+
           void ksu_preinit_exit(void)
           {
           }
           EXPORT_SYMBOL(ksu_preinit_exit);
+
           int ksu_preinit_handle_execve_manual(void *args)
           {
-          return 0;
+          	return 0;
           }
           EXPORT_SYMBOL(ksu_preinit_handle_execve_manual);
+
           void ksu_preinit_release(void)
           {
           }
           EXPORT_SYMBOL(ksu_preinit_release);
+
           bool ksu_preinit_enabled_param = false;
           EXPORT_SYMBOL(ksu_preinit_enabled_param);
+          /* === CI_NON_GKI_PREINIT_SHIM end === */
           KSU_SHIM_EOF
-
-          if [ ! -f "$REAL_KSU_DIR/preinit_shim.c" ]; then
-            echo "::error::preinit_shim.c 创建失败！"
-            exit 1
+            echo "✅ 已把 preinit shim 追加到 $CORE_INIT"
           fi
-          echo "✅ preinit_shim.c 已创建"
 
-          # 4. 精准修改 BakaSU 的 Makefile，把 shim 加入编译
-          KSU_MAKEFILE="$REAL_KSU_DIR/Makefile"
-          if [ ! -f "$KSU_MAKEFILE" ]; then
-            echo "::error::找不到 $KSU_MAKEFILE"
-            exit 1
-          fi
-          cp "$KSU_MAKEFILE" "${KSU_MAKEFILE}.bak"
-          # 先清掉旧的可能存在的手写行
-          sed -i '/preinit_shim\.o/d' "$KSU_MAKEFILE"
-          # 在文件第一行后插入
-          sed -i '1a obj-$(CONFIG_KSU) += preinit_shim.o' "$KSU_MAKEFILE"
-
-          if grep -q "preinit_shim.o" "$KSU_MAKEFILE"; then
-            echo "✅ 已把 preinit_shim.o 写入 $KSU_MAKEFILE"
-            head -n 5 "$KSU_MAKEFILE"
+          # 4. 验证
+          if grep -q "ksu_preinit_init" "$CORE_INIT"; then
+            echo "✅ 验证：core/init.c 已包含 ksu_preinit_init 定义"
           else
-            echo "::error::Makefile 修改失败！"
+            echo "::error::core/init.c 注入失败！"
             exit 1
           fi
 
-          echo "✅ preinit shim 已就绪"
+          # 5. 保险：再写一份独立 shim 文件 + 加入 kernelsu Makefile（万一有其它 .o 单独引用）
+          cat > "$REAL_KSU_DIR/preinit_shim.c" << 'KSU_SHIM_FILE_EOF'
+          #include <linux/module.h>
+          #include <linux/kernel.h>
+          #include <linux/export.h>
+
+          /* 冗余保险：与 core/init.c 中定义完全一致的弱符号，避免重复定义冲突 */
+          __attribute__((weak)) int ksu_preinit_init(void) { return 0; }
+          __attribute__((weak)) void ksu_preinit_exit(void) {}
+          __attribute__((weak)) int ksu_preinit_handle_execve_manual(void *args) { return 0; }
+          __attribute__((weak)) void ksu_preinit_release(void) {}
+          __attribute__((weak)) bool ksu_preinit_enabled_param = false;
+          KSU_SHIM_FILE_EOF
+
+          KSU_MAKEFILE="$REAL_KSU_DIR/Makefile"
+          if [ -f "$KSU_MAKEFILE" ]; then
+            sed -i '/preinit_shim\.o/d' "$KSU_MAKEFILE"
+            sed -i '1a obj-$(CONFIG_KSU) += preinit_shim.o' "$KSU_MAKEFILE"
+          fi
+
+          echo "✅ preinit shim 全部就绪"
 
           # ============================================================
           # 针对 SELinux Hide 的修复与安全加固
           # ============================================================
           echo "=== 搜索并修复 selinux_hide.c ==="
           HIDE_FILE=$(find "$REAL_KSU_DIR" -name 'selinux_hide.c' | head -n1)
-          
+
           if [ -f "$HIDE_FILE" ]; then
             sed -i '/static struct mutex \*ksu_selinux_status_lock/d' "$HIDE_FILE"
             sed -i '/static struct selinux_state fake_state/d' "$HIDE_FILE"
-            
+
             LAST_INCLUDE_LINE=$(grep -n '^#include' "$HIDE_FILE" | tail -n1 | cut -d: -f1)
             if [ -z "$LAST_INCLUDE_LINE" ]; then LAST_INCLUDE_LINE=1; fi
             sed -i "${LAST_INCLUDE_LINE}r /dev/stdin" "$HIDE_FILE" << 'EOF'
-          
+
           /* === BakaSU non-GKI 修复：全局符号定义 === */
           struct selinux_state fake_state;
           struct mutex *ksu_selinux_status_lock = NULL;
@@ -279,7 +297,7 @@ jobs:
           make mrproper
 
           make -j$(nproc) O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
-          
+
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
             --enable KSU \
             --enable KSU_MANUAL_HOOK \
@@ -287,6 +305,8 @@ jobs:
             --enable KSU_COMPAT_HAS_SELINUX_STATE \
             --enable KSU_COMPAT_HAS_KVMALLOC \
             --disable KSU_SUSFS \
+            --disable KSU_PREINIT \
+            --disable KSU_PREINIT_HANDLE_EXECVE \
             --disable HEADERS_INSTALL \
             --set-val FRAME_WARN 131072 \
             --set-str LOCALVERSION "-edwin-hide-$(date +%m%d)"
@@ -334,12 +354,12 @@ jobs:
           TIME=$(date +"%Y.%m.%d-%H%M")
           AK3_DIR="AnyKernel3"
           IMG_PATH="${{ env.KERNEL_DIR }}/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image"
-          
+
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git $AK3_DIR
-          
+
           gzip -9 -c "$IMG_PATH" > "$AK3_DIR/Image.gz"
           ls -lh "$AK3_DIR/Image.gz"
-          
+
           printf '%s\n' \
             '#!/sbin/sh' \
             '' \
@@ -376,9 +396,9 @@ jobs:
             'split_boot;' \
             'flash_boot;' \
             > "$AK3_DIR/anykernel.sh"
-          
+
           chmod +x "$AK3_DIR/anykernel.sh"
-          
+
           cd $AK3_DIR
           zip -r9 "../${{ env.DEVICE_CODENAME }}-BakaSU-HideOnly-${TIME}.zip" ./*
           cd ..
@@ -409,7 +429,7 @@ jobs:
             - 仅集成 BakaSU 原生 Root 功能与 SELinux Hide
             - 保留 BakaSU 官方 Manual Hook
             - 不包含 SUSFS（`--disable KSU_SUSFS`）
-            - 注入 preinit shim（EXPORT_SYMBOL 显式导出），解决 non-GKI 未定义符号
+            - non-GKI preinit shim 直接写入 core/init.c（weak 符号兜底），彻底解决 undefined symbol
             - 为 SELinux 锁操作增加空指针检查，降低崩溃概率
             - LOCALVERSION: `-edwin-hide-日期`
             - 刷机有风险，请备份原内核
