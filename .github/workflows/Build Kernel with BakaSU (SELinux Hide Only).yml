@@ -171,37 +171,77 @@ jobs:
           echo "✅ 官方 Hook 补丁已全部应用"
 
           # ============================================================
-          # 注入 preinit 空实现桩（Shim），解决 non-GKI 未定义符号
+          # 注入 preinit 空实现桩（Shim），并确保其被编译链接
           # ============================================================
           REAL_KSU_DIR=$(realpath drivers/kernelsu)
-          echo "=== 注入 preinit 空实现桩 (Shim) ==="
-          
-          # 1. 删除自检脚本
+          echo "=== 注入并注册 preinit 空实现桩 (Shim) ==="
+
+          # 1. 清理自检脚本
           find "$REAL_KSU_DIR" -name "manual_hook_check.mk" -exec rm -f {} \;
           find "$REAL_KSU_DIR" -type d -name "tools" -exec touch {}/manual_hook_check.mk \;
-          
-          # 2. 禁用 preinit_runner 以绕过错误路径中断
+
+          # 2. 禁用 preinit_runner，防止与 shim 重复定义
           PREINIT_RUNNER_MK="$REAL_KSU_DIR/tools/code_generation/preinit_runner/preinit_runner.mk"
           if [ -f "$PREINIT_RUNNER_MK" ]; then
              echo "# Disabled by CI" > "$PREINIT_RUNNER_MK"
           fi
 
-          # 3. 编写 preinit_shim.c 实现那些缺失的符号
-          cat > "$REAL_KSU_DIR/preinit_shim.c" << 'EOF'
+          # 3. 创建 preinit_shim.c，显式导出所有需要的符号
+          cat > "$REAL_KSU_DIR/preinit_shim.c" << 'KSU_SHIM_EOF'
           #include <linux/module.h>
           #include <linux/kernel.h>
-          /* 假实现：拦截所有 preinit 的调用，保证 non-GKI 内核链接通过 */
-          int ksu_preinit_init(void) { return 0; }
-          void ksu_preinit_exit(void) {}
-          int ksu_preinit_handle_execve_manual(void *args) { return 0; }
-          void ksu_preinit_release(void) {}
+          #include <linux/export.h>
+
+          /* non-GKI 内核 preinit 空实现，保证链接通过 */
+          int ksu_preinit_init(void)
+          {
+           return 0;
+          }
+          EXPORT_SYMBOL(ksu_preinit_init);
+          void ksu_preinit_exit(void)
+          {
+          }
+          EXPORT_SYMBOL(ksu_preinit_exit);
+          int ksu_preinit_handle_execve_manual(void *args)
+          {
+          return 0;
+          }
+          EXPORT_SYMBOL(ksu_preinit_handle_execve_manual);
+          void ksu_preinit_release(void)
+          {
+          }
+          EXPORT_SYMBOL(ksu_preinit_release);
           bool ksu_preinit_enabled_param = false;
-          EOF
-          # 将 shim 加入编译
-          if ! grep -q "preinit_shim.o" "$REAL_KSU_DIR/Makefile"; then
-            echo "obj-y += preinit_shim.o" >> "$REAL_KSU_DIR/Makefile"
+          EXPORT_SYMBOL(ksu_preinit_enabled_param);
+          KSU_SHIM_EOF
+
+          if [ ! -f "$REAL_KSU_DIR/preinit_shim.c" ]; then
+            echo "::error::preinit_shim.c 创建失败！"
+            exit 1
           fi
-          echo "✅ 已注入 preinit 空实现桩并加入编译"
+          echo "✅ preinit_shim.c 已创建"
+
+          # 4. 精准修改 BakaSU 的 Makefile，把 shim 加入编译
+          KSU_MAKEFILE="$REAL_KSU_DIR/Makefile"
+          if [ ! -f "$KSU_MAKEFILE" ]; then
+            echo "::error::找不到 $KSU_MAKEFILE"
+            exit 1
+          fi
+          cp "$KSU_MAKEFILE" "${KSU_MAKEFILE}.bak"
+          # 先清掉旧的可能存在的手写行
+          sed -i '/preinit_shim\.o/d' "$KSU_MAKEFILE"
+          # 在文件第一行后插入
+          sed -i '1a obj-$(CONFIG_KSU) += preinit_shim.o' "$KSU_MAKEFILE"
+
+          if grep -q "preinit_shim.o" "$KSU_MAKEFILE"; then
+            echo "✅ 已把 preinit_shim.o 写入 $KSU_MAKEFILE"
+            head -n 5 "$KSU_MAKEFILE"
+          else
+            echo "::error::Makefile 修改失败！"
+            exit 1
+          fi
+
+          echo "✅ preinit shim 已就绪"
 
           # ============================================================
           # 针对 SELinux Hide 的修复与安全加固
@@ -369,7 +409,7 @@ jobs:
             - 仅集成 BakaSU 原生 Root 功能与 SELinux Hide
             - 保留 BakaSU 官方 Manual Hook
             - 不包含 SUSFS（`--disable KSU_SUSFS`）
-            - 注入 preinit 空实现桩以解决 non-GKI 未定义符号
+            - 注入 preinit shim（EXPORT_SYMBOL 显式导出），解决 non-GKI 未定义符号
             - 为 SELinux 锁操作增加空指针检查，降低崩溃概率
             - LOCALVERSION: `-edwin-hide-日期`
             - 刷机有风险，请备份原内核
