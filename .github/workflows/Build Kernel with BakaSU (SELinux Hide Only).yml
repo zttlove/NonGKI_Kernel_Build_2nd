@@ -304,7 +304,7 @@ jobs:
             '#!/sbin/sh' \
             '' \
             '### AnyKernel3 Flashable Kernel Script' \
-            '## Adapted for Xiaomi Mi 11 Ultra (star) with BakaSU (Hide Only)' \
+            '## Adapted for Xiaomi Mi 11 Ultra (star) with BakaSU (Hide Only, No SUSFS)' \
             '' \
             "properties() { '" \
             'kernel.string=5.4.302-edwin-hide+ BakaSU for Xiaomi 11 Ultra' \
@@ -365,11 +365,12 @@ jobs:
           tag_name: bakasu_hideonly_${{ github.run_number }}
           name: "BakaSU Kernel (SELinux Hide Only, No SUSFS)"
           body: |
-            ## 测试内核 - BakaSU (仅保留 SELinux Hide)
-            - 包含 BakaSU 核心 Root 功能和 SELinux Hide 隐藏
-            - **已彻底移除 SUSFS 功能，以排查重启问题**
-            - 注入 preinit 空实现桩，解决未定义符号链接错误
-            - 注入安全加固：为锁操作增加空指针检查，降低崩溃概率
+            ## 测试内核 - BakaSU（仅 BakaSU，无 SUSFS）
+            - 仅集成 BakaSU 原生 Root 功能与 SELinux Hide
+            - 保留 BakaSU 官方 Manual Hook
+            - 不包含 SUSFS
+            - 注入 preinit 空实现桩以解决未定义符号
+            - 为 SELinux 锁操作增加空指针检查，降低崩溃概率
             - LOCALVERSION: `-edwin-hide-日期`
             - 刷机有风险，请备份原内核
           files: ${{ env.DEVICE_CODENAME }}-BakaSU-HideOnly-*.zip
