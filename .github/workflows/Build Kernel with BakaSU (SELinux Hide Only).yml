@@ -171,7 +171,7 @@ jobs:
           echo "✅ 官方 Hook 补丁已全部应用"
 
           # ============================================================
-          # 注入 preinit 空实现桩（Shim），解决未定义符号
+          # 注入 preinit 空实现桩（Shim），解决 non-GKI 未定义符号
           # ============================================================
           REAL_KSU_DIR=$(realpath drivers/kernelsu)
           echo "=== 注入 preinit 空实现桩 (Shim) ==="
@@ -190,7 +190,7 @@ jobs:
           cat > "$REAL_KSU_DIR/preinit_shim.c" << 'EOF'
           #include <linux/module.h>
           #include <linux/kernel.h>
-          /* 假实现：拦截所有 preinit 的调用 */
+          /* 假实现：拦截所有 preinit 的调用，保证 non-GKI 内核链接通过 */
           int ksu_preinit_init(void) { return 0; }
           void ksu_preinit_exit(void) {}
           int ksu_preinit_handle_execve_manual(void *args) { return 0; }
@@ -368,8 +368,8 @@ jobs:
             ## 测试内核 - BakaSU（仅 BakaSU，无 SUSFS）
             - 仅集成 BakaSU 原生 Root 功能与 SELinux Hide
             - 保留 BakaSU 官方 Manual Hook
-            - 不包含 SUSFS
-            - 注入 preinit 空实现桩以解决未定义符号
+            - 不包含 SUSFS（`--disable KSU_SUSFS`）
+            - 注入 preinit 空实现桩以解决 non-GKI 未定义符号
             - 为 SELinux 锁操作增加空指针检查，降低崩溃概率
             - LOCALVERSION: `-edwin-hide-日期`
             - 刷机有风险，请备份原内核
