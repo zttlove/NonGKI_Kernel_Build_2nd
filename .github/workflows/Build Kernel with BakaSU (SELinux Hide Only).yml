@@ -103,11 +103,11 @@ jobs:
           echo "=== 应用官方 Manual Hook 补丁 (使用 sed 和 perl 精准注入) ==="
 
           # ============================================================
-          # 1. 完整 Hook fs/stat.c（入口 + newfstat 返回值）
+          # 1. 完整 Hook fs/stat.c（入口 + 返回值，含 32 位兼容）
           # ============================================================
           STAT_C="fs/stat.c"
           if [ -f "$STAT_C" ]; then
-            # 1a. 在最后一个 #include 之后插入函数声明（幂等）
+            # 1a. 声明（放在最后一个 #include 之后）
             if ! grep -q "ksu_handle_newfstat_ret" "$STAT_C"; then
               LAST_INCLUDE_LINE=$(grep -n '^#include' "$STAT_C" | tail -n1 | cut -d: -f1)
               if [ -z "$LAST_INCLUDE_LINE" ]; then LAST_INCLUDE_LINE=1; fi
@@ -117,27 +117,46 @@ jobs:
           __attribute__((hot))
           extern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);
           extern void ksu_handle_newfstat_ret(unsigned int *fd, struct stat __user **statbuf_ptr);
+          #if defined(__ARCH_WANT_STAT64) || defined(__ARCH_WANT_COMPAT_STAT64)
+          extern void ksu_handle_fstat64_ret(unsigned long *fd, struct stat64 __user **statbuf_ptr);
+          #endif
           #endif
           STAT_DECL_EOF
-              echo "✅ fs/stat.c: 已插入 ksu_handle_stat / ksu_handle_newfstat_ret 声明"
+              echo "✅ fs/stat.c: 已插入函数声明（含 ksu_handle_fstat64_ret）"
             else
               echo "⚠️ fs/stat.c: 声明已存在，跳过"
             fi
 
-            # 1b. 在 newfstatat 入口调用 ksu_handle_stat（幂等）
+            # 1b. newfstatat 入口 -> ksu_handle_stat
             if ! grep -q "ksu_handle_stat(&dfd" "$STAT_C"; then
               perl -0pi -e 's/(SYSCALL_DEFINE4\(newfstatat,.*?\{)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_stat(\&dfd, \&filename, \&flag);\n#endif\n/s' "$STAT_C"
-              echo "✅ fs/stat.c: 已注入 ksu_handle_stat 调用"
+              echo "✅ fs/stat.c: 已注入 ksu_handle_stat (newfstatat)"
             else
-              echo "⚠️ fs/stat.c: ksu_handle_stat 调用已存在，跳过"
+              echo "⚠️ fs/stat.c: ksu_handle_stat (newfstatat) 已存在"
             fi
 
-            # 1c. 在 newfstat 返回前调用 ksu_handle_newfstat_ret（幂等）
+            # 1c. newfstat 返回值 -> ksu_handle_newfstat_ret
             if ! grep -q "ksu_handle_newfstat_ret(&fd" "$STAT_C"; then
               perl -0pi -e 's/(SYSCALL_DEFINE2\(newfstat,.*?if\s*\(!error\)\s*error\s*=\s*cp_new_stat\(&stat, statbuf\);)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_newfstat_ret(\&fd, \&statbuf);\n#endif\n/s' "$STAT_C"
-              echo "✅ fs/stat.c: 已注入 ksu_handle_newfstat_ret 调用"
+              echo "✅ fs/stat.c: 已注入 ksu_handle_newfstat_ret (newfstat)"
             else
-              echo "⚠️ fs/stat.c: ksu_handle_newfstat_ret 调用已存在，跳过"
+              echo "⚠️ fs/stat.c: ksu_handle_newfstat_ret (newfstat) 已存在"
+            fi
+
+            # 1d. fstatat64 入口 -> ksu_handle_stat (32 位兼容)
+            if ! grep -q "ksu_handle_stat(&dfd.*fstatat64" "$STAT_C" 2>/dev/null && ! grep -q "ksu_handle_stat(&dfd" <(sed -n '/SYSCALL_DEFINE4(fstatat64,/,/^}/p' "$STAT_C"); then
+              perl -0pi -e 's/(SYSCALL_DEFINE4\(fstatat64,.*?\{)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_stat(\&dfd, \&filename, \&flag);\n#endif\n/s' "$STAT_C" || true
+              echo "✅ fs/stat.c: 已尝试注入 ksu_handle_stat (fstatat64)"
+            else
+              echo "⚠️ fs/stat.c: ksu_handle_stat (fstatat64) 已存在或无需注入"
+            fi
+
+            # 1e. fstat64 返回值 -> ksu_handle_fstat64_ret (32 位兼容)
+            if ! grep -q "ksu_handle_fstat64_ret(&fd" "$STAT_C"; then
+              perl -0pi -e 's/(SYSCALL_DEFINE2\(fstat64,.*?if\s*\(!error\)\s*error\s*=\s*cp_new_stat64\(&stat, statbuf\);)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_fstat64_ret(\&fd, \&statbuf);\n#endif\n/s' "$STAT_C"
+              echo "✅ fs/stat.c: 已注入 ksu_handle_fstat64_ret (fstat64)"
+            else
+              echo "⚠️ fs/stat.c: ksu_handle_fstat64_ret (fstat64) 已存在"
             fi
           fi
 
@@ -158,7 +177,7 @@ jobs:
               perl -0pi -e 's/(static int\s+do_execveat_common\(.*?)(\tputname\(filename\);)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_post_execveat(\&fd, \&filename, \&argv, \&envp, \&flags, \&retval);\n#endif\n$2/s' "$EXEC_C"
               echo "✅ fs/exec.c: Hook 完成"
             else
-              echo "⚠️ fs/exec.c: Hook 已存在，跳过"
+              echo "⚠️ fs/exec.c: Hook 已存在"
             fi
           fi
 
@@ -177,7 +196,7 @@ jobs:
               perl -0pi -e 's/(SYSCALL_DEFINE3\(faccessat,.*?\{)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_faccessat(\&dfd, \&filename, \&mode, NULL);\n#endif\n/s' "$OPEN_C"
               echo "✅ fs/open.c: Hook 完成"
             else
-              echo "⚠️ fs/open.c: Hook 已存在，跳过"
+              echo "⚠️ fs/open.c: Hook 已存在"
             fi
           fi
 
@@ -195,7 +214,7 @@ jobs:
               perl -0pi -e 's/(SYSCALL_DEFINE4\(reboot,.*?\{.*?char buffer\[256\];.*?int ret = 0;)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_sys_reboot(magic1, magic2, cmd, \&arg);\n#endif\n/s' "$REBOOT_C"
               echo "✅ kernel/reboot.c: Hook 完成"
             else
-              echo "⚠️ kernel/reboot.c: Hook 已存在，跳过"
+              echo "⚠️ kernel/reboot.c: Hook 已存在"
             fi
           fi
 
@@ -389,8 +408,7 @@ jobs:
             - 仅集成 BakaSU 原生 Root 功能与 SELinux Hide
             - 保留 BakaSU 官方 Manual Hook
             - 不包含 SUSFS（`--disable KSU_SUSFS`）
-            - 完整注入 `ksu_handle_newfstat_ret` 钩子，通过 BakaSU 官方自检
-            - 所有 hook 注入均加幂等判断，避免重复执行
+            - 已补齐全部 stat 系列钩子（newfstatat / newfstat / fstat64），通过 BakaSU 官方自检
             - 为 SELinux 锁操作增加空指针检查，降低崩溃概率
             - LOCALVERSION: `-edwin-hide-日期`
             - 刷机有风险，请备份原内核
