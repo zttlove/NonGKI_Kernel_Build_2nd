@@ -14,8 +14,8 @@ env:
   CLANG_DIR: "${{ github.workspace }}/clang"
   CCACHE_DIR: "${{ github.workspace }}/.ccache"
   KERNEL_DIR: "${{ github.workspace }}/kernel"
-  BAKASU_BRANCH: "weblate-main"   # 如需切换为 weblate-main，修改此处
-
+  BAKASU_BRANCH: "sync-up"
+  
 jobs:
   build:
     runs-on: ubuntu-22.04
