@@ -100,6 +100,38 @@ jobs:
             sed -i '/^endmenu/i\source "drivers/kernelsu/Kconfig"' drivers/Kconfig
           fi
 
+          # ============================================================
+          # 修复 BakaSU preinit.h 中 void 函数返回 false 的源码 bug
+          # ============================================================
+          REAL_KSU_DIR=$(realpath drivers/kernelsu)
+          PREINIT_H="$REAL_KSU_DIR/preinit/preinit.h"
+          if [ -f "$PREINIT_H" ]; then
+            echo "=== 修复 preinit.h 中的 void 函数返回值错误 ==="
+            echo "--- 修复前 preinit.h 40-60 行 ---"
+            sed -n '40,60p' "$PREINIT_H" || true
+            cp "$PREINIT_H" "${PREINIT_H}.bak"
+
+            # 精确修复：void 函数内的 return false; -> return;
+            perl -0pi -e 's/(void\s+[a-zA-Z_][a-zA-Z0-9_]*\s*\([^)]*\)\s*\{[^}]*?)\breturn\s+false;/${1}return;/gs' "$PREINIT_H"
+
+            # 兜底：如果仍有残留，再针对 ksu_preinit_handle_execve_manual 修一次
+            if grep -qPzo 'void\s+[a-zA-Z_][a-zA-Z0-9_]*\s*\([^)]*\)\s*\{[^}]*?return\s+false;' "$PREINIT_H" 2>/dev/null; then
+              echo "⚠️ 仍有残留，针对 ksu_preinit_handle_execve_manual 再修一次..."
+              perl -0pi -e 's/(void\s+ksu_preinit_handle_execve_manual[^{]*\{[^}]*?)\breturn\s+false;/${1}return;/gs' "$PREINIT_H"
+            fi
+
+            echo "--- 修复后 preinit.h 40-60 行 ---"
+            sed -n '40,60p' "$PREINIT_H" || true
+
+            if grep -qPzo 'void\s+[a-zA-Z_][a-zA-Z0-9_]*\s*\([^)]*\)\s*\{[^}]*?return\s+false;' "$PREINIT_H" 2>/dev/null; then
+              echo "::warning::preinit.h 中可能仍有 void 函数返回 false"
+            else
+              echo "✅ preinit.h 修复完成"
+            fi
+          else
+            echo "⚠️ 未找到 $PREINIT_H，跳过"
+          fi
+
           echo "=== 应用官方 Manual Hook 补丁 (使用 sed 和 perl 精准注入) ==="
 
           # ============================================================
@@ -143,15 +175,7 @@ jobs:
               echo "⚠️ fs/stat.c: ksu_handle_newfstat_ret (newfstat) 已存在"
             fi
 
-            # 1d. fstatat64 入口 -> ksu_handle_stat (32 位兼容)
-            if ! grep -q "ksu_handle_stat(&dfd.*fstatat64" "$STAT_C" 2>/dev/null && ! grep -q "ksu_handle_stat(&dfd" <(sed -n '/SYSCALL_DEFINE4(fstatat64,/,/^}/p' "$STAT_C"); then
-              perl -0pi -e 's/(SYSCALL_DEFINE4\(fstatat64,.*?\{)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_stat(\&dfd, \&filename, \&flag);\n#endif\n/s' "$STAT_C" || true
-              echo "✅ fs/stat.c: 已尝试注入 ksu_handle_stat (fstatat64)"
-            else
-              echo "⚠️ fs/stat.c: ksu_handle_stat (fstatat64) 已存在或无需注入"
-            fi
-
-            # 1e. fstat64 返回值 -> ksu_handle_fstat64_ret (32 位兼容)
+            # 1d. fstat64 返回值 -> ksu_handle_fstat64_ret (32 位兼容)
             if ! grep -q "ksu_handle_fstat64_ret(&fd" "$STAT_C"; then
               perl -0pi -e 's/(SYSCALL_DEFINE2\(fstat64,.*?if\s*\(!error\)\s*error\s*=\s*cp_new_stat64\(&stat, statbuf\);)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_fstat64_ret(\&fd, \&statbuf);\n#endif\n/s' "$STAT_C"
               echo "✅ fs/stat.c: 已注入 ksu_handle_fstat64_ret (fstat64)"
@@ -243,7 +267,6 @@ jobs:
           # 针对 SELinux Hide 的修复与安全加固
           # ============================================================
           echo "=== 搜索并修复 selinux_hide.c ==="
-          REAL_KSU_DIR=$(realpath drivers/kernelsu)
           HIDE_FILE=$(find "$REAL_KSU_DIR" -name 'selinux_hide.c' | head -n1)
 
           if [ -f "$HIDE_FILE" ]; then
@@ -408,7 +431,8 @@ jobs:
             - 仅集成 BakaSU 原生 Root 功能与 SELinux Hide
             - 保留 BakaSU 官方 Manual Hook
             - 不包含 SUSFS（`--disable KSU_SUSFS`）
-            - 已补齐全部 stat 系列钩子（newfstatat / newfstat / fstat64），通过 BakaSU 官方自检
+            - 已修复 BakaSU `preinit.h` 中 void 函数返回 false 的源码 bug
+            - 已补齐全部 stat 系列钩子（newfstatat / newfstat / fstat64）
             - 为 SELinux 锁操作增加空指针检查，降低崩溃概率
             - LOCALVERSION: `-edwin-hide-日期`
             - 刷机有风险，请备份原内核
