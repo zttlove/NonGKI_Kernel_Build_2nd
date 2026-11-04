@@ -15,7 +15,7 @@ env:
   CCACHE_DIR: "${{ github.workspace }}/.ccache"
   KERNEL_DIR: "${{ github.workspace }}/kernel"
   BAKASU_BRANCH: "sync-up"
-  
+
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -112,6 +112,7 @@ jobs:
 
           # ============================================================
           # 修复 BakaSU preinit.h 中 void 函数返回 false 的源码 bug
+          # （保留此修复，让 preinit 能正常编译，供管理器识别）
           # ============================================================
           REAL_KSU_DIR=$(realpath drivers/kernelsu)
           PREINIT_H="$REAL_KSU_DIR/preinit/preinit.h"
@@ -298,13 +299,15 @@ jobs:
             --enable KSU_COMPAT_HAS_SELINUX_STATE \
             --enable KSU_COMPAT_HAS_KVMALLOC \
             --disable KSU_SUSFS \
-            --disable KSU_PREINIT \
-            --disable KSU_PREINIT_HANDLE_EXECVE \
             --disable HEADERS_INSTALL \
             --set-val FRAME_WARN 131072 \
             --set-str LOCALVERSION "-edwin-hide-$(date +%m%d)"
 
           make O=${{ env.OUTPUT_DIR }} olddefconfig 2>&1 | tee olddefconfig.log
+
+          echo "=== 配置核对（关键项）==="
+          grep -E "CONFIG_KSU=|CONFIG_KSU_MANUAL_HOOK=|CONFIG_KSU_SUSFS=|CONFIG_KSU_PREINIT" \
+               ${{ env.OUTPUT_DIR }}/.config || true
 
       - name: Build Kernel
         working-directory: kernel
@@ -422,6 +425,7 @@ jobs:
             - 仅集成 BakaSU 原生 Root 功能与 SELinux Hide
             - 保留 BakaSU 官方 Manual Hook
             - 不包含 SUSFS（`--disable KSU_SUSFS`）
+            - **已启用 preinit（恢复管理器识别）**
             - 已修复 BakaSU `preinit.h` 中 void 函数返回 false 的源码 bug
             - 已补齐全部 stat 系列钩子（newfstatat / newfstat / fstat64）
             - BakaSU 源分支：`${{ env.BAKASU_BRANCH }}`
