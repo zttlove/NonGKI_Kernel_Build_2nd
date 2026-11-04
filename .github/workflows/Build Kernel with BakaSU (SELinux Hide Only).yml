@@ -71,7 +71,7 @@ jobs:
           rm clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-22.04.tar.xz
           ${{ env.CLANG_DIR }}/bin/clang --version
 
-      - name: Integrate BakaSU (Using Official setup.sh) & Apply Hooks
+      - name: Integrate BakaSU & Apply Official Hooks
         working-directory: kernel
         run: |
           set -e
@@ -88,44 +88,50 @@ jobs:
             touch "include/linux/seccomp_types.h"
           fi
 
-          # ============================================================
-          # 使用 BakaSU 官方 setup.sh 进行集成，自动处理所有符号依赖
-          # ============================================================
-          echo "=== 使用 BakaSU 官方 setup.sh 集成 ==="
-          # 先清理可能存在的旧集成
+          echo "=== 克隆并集成 BakaSU ==="
           rm -rf KernelSU BakaSU_src drivers/kernelsu drivers/KernelSU
           git clone --depth=1 https://github.com/Baka-SU/BakaSU.git BakaSU_src
-          # setup.sh 期望在内核根目录有 KernelSU/ 目录
-          ln -sf BakaSU_src KernelSU
-          # 执行官方集成脚本，它会自动处理 Makefile、Kconfig 和 preinit 等符号
-          bash BakaSU_src/kernel/setup.sh
+          ln -sf ../BakaSU_src/kernel drivers/kernelsu
 
-          # 验证集成是否成功
-          if [ ! -L "drivers/kernelsu" ]; then
-            echo "::error::drivers/kernelsu 软链接未创建，setup.sh 可能失败！"
-            exit 1
-          fi
           if ! grep -q "kernelsu" drivers/Makefile; then
-            echo "::error::drivers/Makefile 未正确修改！"
-            exit 1
+            printf "\nobj-\$(CONFIG_KSU) += kernelsu/\n" >> drivers/Makefile
           fi
-          echo "✅ BakaSU 官方 setup.sh 集成完成"
+          if ! grep -q 'source "drivers/kernelsu/Kconfig"' drivers/Kconfig; then
+            sed -i '/^endmenu/i\source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+          fi
 
           echo "=== 应用官方 Manual Hook 补丁 (使用 sed 和 perl 精准注入) ==="
 
-          # 1. Hook fs/stat.c
+          # ============================================================
+          # 1. 完整 Hook fs/stat.c (入口 + 返回值)
+          # ============================================================
           STAT_C="fs/stat.c"
           if [ -f "$STAT_C" ]; then
+            # 1a. 在 newfstatat 之前，声明所有需要的函数
             sed -i '/SYSCALL_DEFINE4(newfstatat/i \
             #ifdef CONFIG_KSU_MANUAL_HOOK\
             __attribute__((hot))\
             extern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);\
+            extern void ksu_handle_newfstat_ret(unsigned int *fd, struct stat __user **statbuf_ptr);\
+            #if defined(__ARCH_WANT_STAT64) || defined(__ARCH_WANT_COMPAT_STAT64)\
+            extern void ksu_handle_fstat64_ret(unsigned long *fd, struct stat64 __user **statbuf_ptr); // optional\
+            #endif\
             #endif\
             ' "$STAT_C"
+
+            # 1b. 在 newfstatat 入口调用 ksu_handle_stat (已有)
             perl -0pi -e 's/(SYSCALL_DEFINE4\(newfstatat,.*?\{)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_stat(&dfd, &filename, &flag);\n#endif\n/s' "$STAT_C"
+
+            # 1c. 在 newfstat 返回前调用 ksu_handle_newfstat_ret
+            perl -0pi -e 's/(SYSCALL_DEFINE2\(newfstat,.*?\{.*?if\s*\(!error\)\s*error\s*=\s*cp_new_stat\(&stat, statbuf\);)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_newfstat_ret(&fd, &statbuf);\n#endif\n/s' "$STAT_C"
+
+            # 1d. (可选) 为 32 位兼容补充 fstat64 钩子
+            perl -0pi -e 's/(SYSCALL_DEFINE2\(fstat64,.*?\{.*?if\s*\(!error\)\s*error\s*=\s*cp_new_stat64\(&stat, statbuf\);)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK // for 32-bit\n\tksu_handle_fstat64_ret(&fd, &statbuf);\n#endif\n/s' "$STAT_C"
           fi
 
+          # ============================================================
           # 2. Hook fs/exec.c
+          # ============================================================
           EXEC_C="fs/exec.c"
           if [ -f "$EXEC_C" ]; then
             sed -i '/static int do_execveat_common/i \
@@ -139,7 +145,9 @@ jobs:
             perl -0pi -e 's/(static int\s+do_execveat_common\(.*?)(\tputname\(filename\);)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_post_execveat(&fd, &filename, &argv, &envp, &flags, &retval);\n#endif\n$2/s' "$EXEC_C"
           fi
 
+          # ============================================================
           # 3. Hook fs/open.c
+          # ============================================================
           OPEN_C="fs/open.c"
           if [ -f "$OPEN_C" ]; then
             sed -i '/SYSCALL_DEFINE3(faccessat,/i \
@@ -151,7 +159,9 @@ jobs:
             perl -0pi -e 's/(SYSCALL_DEFINE3\(faccessat,.*?\{)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_faccessat(&dfd, &filename, &mode, NULL);\n#endif\n/s' "$OPEN_C"
           fi
 
+          # ============================================================
           # 4. Hook kernel/reboot.c
+          # ============================================================
           REBOOT_C="kernel/reboot.c"
           if [ -f "$REBOOT_C" ]; then
             sed -i '/SYSCALL_DEFINE4(reboot,/i \
@@ -162,7 +172,9 @@ jobs:
             perl -0pi -e 's/(SYSCALL_DEFINE4\(reboot,.*?\{.*?char buffer\[256\];.*?int ret = 0;)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_sys_reboot(magic1, magic2, cmd, &arg);\n#endif\n/s' "$REBOOT_C"
           fi
 
+          # ============================================================
           # 5. 导出 SELinux 静态符号
+          # ============================================================
           SELINUXFS_C="security/selinux/selinuxfs.c"
           if [ -f "$SELINUXFS_C" ]; then
              sed -i 's/^static ssize_t (\*write_op\[\])/ssize_t (*write_op[])/' "$SELINUXFS_C"
@@ -350,7 +362,7 @@ jobs:
             - 仅集成 BakaSU 原生 Root 功能与 SELinux Hide
             - 保留 BakaSU 官方 Manual Hook
             - 不包含 SUSFS（`--disable KSU_SUSFS`）
-            - 使用官方 setup.sh 集成，并通过 Kconfig 禁用 preinit，彻底解决 undefined symbol
+            - 已完整注入 `ksu_handle_newfstat_ret` 钩子，通过 BakaSU 官方自检
             - 为 SELinux 锁操作增加空指针检查，降低崩溃概率
             - LOCALVERSION: `-edwin-hide-日期`
             - 刷机有风险，请备份原内核
