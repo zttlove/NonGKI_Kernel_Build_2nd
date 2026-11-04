@@ -71,7 +71,7 @@ jobs:
           rm clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-22.04.tar.xz
           ${{ env.CLANG_DIR }}/bin/clang --version
 
-      - name: Integrate BakaSU & Apply Official Hooks
+      - name: Integrate BakaSU (Using Official setup.sh) & Apply Hooks
         working-directory: kernel
         run: |
           set -e
@@ -88,17 +88,28 @@ jobs:
             touch "include/linux/seccomp_types.h"
           fi
 
-          echo "=== 克隆并集成 BakaSU ==="
+          # ============================================================
+          # 使用 BakaSU 官方 setup.sh 进行集成，自动处理所有符号依赖
+          # ============================================================
+          echo "=== 使用 BakaSU 官方 setup.sh 集成 ==="
+          # 先清理可能存在的旧集成
           rm -rf KernelSU BakaSU_src drivers/kernelsu drivers/KernelSU
           git clone --depth=1 https://github.com/Baka-SU/BakaSU.git BakaSU_src
-          ln -sf ../BakaSU_src/kernel drivers/kernelsu
+          # setup.sh 期望在内核根目录有 KernelSU/ 目录
+          ln -sf BakaSU_src KernelSU
+          # 执行官方集成脚本，它会自动处理 Makefile、Kconfig 和 preinit 等符号
+          bash BakaSU_src/kernel/setup.sh
 
+          # 验证集成是否成功
+          if [ ! -L "drivers/kernelsu" ]; then
+            echo "::error::drivers/kernelsu 软链接未创建，setup.sh 可能失败！"
+            exit 1
+          fi
           if ! grep -q "kernelsu" drivers/Makefile; then
-            printf "\nobj-\$(CONFIG_KSU) += kernelsu/\n" >> drivers/Makefile
+            echo "::error::drivers/Makefile 未正确修改！"
+            exit 1
           fi
-          if ! grep -q 'source "drivers/kernelsu/Kconfig"' drivers/Kconfig; then
-            sed -i '/^endmenu/i\source "drivers/kernelsu/Kconfig"' drivers/Kconfig
-          fi
+          echo "✅ BakaSU 官方 setup.sh 集成完成"
 
           echo "=== 应用官方 Manual Hook 补丁 (使用 sed 和 perl 精准注入) ==="
 
@@ -171,107 +182,10 @@ jobs:
           echo "✅ 官方 Hook 补丁已全部应用"
 
           # ============================================================
-          # non-GKI preinit 符号：按 preinit/preinit.h 的真实签名提供弱符号实现
-          # ============================================================
-          REAL_KSU_DIR=$(realpath drivers/kernelsu)
-          echo "=== 处理 non-GKI preinit 符号（按头文件签名生成 weak shim）==="
-
-          # 0. 打印真实头文件，便于日后排查签名变化
-          if [ -f "$REAL_KSU_DIR/preinit/preinit.h" ]; then
-            echo "=== preinit/preinit.h 中相关声明 ==="
-            grep -nE "ksu_preinit_(init|exit|handle_execve_manual|release|enabled_param)" "$REAL_KSU_DIR/preinit/preinit.h" || true
-          fi
-
-          # 1. 清理自检脚本
-          find "$REAL_KSU_DIR" -name "manual_hook_check.mk" -exec rm -f {} \; 2>/dev/null || true
-          find "$REAL_KSU_DIR" -type d -name "tools" -exec touch {}/manual_hook_check.mk \; 2>/dev/null || true
-
-          # 2. 禁用 preinit_runner，防止自动生成的实现与 shim 冲突
-          PREINIT_RUNNER_MK="$REAL_KSU_DIR/tools/code_generation/preinit_runner/preinit_runner.mk"
-          if [ -f "$PREINIT_RUNNER_MK" ]; then
-             echo "# Disabled by CI for non-GKI" > "$PREINIT_RUNNER_MK"
-          fi
-
-          # 3. 若此前误把 shim 追加进 core/init.c，先清掉（幂等）
-          CORE_INIT="$REAL_KSU_DIR/core/init.c"
-          if [ -f "$CORE_INIT" ] && grep -q "CI_NON_GKI_PREINIT_SHIM" "$CORE_INIT"; then
-            echo "⚠️ 检测到 core/init.c 中残留 shim，正在移除..."
-            # 删除从标记开始到 end 标记的整段
-            perl -0pi -e 's/\n\/\* === CI_NON_GKI_PREINIT_SHIM.*?\/\* === CI_NON_GKI_PREINIT_SHIM end === \*\/\n//s' "$CORE_INIT"
-          fi
-
-          # 4. 创建独立 shim 文件：包含真实头文件，完全按声明实现弱符号
-          cat > "$REAL_KSU_DIR/preinit_shim.c" << 'KSU_SHIM_FILE_EOF'
-          #include <linux/module.h>
-          #include <linux/kernel.h>
-          #include <linux/export.h>
-
-          /* 直接引用 BakaSU 真实头文件，保证签名与上游声明完全一致 */
-          #include "preinit/preinit.h"
-
-          /* non-GKI 内核 preinit 弱符号空实现：
-           * - 使用 __attribute__((weak))，若上游已提供强符号则自动退让，避免重复定义
-           * - 签名严格匹配 preinit/preinit.h
-           */
-          __attribute__((weak)) void ksu_preinit_init(void)
-          {
-          }
-          EXPORT_SYMBOL(ksu_preinit_init);
-
-          __attribute__((weak)) void ksu_preinit_exit(void)
-          {
-          }
-          EXPORT_SYMBOL(ksu_preinit_exit);
-
-          __attribute__((weak)) void ksu_preinit_handle_execve_manual(const char **filename,
-                                                                      struct user_arg_ptr *argv)
-          {
-          }
-          EXPORT_SYMBOL(ksu_preinit_handle_execve_manual);
-
-          __attribute__((weak)) void ksu_preinit_release(void)
-          {
-          }
-          EXPORT_SYMBOL(ksu_preinit_release);
-
-          __attribute__((weak)) bool ksu_preinit_enabled_param(void)
-          {
-          	return false;
-          }
-          EXPORT_SYMBOL(ksu_preinit_enabled_param);
-          KSU_SHIM_FILE_EOF
-
-          if [ ! -f "$REAL_KSU_DIR/preinit_shim.c" ]; then
-            echo "::error::preinit_shim.c 创建失败！"
-            exit 1
-          fi
-          echo "✅ preinit_shim.c 已创建（签名匹配 preinit/preinit.h）"
-
-          # 5. 确保 preinit_shim.o 被编译：在 kernelsu Makefile 第一行后插入
-          KSU_MAKEFILE="$REAL_KSU_DIR/Makefile"
-          if [ ! -f "$KSU_MAKEFILE" ]; then
-            echo "::error::找不到 $KSU_MAKEFILE"
-            exit 1
-          fi
-          cp "$KSU_MAKEFILE" "${KSU_MAKEFILE}.bak"
-          sed -i '/preinit_shim\.o/d' "$KSU_MAKEFILE"
-          # 用 obj-y 而不是 obj-$(CONFIG_KSU)，确保不依赖配置状态也能编进来
-          sed -i '1a obj-y += preinit_shim.o' "$KSU_MAKEFILE"
-
-          if grep -q "preinit_shim.o" "$KSU_MAKEFILE"; then
-            echo "✅ 已把 preinit_shim.o 写入 $KSU_MAKEFILE"
-            head -n 5 "$KSU_MAKEFILE"
-          else
-            echo "::error::Makefile 修改失败！"
-            exit 1
-          fi
-
-          echo "✅ preinit shim 全部就绪"
-
-          # ============================================================
           # 针对 SELinux Hide 的修复与安全加固
           # ============================================================
           echo "=== 搜索并修复 selinux_hide.c ==="
+          REAL_KSU_DIR=$(realpath drivers/kernelsu)
           HIDE_FILE=$(find "$REAL_KSU_DIR" -name 'selinux_hide.c' | head -n1)
 
           if [ -f "$HIDE_FILE" ]; then
@@ -436,7 +350,7 @@ jobs:
             - 仅集成 BakaSU 原生 Root 功能与 SELinux Hide
             - 保留 BakaSU 官方 Manual Hook
             - 不包含 SUSFS（`--disable KSU_SUSFS`）
-            - non-GKI preinit shim 严格匹配 `preinit/preinit.h` 签名，weak 符号兜底
+            - 使用官方 setup.sh 集成，并通过 Kconfig 禁用 preinit，彻底解决 undefined symbol
             - 为 SELinux 锁操作增加空指针检查，降低崩溃概率
             - LOCALVERSION: `-edwin-hide-日期`
             - 刷机有风险，请备份原内核
