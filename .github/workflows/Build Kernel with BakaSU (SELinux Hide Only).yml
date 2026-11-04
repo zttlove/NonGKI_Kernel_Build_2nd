@@ -14,6 +14,7 @@ env:
   CLANG_DIR: "${{ github.workspace }}/clang"
   CCACHE_DIR: "${{ github.workspace }}/.ccache"
   KERNEL_DIR: "${{ github.workspace }}/kernel"
+  BAKASU_BRANCH: "main"   # 如需切换为 weblate-main，修改此处
 
 jobs:
   build:
@@ -88,9 +89,18 @@ jobs:
             touch "include/linux/seccomp_types.h"
           fi
 
-          echo "=== 克隆并集成 BakaSU ==="
+          echo "=== 克隆并集成 BakaSU（分支: ${{ env.BAKASU_BRANCH }}）==="
           rm -rf KernelSU BakaSU_src drivers/kernelsu drivers/KernelSU
-          git clone --depth=1 https://github.com/Baka-SU/BakaSU.git BakaSU_src
+
+          # 分支存在性检查
+          if ! git ls-remote --heads https://github.com/Baka-SU/BakaSU.git "${{ env.BAKASU_BRANCH }}" | grep -q .; then
+            echo "::error::BakaSU 仓库中不存在分支 '${{ env.BAKASU_BRANCH }}'。"
+            echo "远程可用分支如下："
+            git ls-remote --heads https://github.com/Baka-SU/BakaSU.git | awk -F'refs/heads/' '{print $2}'
+            exit 1
+          fi
+
+          git clone --depth=1 --branch "${{ env.BAKASU_BRANCH }}" https://github.com/Baka-SU/BakaSU.git BakaSU_src
           ln -sf ../BakaSU_src/kernel drivers/kernelsu
 
           if ! grep -q "kernelsu" drivers/Makefile; then
@@ -107,27 +117,12 @@ jobs:
           PREINIT_H="$REAL_KSU_DIR/preinit/preinit.h"
           if [ -f "$PREINIT_H" ]; then
             echo "=== 修复 preinit.h 中的 void 函数返回值错误 ==="
-            echo "--- 修复前 preinit.h 40-60 行 ---"
-            sed -n '40,60p' "$PREINIT_H" || true
             cp "$PREINIT_H" "${PREINIT_H}.bak"
-
-            # 精确修复：void 函数内的 return false; -> return;
             perl -0pi -e 's/(void\s+[a-zA-Z_][a-zA-Z0-9_]*\s*\([^)]*\)\s*\{[^}]*?)\breturn\s+false;/${1}return;/gs' "$PREINIT_H"
-
-            # 兜底：如果仍有残留，再针对 ksu_preinit_handle_execve_manual 修一次
             if grep -qPzo 'void\s+[a-zA-Z_][a-zA-Z0-9_]*\s*\([^)]*\)\s*\{[^}]*?return\s+false;' "$PREINIT_H" 2>/dev/null; then
-              echo "⚠️ 仍有残留，针对 ksu_preinit_handle_execve_manual 再修一次..."
               perl -0pi -e 's/(void\s+ksu_preinit_handle_execve_manual[^{]*\{[^}]*?)\breturn\s+false;/${1}return;/gs' "$PREINIT_H"
             fi
-
-            echo "--- 修复后 preinit.h 40-60 行 ---"
-            sed -n '40,60p' "$PREINIT_H" || true
-
-            if grep -qPzo 'void\s+[a-zA-Z_][a-zA-Z0-9_]*\s*\([^)]*\)\s*\{[^}]*?return\s+false;' "$PREINIT_H" 2>/dev/null; then
-              echo "::warning::preinit.h 中可能仍有 void 函数返回 false"
-            else
-              echo "✅ preinit.h 修复完成"
-            fi
+            echo "✅ preinit.h 修复完成"
           else
             echo "⚠️ 未找到 $PREINIT_H，跳过"
           fi
@@ -139,7 +134,6 @@ jobs:
           # ============================================================
           STAT_C="fs/stat.c"
           if [ -f "$STAT_C" ]; then
-            # 1a. 声明（放在最后一个 #include 之后）
             if ! grep -q "ksu_handle_newfstat_ret" "$STAT_C"; then
               LAST_INCLUDE_LINE=$(grep -n '^#include' "$STAT_C" | tail -n1 | cut -d: -f1)
               if [ -z "$LAST_INCLUDE_LINE" ]; then LAST_INCLUDE_LINE=1; fi
@@ -159,7 +153,6 @@ jobs:
               echo "⚠️ fs/stat.c: 声明已存在，跳过"
             fi
 
-            # 1b. newfstatat 入口 -> ksu_handle_stat
             if ! grep -q "ksu_handle_stat(&dfd" "$STAT_C"; then
               perl -0pi -e 's/(SYSCALL_DEFINE4\(newfstatat,.*?\{)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_stat(\&dfd, \&filename, \&flag);\n#endif\n/s' "$STAT_C"
               echo "✅ fs/stat.c: 已注入 ksu_handle_stat (newfstatat)"
@@ -167,7 +160,6 @@ jobs:
               echo "⚠️ fs/stat.c: ksu_handle_stat (newfstatat) 已存在"
             fi
 
-            # 1c. newfstat 返回值 -> ksu_handle_newfstat_ret
             if ! grep -q "ksu_handle_newfstat_ret(&fd" "$STAT_C"; then
               perl -0pi -e 's/(SYSCALL_DEFINE2\(newfstat,.*?if\s*\(!error\)\s*error\s*=\s*cp_new_stat\(&stat, statbuf\);)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_newfstat_ret(\&fd, \&statbuf);\n#endif\n/s' "$STAT_C"
               echo "✅ fs/stat.c: 已注入 ksu_handle_newfstat_ret (newfstat)"
@@ -175,7 +167,6 @@ jobs:
               echo "⚠️ fs/stat.c: ksu_handle_newfstat_ret (newfstat) 已存在"
             fi
 
-            # 1d. fstat64 返回值 -> ksu_handle_fstat64_ret (32 位兼容)
             if ! grep -q "ksu_handle_fstat64_ret(&fd" "$STAT_C"; then
               perl -0pi -e 's/(SYSCALL_DEFINE2\(fstat64,.*?if\s*\(!error\)\s*error\s*=\s*cp_new_stat64\(&stat, statbuf\);)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_fstat64_ret(\&fd, \&statbuf);\n#endif\n/s' "$STAT_C"
               echo "✅ fs/stat.c: 已注入 ksu_handle_fstat64_ret (fstat64)"
@@ -433,6 +424,7 @@ jobs:
             - 不包含 SUSFS（`--disable KSU_SUSFS`）
             - 已修复 BakaSU `preinit.h` 中 void 函数返回 false 的源码 bug
             - 已补齐全部 stat 系列钩子（newfstatat / newfstat / fstat64）
+            - BakaSU 源分支：`${{ env.BAKASU_BRANCH }}`
             - 为 SELinux 锁操作增加空指针检查，降低崩溃概率
             - LOCALVERSION: `-edwin-hide-日期`
             - 刷机有风险，请备份原内核
