@@ -103,30 +103,42 @@ jobs:
           echo "=== 应用官方 Manual Hook 补丁 (使用 sed 和 perl 精准注入) ==="
 
           # ============================================================
-          # 1. 完整 Hook fs/stat.c (入口 + 返回值)
+          # 1. 完整 Hook fs/stat.c（入口 + newfstat 返回值）
           # ============================================================
           STAT_C="fs/stat.c"
           if [ -f "$STAT_C" ]; then
-            # 1a. 在 newfstatat 之前，声明所有需要的函数
-            sed -i '/SYSCALL_DEFINE4(newfstatat/i \
-            #ifdef CONFIG_KSU_MANUAL_HOOK\
-            __attribute__((hot))\
-            extern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);\
-            extern void ksu_handle_newfstat_ret(unsigned int *fd, struct stat __user **statbuf_ptr);\
-            #if defined(__ARCH_WANT_STAT64) || defined(__ARCH_WANT_COMPAT_STAT64)\
-            extern void ksu_handle_fstat64_ret(unsigned long *fd, struct stat64 __user **statbuf_ptr); // optional\
-            #endif\
-            #endif\
-            ' "$STAT_C"
+            # 1a. 在最后一个 #include 之后插入函数声明（幂等）
+            if ! grep -q "ksu_handle_newfstat_ret" "$STAT_C"; then
+              LAST_INCLUDE_LINE=$(grep -n '^#include' "$STAT_C" | tail -n1 | cut -d: -f1)
+              if [ -z "$LAST_INCLUDE_LINE" ]; then LAST_INCLUDE_LINE=1; fi
+              sed -i "${LAST_INCLUDE_LINE}r /dev/stdin" "$STAT_C" << 'STAT_DECL_EOF'
 
-            # 1b. 在 newfstatat 入口调用 ksu_handle_stat (已有)
-            perl -0pi -e 's/(SYSCALL_DEFINE4\(newfstatat,.*?\{)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_stat(&dfd, &filename, &flag);\n#endif\n/s' "$STAT_C"
+          #ifdef CONFIG_KSU_MANUAL_HOOK
+          __attribute__((hot))
+          extern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);
+          extern void ksu_handle_newfstat_ret(unsigned int *fd, struct stat __user **statbuf_ptr);
+          #endif
+          STAT_DECL_EOF
+              echo "✅ fs/stat.c: 已插入 ksu_handle_stat / ksu_handle_newfstat_ret 声明"
+            else
+              echo "⚠️ fs/stat.c: 声明已存在，跳过"
+            fi
 
-            # 1c. 在 newfstat 返回前调用 ksu_handle_newfstat_ret
-            perl -0pi -e 's/(SYSCALL_DEFINE2\(newfstat,.*?\{.*?if\s*\(!error\)\s*error\s*=\s*cp_new_stat\(&stat, statbuf\);)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_newfstat_ret(&fd, &statbuf);\n#endif\n/s' "$STAT_C"
+            # 1b. 在 newfstatat 入口调用 ksu_handle_stat（幂等）
+            if ! grep -q "ksu_handle_stat(&dfd" "$STAT_C"; then
+              perl -0pi -e 's/(SYSCALL_DEFINE4\(newfstatat,.*?\{)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_stat(\&dfd, \&filename, \&flag);\n#endif\n/s' "$STAT_C"
+              echo "✅ fs/stat.c: 已注入 ksu_handle_stat 调用"
+            else
+              echo "⚠️ fs/stat.c: ksu_handle_stat 调用已存在，跳过"
+            fi
 
-            # 1d. (可选) 为 32 位兼容补充 fstat64 钩子
-            perl -0pi -e 's/(SYSCALL_DEFINE2\(fstat64,.*?\{.*?if\s*\(!error\)\s*error\s*=\s*cp_new_stat64\(&stat, statbuf\);)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK // for 32-bit\n\tksu_handle_fstat64_ret(&fd, &statbuf);\n#endif\n/s' "$STAT_C"
+            # 1c. 在 newfstat 返回前调用 ksu_handle_newfstat_ret（幂等）
+            if ! grep -q "ksu_handle_newfstat_ret(&fd" "$STAT_C"; then
+              perl -0pi -e 's/(SYSCALL_DEFINE2\(newfstat,.*?if\s*\(!error\)\s*error\s*=\s*cp_new_stat\(&stat, statbuf\);)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_newfstat_ret(\&fd, \&statbuf);\n#endif\n/s' "$STAT_C"
+              echo "✅ fs/stat.c: 已注入 ksu_handle_newfstat_ret 调用"
+            else
+              echo "⚠️ fs/stat.c: ksu_handle_newfstat_ret 调用已存在，跳过"
+            fi
           fi
 
           # ============================================================
@@ -134,15 +146,20 @@ jobs:
           # ============================================================
           EXEC_C="fs/exec.c"
           if [ -f "$EXEC_C" ]; then
-            sed -i '/static int do_execveat_common/i \
-            #ifdef CONFIG_KSU_MANUAL_HOOK\
-            __attribute__((hot))\
-            extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags);\
-            extern int ksu_handle_post_execveat(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags, int *retval);\
-            #endif\
-            ' "$EXEC_C"
-            perl -0pi -e 's/(static int\s+do_execveat_common\(.*?)(\tif\s*\(IS_ERR\(filename\)\))/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);\n#endif\n\n$2/s' "$EXEC_C"
-            perl -0pi -e 's/(static int\s+do_execveat_common\(.*?)(\tputname\(filename\);)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_post_execveat(&fd, &filename, &argv, &envp, &flags, &retval);\n#endif\n$2/s' "$EXEC_C"
+            if ! grep -q "ksu_handle_execveat" "$EXEC_C"; then
+              sed -i '/static int do_execveat_common/i \
+              #ifdef CONFIG_KSU_MANUAL_HOOK\
+              __attribute__((hot))\
+              extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags);\
+              extern int ksu_handle_post_execveat(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags, int *retval);\
+              #endif\
+              ' "$EXEC_C"
+              perl -0pi -e 's/(static int\s+do_execveat_common\(.*?)(\tif\s*\(IS_ERR\(filename\)\))/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_execveat(\&fd, \&filename, \&argv, \&envp, \&flags);\n#endif\n\n$2/s' "$EXEC_C"
+              perl -0pi -e 's/(static int\s+do_execveat_common\(.*?)(\tputname\(filename\);)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_post_execveat(\&fd, \&filename, \&argv, \&envp, \&flags, \&retval);\n#endif\n$2/s' "$EXEC_C"
+              echo "✅ fs/exec.c: Hook 完成"
+            else
+              echo "⚠️ fs/exec.c: Hook 已存在，跳过"
+            fi
           fi
 
           # ============================================================
@@ -150,13 +167,18 @@ jobs:
           # ============================================================
           OPEN_C="fs/open.c"
           if [ -f "$OPEN_C" ]; then
-            sed -i '/SYSCALL_DEFINE3(faccessat,/i \
-            #ifdef CONFIG_KSU_MANUAL_HOOK\
-            __attribute__((hot))\
-            extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode, int *flags);\
-            #endif\
-            ' "$OPEN_C"
-            perl -0pi -e 's/(SYSCALL_DEFINE3\(faccessat,.*?\{)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_faccessat(&dfd, &filename, &mode, NULL);\n#endif\n/s' "$OPEN_C"
+            if ! grep -q "ksu_handle_faccessat" "$OPEN_C"; then
+              sed -i '/SYSCALL_DEFINE3(faccessat,/i \
+              #ifdef CONFIG_KSU_MANUAL_HOOK\
+              __attribute__((hot))\
+              extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode, int *flags);\
+              #endif\
+              ' "$OPEN_C"
+              perl -0pi -e 's/(SYSCALL_DEFINE3\(faccessat,.*?\{)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_faccessat(\&dfd, \&filename, \&mode, NULL);\n#endif\n/s' "$OPEN_C"
+              echo "✅ fs/open.c: Hook 完成"
+            else
+              echo "⚠️ fs/open.c: Hook 已存在，跳过"
+            fi
           fi
 
           # ============================================================
@@ -164,12 +186,17 @@ jobs:
           # ============================================================
           REBOOT_C="kernel/reboot.c"
           if [ -f "$REBOOT_C" ]; then
-            sed -i '/SYSCALL_DEFINE4(reboot,/i \
-            #ifdef CONFIG_KSU_MANUAL_HOOK\
-            extern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user **arg);\
-            #endif\
-            ' "$REBOOT_C"
-            perl -0pi -e 's/(SYSCALL_DEFINE4\(reboot,.*?\{.*?char buffer\[256\];.*?int ret = 0;)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_sys_reboot(magic1, magic2, cmd, &arg);\n#endif\n/s' "$REBOOT_C"
+            if ! grep -q "ksu_handle_sys_reboot" "$REBOOT_C"; then
+              sed -i '/SYSCALL_DEFINE4(reboot,/i \
+              #ifdef CONFIG_KSU_MANUAL_HOOK\
+              extern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user **arg);\
+              #endif\
+              ' "$REBOOT_C"
+              perl -0pi -e 's/(SYSCALL_DEFINE4\(reboot,.*?\{.*?char buffer\[256\];.*?int ret = 0;)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_sys_reboot(magic1, magic2, cmd, \&arg);\n#endif\n/s' "$REBOOT_C"
+              echo "✅ kernel/reboot.c: Hook 完成"
+            else
+              echo "⚠️ kernel/reboot.c: Hook 已存在，跳过"
+            fi
           fi
 
           # ============================================================
@@ -206,12 +233,12 @@ jobs:
 
             LAST_INCLUDE_LINE=$(grep -n '^#include' "$HIDE_FILE" | tail -n1 | cut -d: -f1)
             if [ -z "$LAST_INCLUDE_LINE" ]; then LAST_INCLUDE_LINE=1; fi
-            sed -i "${LAST_INCLUDE_LINE}r /dev/stdin" "$HIDE_FILE" << 'EOF'
+            sed -i "${LAST_INCLUDE_LINE}r /dev/stdin" "$HIDE_FILE" << 'HIDE_EOF'
 
           /* === BakaSU non-GKI 修复：全局符号定义 === */
           struct selinux_state fake_state;
           struct mutex *ksu_selinux_status_lock = NULL;
-          EOF
+          HIDE_EOF
             sed -i 's/^\(\s*\)mutex_lock(ksu_selinux_status_lock);/\1if (ksu_selinux_status_lock) mutex_lock(ksu_selinux_status_lock);/' "$HIDE_FILE"
             sed -i 's/^\(\s*\)mutex_unlock(ksu_selinux_status_lock);/\1if (ksu_selinux_status_lock) mutex_unlock(ksu_selinux_status_lock);/' "$HIDE_FILE"
             echo "✅ SELinux Hide 修复完成"
@@ -362,7 +389,8 @@ jobs:
             - 仅集成 BakaSU 原生 Root 功能与 SELinux Hide
             - 保留 BakaSU 官方 Manual Hook
             - 不包含 SUSFS（`--disable KSU_SUSFS`）
-            - 已完整注入 `ksu_handle_newfstat_ret` 钩子，通过 BakaSU 官方自检
+            - 完整注入 `ksu_handle_newfstat_ret` 钩子，通过 BakaSU 官方自检
+            - 所有 hook 注入均加幂等判断，避免重复执行
             - 为 SELinux 锁操作增加空指针检查，降低崩溃概率
             - LOCALVERSION: `-edwin-hide-日期`
             - 刷机有风险，请备份原内核
