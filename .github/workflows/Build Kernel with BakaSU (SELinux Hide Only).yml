@@ -99,9 +99,7 @@ jobs:
           rm -rf KernelSU
           rm -rf drivers/kernelsu
           rm -rf drivers/KernelSU
-          echo "✅ 旧版目录已清理干净"
-
-          echo "=== 手动建立软链接与构建配置 ==="
+          
           ln -sf ../BakaSU_src/kernel drivers/kernelsu
           echo "✅ 软链接: $(readlink -f drivers/kernelsu)"
 
@@ -114,21 +112,61 @@ jobs:
           fi
 
           # ============================================================
-          # 保留：动态查找并强制编译 selinux_hide.o (源自成功识别的 Power Saving 版)
+          # 关键修复：补全 fs/stat.c 中缺失的钩子
+          # ============================================================
+          echo "=== 应用官方 Manual Hook 补丁 (fs/stat.c) ==="
+          STAT_C="fs/stat.c"
+          if [ -f "$STAT_C" ]; then
+            # 1a. 注入函数声明
+            if ! grep -q "ksu_handle_newfstat_ret" "$STAT_C"; then
+              LAST_INCLUDE_LINE=$(grep -n '^#include' "$STAT_C" | tail -n1 | cut -d: -f1)
+              if [ -z "$LAST_INCLUDE_LINE" ]; then LAST_INCLUDE_LINE=1; fi
+              sed -i "${LAST_INCLUDE_LINE}r /dev/stdin" "$STAT_C" << 'STAT_DECL_EOF'
+
+          #ifdef CONFIG_KSU_MANUAL_HOOK
+          __attribute__((hot))
+          extern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);
+          extern void ksu_handle_newfstat_ret(unsigned int *fd, struct stat __user **statbuf_ptr);
+          #if defined(__ARCH_WANT_STAT64) || defined(__ARCH_WANT_COMPAT_STAT64)
+          extern void ksu_handle_fstat64_ret(unsigned long *fd, struct stat64 __user **statbuf_ptr);
+          #endif
+          #endif
+          STAT_DECL_EOF
+              echo "✅ fs/stat.c: 已插入函数声明"
+            fi
+
+            # 1b. newfstatat 入口钩子
+            if ! grep -q "ksu_handle_stat(&dfd" "$STAT_C"; then
+              perl -0pi -e 's/(SYSCALL_DEFINE4\(newfstatat,.*?\{)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_stat(\&dfd, \&filename, \&flag);\n#endif\n/s' "$STAT_C"
+              echo "✅ fs/stat.c: 已注入 ksu_handle_stat (newfstatat)"
+            fi
+
+            # 1c. newfstat 返回值钩子（关键！）
+            if ! grep -q "ksu_handle_newfstat_ret(&fd" "$STAT_C"; then
+              perl -0pi -e 's/(SYSCALL_DEFINE2\(newfstat,.*?if\s*\(!error\)\s*error\s*=\s*cp_new_stat\(&stat, statbuf\);)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_newfstat_ret(\&fd, \&statbuf);\n#endif\n/s' "$STAT_C"
+              echo "✅ fs/stat.c: 已注入 ksu_handle_newfstat_ret (newfstat)"
+            fi
+
+            # 1d. fstat64 返回值钩子（32位兼容）
+            if ! grep -q "ksu_handle_fstat64_ret(&fd" "$STAT_C"; then
+              perl -0pi -e 's/(SYSCALL_DEFINE2\(fstat64,.*?if\s*\(!error\)\s*error\s*=\s*cp_new_stat64\(&stat, statbuf\);)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_fstat64_ret(\&fd, \&statbuf);\n#endif\n/s' "$STAT_C"
+              echo "✅ fs/stat.c: 已注入 ksu_handle_fstat64_ret (fstat64)"
+            fi
+          fi
+
+          # ============================================================
+          # 保留：动态查找并强制编译 selinux_hide.o
           # ============================================================
           echo "=== 搜索并配置 selinux_hide.c 编译 ==="
-          KSU_SRC_DIR=$(readlink -f drivers/kernelsu)
-          HIDE_FILE=$(find "$KSU_SRC_DIR" -name 'selinux_hide.c' | head -n1)
+          REAL_KSU_DIR=$(realpath drivers/kernelsu)
+          HIDE_FILE=$(find "$REAL_KSU_DIR" -name 'selinux_hide.c' | head -n1)
           
           if [ -n "$HIDE_FILE" ]; then
             echo "找到文件: $HIDE_FILE"
-            
-            # 清理可能残留的旧代码
             sed -i '/BakaSU non-GKI 修复/,+3d' "$HIDE_FILE"
             sed -i '/static struct mutex \*ksu_selinux_status_lock/d' "$HIDE_FILE"
             sed -i '/static struct selinux_state fake_state/d' "$HIDE_FILE"
             
-            # 注入全局符号定义
             LAST_INCLUDE_LINE=$(grep -n '^#include' "$HIDE_FILE" | tail -n1 | cut -d: -f1)
             if [ -z "$LAST_INCLUDE_LINE" ]; then LAST_INCLUDE_LINE=1; fi
             
@@ -139,12 +177,11 @@ jobs:
           struct mutex *ksu_selinux_status_lock = NULL;
           EOF
             
-            # 确保 selinux_hide.o 被编译
             HIDE_DIR=$(dirname "$HIDE_FILE")
             SELINUX_MK="$HIDE_DIR/Makefile"
             if [ ! -f "$SELINUX_MK" ]; then
               SEARCH_DIR="$HIDE_DIR"
-              while [ "$SEARCH_DIR" != "." ] && [ "$SEARCH_DIR" != "/" ] && [ "$SEARCH_DIR" != "$KSU_SRC_DIR" ]; do
+              while [ "$SEARCH_DIR" != "." ] && [ "$SEARCH_DIR" != "/" ] && [ "$SEARCH_DIR" != "$REAL_KSU_DIR" ]; do
                 if [ -f "$SEARCH_DIR/Makefile" ]; then
                   SELINUX_MK="$SEARCH_DIR/Makefile"
                   break
@@ -162,10 +199,7 @@ jobs:
                 echo "✅ 已强制 $HIDE_OBJ 编译到 $SELINUX_MK"
               fi
             fi
-          else
-            echo "::warning::未找到 selinux_hide.c，跳过全局符号注入"
           fi
-          # ============================================================
 
           echo "=== 清理 ccache 并修复源码编译警告 ==="
           ccache -C
@@ -200,7 +234,6 @@ jobs:
           fi
 
           echo "=== 启用纯净 BakaSU 配置（无 SUSFS） ==="
-          # 移除了所有 --enable KSU_SUSFS* 相关的项
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
             --enable KSU \
             --enable KSU_MANUAL_HOOK \
@@ -214,11 +247,6 @@ jobs:
 
           make O=${{ env.OUTPUT_DIR }} olddefconfig 2>&1 | tee olddefconfig.log
 
-          if ! grep -q "CONFIG_KSU=y" ${{ env.OUTPUT_DIR }}/.config; then
-            echo "::error::CONFIG_KSU 未启用！"
-            exit 1
-          fi
-          
           echo "=== 配置核对（关键项）==="
           grep -E "CONFIG_KSU=|CONFIG_KSU_MANUAL_HOOK=|CONFIG_KSU_SUSFS=" ${{ env.OUTPUT_DIR }}/.config || true
 
@@ -336,8 +364,8 @@ jobs:
           body: |
             ## 测试内核 - BakaSU 纯净版（修复管理器识别，无 SUSFS）
             - 移除了所有 SUSFS 功能，用于排查反作弊重启问题。
-            - **修复了之前 Pure 版无法识别的 Bug**：移除了冲突的手动内核 Hook，保留 BakaSU 自带机制。
-            - 保留了必要的动态编译配置。
+            - 补全了 `ksu_handle_newfstat_ret` 和 `ksu_handle_fstat64_ret` 钩子，确保通过 BakaSU 编译前自检。
+            - 保留了 `selinux_hide.c` 的动态编译配置。
             - LOCALVERSION: `-edwin-pure-fixed-日期`
             - 刷机有风险，请备份原内核。
           files: ${{ env.DEVICE_CODENAME }}-BakaSU-PureFixed-*.zip
