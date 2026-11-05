@@ -32,8 +32,6 @@ jobs:
         working-directory: kernel
         run: |
           echo "=== 当前内核源码 Git 信息 ==="
-          echo "分支: ${{ env.KERNEL_BRANCH }}"
-          echo "最新提交: $(git log --oneline -1)"
           git reset --hard HEAD
           git clean -fdx
           echo "✅ 清理完成"
@@ -51,7 +49,6 @@ jobs:
             bc bison flex libelf-dev libssl-dev libncurses-dev \
             make python3 device-tree-compiler git curl xz-utils \
             ccache zip unzip zstd
-          echo "正在修复 libtinfo.so.5 依赖..."
           if ! sudo apt install -y libtinfo5; then
             sudo ln -sf /lib/x86_64-linux-gnu/libtinfo.so.6 /lib/x86_64-linux-gnu/libtinfo.so.5
           fi
@@ -62,7 +59,6 @@ jobs:
           curl -L --retry 3 -o clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-22.04.tar.xz "https://github.com/llvm/llvm-project/releases/download/llvmorg-17.0.6/clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-22.04.tar.xz"
           tar -xf clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-22.04.tar.xz -C ${{ env.CLANG_DIR }} --strip-components=1
           rm clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-22.04.tar.xz
-          ${{ env.CLANG_DIR }}/bin/clang --version
 
       - name: Manual integrate BakaSU into Kernel
         working-directory: kernel
@@ -79,18 +75,12 @@ jobs:
           echo "=== 强制拉取最新版 BakaSU ==="
           rm -rf BakaSU_src
           git clone --depth=1 https://github.com/Baka-SU/BakaSU.git BakaSU_src
-          echo "BakaSU HEAD: $(cd BakaSU_src && git log --oneline -1)"
 
-          echo "=== 手动创建 seccomp_types.h ==="
           if [ ! -f "include/linux/seccomp_types.h" ]; then
             touch "include/linux/seccomp_types.h"
           fi
 
-          echo "=== 清理旧版 KernelSU 目录 ==="
-          rm -rf KernelSU
-          rm -rf drivers/kernelsu
-          rm -rf drivers/KernelSU
-          
+          rm -rf KernelSU drivers/kernelsu drivers/KernelSU
           ln -sf ../BakaSU_src/kernel drivers/kernelsu
 
           if ! grep -q "kernelsu" drivers/Makefile; then
@@ -102,12 +92,21 @@ jobs:
           fi
 
           # ============================================================
-          # 关键修复 1：补全 fs/stat.c 中缺失的返回值钩子
+          # 关键修复 1：屏蔽 preinit_runner 避免外部构建路径报错
+          # ============================================================
+          KSU_SRC_DIR=$(readlink -f drivers/kernelsu)
+          PREINIT_RUNNER_MK="$KSU_SRC_DIR/tools/code_generation/preinit_runner/preinit_runner.mk"
+          if [ -f "$PREINIT_RUNNER_MK" ]; then
+             echo "# Disabled by CI for non-GKI" > "$PREINIT_RUNNER_MK"
+             echo "✅ 已屏蔽 preinit_runner.mk 以防止 O=out 路径解析报错"
+          fi
+
+          # ============================================================
+          # 关键修复 2：补全 fs/stat.c 中缺失的返回值钩子
           # ============================================================
           echo "=== 补全 fs/stat.c 缺失的钩子 ==="
           STAT_C="fs/stat.c"
           if [ -f "$STAT_C" ]; then
-            # 注入声明
             if ! grep -q "ksu_handle_newfstat_ret" "$STAT_C"; then
               LAST_INCLUDE_LINE=$(grep -n '^#include' "$STAT_C" | tail -n1 | cut -d: -f1)
               if [ -z "$LAST_INCLUDE_LINE" ]; then LAST_INCLUDE_LINE=1; fi
@@ -122,31 +121,21 @@ jobs:
           #endif
           #endif
           STAT_DECL_EOF
-              echo "✅ fs/stat.c: 已插入函数声明"
             fi
 
-            # 注入 newfstat 返回值钩子
             if ! grep -q "ksu_handle_newfstat_ret(&fd" "$STAT_C"; then
               perl -0pi -e 's/(SYSCALL_DEFINE2\(newfstat,.*?if\s*\(!error\)\s*error\s*=\s*cp_new_stat\(&stat, statbuf\);)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_newfstat_ret(\&fd, \&statbuf);\n#endif\n/s' "$STAT_C"
-              echo "✅ fs/stat.c: 已注入 ksu_handle_newfstat_ret (newfstat)"
             fi
-
-            # 注入 fstat64 返回值钩子
             if ! grep -q "ksu_handle_fstat64_ret(&fd" "$STAT_C"; then
               perl -0pi -e 's/(SYSCALL_DEFINE2\(fstat64,.*?if\s*\(!error\)\s*error\s*=\s*cp_new_stat64\(&stat, statbuf\);)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_fstat64_ret(\&fd, \&statbuf);\n#endif\n/s' "$STAT_C"
-              echo "✅ fs/stat.c: 已注入 ksu_handle_fstat64_ret (fstat64)"
             fi
           fi
 
           # ============================================================
-          # 关键修复 2：保留成功识别的逻辑，动态编译 selinux_hide.o
+          # 关键修复 3：保留成功识别的逻辑，动态编译 selinux_hide.o
           # ============================================================
-          echo "=== 搜索并配置 selinux_hide.c 编译 ==="
-          KSU_SRC_DIR=$(readlink -f drivers/kernelsu)
           HIDE_FILE=$(find "$KSU_SRC_DIR" -name 'selinux_hide.c' | head -n1)
-          
           if [ -n "$HIDE_FILE" ]; then
-            echo "找到文件: $HIDE_FILE"
             sed -i '/BakaSU non-GKI 修复/,+3d' "$HIDE_FILE"
             sed -i '/static struct mutex \*ksu_selinux_status_lock/d' "$HIDE_FILE"
             sed -i '/static struct selinux_state fake_state/d' "$HIDE_FILE"
@@ -180,7 +169,6 @@ jobs:
               HIDE_OBJ="${HIDE_REL%.c}.o"
               if ! grep -q "$HIDE_OBJ" "$SELINUX_MK"; then
                 echo "obj-y += $HIDE_OBJ" >> "$SELINUX_MK"
-                echo "✅ 已强制 $HIDE_OBJ 编译到 $SELINUX_MK"
               fi
             fi
           fi
