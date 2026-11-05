@@ -1,4 +1,4 @@
-name: Build Kernel with BakaSU (Pure No SUSFS - Final)
+name: Build Kernel with BakaSU (Pure No SUSFS - Fixed Hook)
 
 on:
   workflow_dispatch:
@@ -34,7 +34,6 @@ jobs:
           echo "=== 当前内核源码 Git 信息 ==="
           echo "分支: ${{ env.KERNEL_BRANCH }}"
           echo "最新提交: $(git log --oneline -1)"
-          echo "提交哈希: $(git rev-parse HEAD)"
           git reset --hard HEAD
           git clean -fdx
           echo "✅ 清理完成"
@@ -103,7 +102,44 @@ jobs:
           fi
 
           # ============================================================
-          # 关键：保留此段（动态编译 selinux_hide.o），但绝不动 fs/stat.c 等内核源码
+          # 关键修复 1：补全 fs/stat.c 中缺失的返回值钩子
+          # ============================================================
+          echo "=== 补全 fs/stat.c 缺失的钩子 ==="
+          STAT_C="fs/stat.c"
+          if [ -f "$STAT_C" ]; then
+            # 注入声明
+            if ! grep -q "ksu_handle_newfstat_ret" "$STAT_C"; then
+              LAST_INCLUDE_LINE=$(grep -n '^#include' "$STAT_C" | tail -n1 | cut -d: -f1)
+              if [ -z "$LAST_INCLUDE_LINE" ]; then LAST_INCLUDE_LINE=1; fi
+              sed -i "${LAST_INCLUDE_LINE}r /dev/stdin" "$STAT_C" << 'STAT_DECL_EOF'
+
+          #ifdef CONFIG_KSU_MANUAL_HOOK
+          __attribute__((hot))
+          extern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);
+          extern void ksu_handle_newfstat_ret(unsigned int *fd, struct stat __user **statbuf_ptr);
+          #if defined(__ARCH_WANT_STAT64) || defined(__ARCH_WANT_COMPAT_STAT64)
+          extern void ksu_handle_fstat64_ret(unsigned long *fd, struct stat64 __user **statbuf_ptr);
+          #endif
+          #endif
+          STAT_DECL_EOF
+              echo "✅ fs/stat.c: 已插入函数声明"
+            fi
+
+            # 注入 newfstat 返回值钩子
+            if ! grep -q "ksu_handle_newfstat_ret(&fd" "$STAT_C"; then
+              perl -0pi -e 's/(SYSCALL_DEFINE2\(newfstat,.*?if\s*\(!error\)\s*error\s*=\s*cp_new_stat\(&stat, statbuf\);)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_newfstat_ret(\&fd, \&statbuf);\n#endif\n/s' "$STAT_C"
+              echo "✅ fs/stat.c: 已注入 ksu_handle_newfstat_ret (newfstat)"
+            fi
+
+            # 注入 fstat64 返回值钩子
+            if ! grep -q "ksu_handle_fstat64_ret(&fd" "$STAT_C"; then
+              perl -0pi -e 's/(SYSCALL_DEFINE2\(fstat64,.*?if\s*\(!error\)\s*error\s*=\s*cp_new_stat64\(&stat, statbuf\);)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_fstat64_ret(\&fd, \&statbuf);\n#endif\n/s' "$STAT_C"
+              echo "✅ fs/stat.c: 已注入 ksu_handle_fstat64_ret (fstat64)"
+            fi
+          fi
+
+          # ============================================================
+          # 关键修复 2：保留成功识别的逻辑，动态编译 selinux_hide.o
           # ============================================================
           echo "=== 搜索并配置 selinux_hide.c 编译 ==="
           KSU_SRC_DIR=$(readlink -f drivers/kernelsu)
@@ -184,7 +220,7 @@ jobs:
             --disable KSU_SUSFS \
             --disable HEADERS_INSTALL \
             --set-val FRAME_WARN 131072 \
-            --set-str LOCALVERSION "-edwin-pure-final-$(date +%m%d)"
+            --set-str LOCALVERSION "-edwin-pure-fixed-$(date +%m%d)"
 
           make O=${{ env.OUTPUT_DIR }} olddefconfig 2>&1 | tee olddefconfig.log
 
@@ -226,7 +262,7 @@ jobs:
             '#!/sbin/sh' \
             '### AnyKernel3 Flashable Kernel Script' \
             "properties() { '" \
-            'kernel.string=5.4.302-edwin-pure-final+ BakaSU for Xiaomi 11 Ultra' \
+            'kernel.string=5.4.302-edwin-pure-fixed+ BakaSU for Xiaomi 11 Ultra' \
             'do.devicecheck=1' 'do.modules=0' 'do.systemless=0' 'do.cleanup=1' 'do.cleanuponabort=0' \
             'device.name1=star' 'device.name2=mars' \
             "'; } # end properties" \
@@ -237,11 +273,11 @@ jobs:
           
           chmod +x "$AK3_DIR/anykernel.sh"
           cd $AK3_DIR
-          zip -r9 "../${{ env.DEVICE_CODENAME }}-BakaSU-PureFinal-${TIME}.zip" ./*
+          zip -r9 "../${{ env.DEVICE_CODENAME }}-BakaSU-PureFixed-${TIME}.zip" ./*
           cd ..
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kernel_bakasu_pure_final
-          path: ${{ env.DEVICE_CODENAME }}-BakaSU-PureFinal-*.zip
+          name: kernel_bakasu_pure_fixed
+          path: ${{ env.DEVICE_CODENAME }}-BakaSU-PureFixed-*.zip
