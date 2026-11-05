@@ -1,4 +1,4 @@
-name: Build Kernel with BakaSU (Pure No SUSFS - Fixed)
+name: Build Kernel with BakaSU (Pure No SUSFS - Final)
 
 on:
   workflow_dispatch:
@@ -35,7 +35,6 @@ jobs:
           echo "分支: ${{ env.KERNEL_BRANCH }}"
           echo "最新提交: $(git log --oneline -1)"
           echo "提交哈希: $(git rev-parse HEAD)"
-          echo "=== 强制清理可能存在的旧编译产物 ==="
           git reset --hard HEAD
           git clean -fdx
           echo "✅ 清理完成"
@@ -56,12 +55,6 @@ jobs:
           echo "正在修复 libtinfo.so.5 依赖..."
           if ! sudo apt install -y libtinfo5; then
             sudo ln -sf /lib/x86_64-linux-gnu/libtinfo.so.6 /lib/x86_64-linux-gnu/libtinfo.so.5
-          fi
-          if [ ! -f /lib/x86_64-linux-gnu/libtinfo.so.5 ]; then
-            echo "::error::修复失败！libtinfo.so.5 仍然不存在。"
-            exit 1
-          else
-            echo "✅ libtinfo.so.5 修复成功！"
           fi
 
       - name: Download Clang 17.0.6 (Official Kernel Toolchain)
@@ -89,10 +82,9 @@ jobs:
           git clone --depth=1 https://github.com/Baka-SU/BakaSU.git BakaSU_src
           echo "BakaSU HEAD: $(cd BakaSU_src && git log --oneline -1)"
 
-          echo "=== 手动创建 seccomp_types.h 以规避 grep 警告 ==="
+          echo "=== 手动创建 seccomp_types.h ==="
           if [ ! -f "include/linux/seccomp_types.h" ]; then
             touch "include/linux/seccomp_types.h"
-            echo "✅ 已创建空的 seccomp_types.h"
           fi
 
           echo "=== 清理旧版 KernelSU 目录 ==="
@@ -101,7 +93,6 @@ jobs:
           rm -rf drivers/KernelSU
           
           ln -sf ../BakaSU_src/kernel drivers/kernelsu
-          echo "✅ 软链接: $(readlink -f drivers/kernelsu)"
 
           if ! grep -q "kernelsu" drivers/Makefile; then
             printf "\nobj-\$(CONFIG_KSU) += kernelsu/\n" >> drivers/Makefile
@@ -112,54 +103,11 @@ jobs:
           fi
 
           # ============================================================
-          # 关键修复：补全 fs/stat.c 中缺失的钩子
-          # ============================================================
-          echo "=== 应用官方 Manual Hook 补丁 (fs/stat.c) ==="
-          STAT_C="fs/stat.c"
-          if [ -f "$STAT_C" ]; then
-            # 1a. 注入函数声明
-            if ! grep -q "ksu_handle_newfstat_ret" "$STAT_C"; then
-              LAST_INCLUDE_LINE=$(grep -n '^#include' "$STAT_C" | tail -n1 | cut -d: -f1)
-              if [ -z "$LAST_INCLUDE_LINE" ]; then LAST_INCLUDE_LINE=1; fi
-              sed -i "${LAST_INCLUDE_LINE}r /dev/stdin" "$STAT_C" << 'STAT_DECL_EOF'
-
-          #ifdef CONFIG_KSU_MANUAL_HOOK
-          __attribute__((hot))
-          extern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);
-          extern void ksu_handle_newfstat_ret(unsigned int *fd, struct stat __user **statbuf_ptr);
-          #if defined(__ARCH_WANT_STAT64) || defined(__ARCH_WANT_COMPAT_STAT64)
-          extern void ksu_handle_fstat64_ret(unsigned long *fd, struct stat64 __user **statbuf_ptr);
-          #endif
-          #endif
-          STAT_DECL_EOF
-              echo "✅ fs/stat.c: 已插入函数声明"
-            fi
-
-            # 1b. newfstatat 入口钩子
-            if ! grep -q "ksu_handle_stat(&dfd" "$STAT_C"; then
-              perl -0pi -e 's/(SYSCALL_DEFINE4\(newfstatat,.*?\{)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_stat(\&dfd, \&filename, \&flag);\n#endif\n/s' "$STAT_C"
-              echo "✅ fs/stat.c: 已注入 ksu_handle_stat (newfstatat)"
-            fi
-
-            # 1c. newfstat 返回值钩子（关键！）
-            if ! grep -q "ksu_handle_newfstat_ret(&fd" "$STAT_C"; then
-              perl -0pi -e 's/(SYSCALL_DEFINE2\(newfstat,.*?if\s*\(!error\)\s*error\s*=\s*cp_new_stat\(&stat, statbuf\);)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_newfstat_ret(\&fd, \&statbuf);\n#endif\n/s' "$STAT_C"
-              echo "✅ fs/stat.c: 已注入 ksu_handle_newfstat_ret (newfstat)"
-            fi
-
-            # 1d. fstat64 返回值钩子（32位兼容）
-            if ! grep -q "ksu_handle_fstat64_ret(&fd" "$STAT_C"; then
-              perl -0pi -e 's/(SYSCALL_DEFINE2\(fstat64,.*?if\s*\(!error\)\s*error\s*=\s*cp_new_stat64\(&stat, statbuf\);)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_fstat64_ret(\&fd, \&statbuf);\n#endif\n/s' "$STAT_C"
-              echo "✅ fs/stat.c: 已注入 ksu_handle_fstat64_ret (fstat64)"
-            fi
-          fi
-
-          # ============================================================
-          # 保留：动态查找并强制编译 selinux_hide.o
+          # 关键：保留此段（动态编译 selinux_hide.o），但绝不动 fs/stat.c 等内核源码
           # ============================================================
           echo "=== 搜索并配置 selinux_hide.c 编译 ==="
-          REAL_KSU_DIR=$(realpath drivers/kernelsu)
-          HIDE_FILE=$(find "$REAL_KSU_DIR" -name 'selinux_hide.c' | head -n1)
+          KSU_SRC_DIR=$(readlink -f drivers/kernelsu)
+          HIDE_FILE=$(find "$KSU_SRC_DIR" -name 'selinux_hide.c' | head -n1)
           
           if [ -n "$HIDE_FILE" ]; then
             echo "找到文件: $HIDE_FILE"
@@ -181,7 +129,7 @@ jobs:
             SELINUX_MK="$HIDE_DIR/Makefile"
             if [ ! -f "$SELINUX_MK" ]; then
               SEARCH_DIR="$HIDE_DIR"
-              while [ "$SEARCH_DIR" != "." ] && [ "$SEARCH_DIR" != "/" ] && [ "$SEARCH_DIR" != "$REAL_KSU_DIR" ]; do
+              while [ "$SEARCH_DIR" != "." ] && [ "$SEARCH_DIR" != "/" ] && [ "$SEARCH_DIR" != "$KSU_SRC_DIR" ]; do
                 if [ -f "$SEARCH_DIR/Makefile" ]; then
                   SELINUX_MK="$SEARCH_DIR/Makefile"
                   break
@@ -201,14 +149,12 @@ jobs:
             fi
           fi
 
-          echo "=== 清理 ccache 并修复源码编译警告 ==="
+          echo "=== 修复编译警告 ==="
           ccache -C
-
           FOCALTECH_MAKEFILE="drivers/input/touchscreen/focaltech_3680/Makefile"
           if [ -f "$FOCALTECH_MAKEFILE" ]; then
             sed -i 's/^ \+/\t/' "$FOCALTECH_MAKEFILE"
           fi
-
           for entry in \
             "drivers/soc/qcom/Makefile:-Wno-unused-variable" \
             "drivers/thermal/Makefile:-Wno-fortify-source" \
@@ -221,17 +167,12 @@ jobs:
             fi
           done
 
-          echo "=== 清理残留并生成 .config ==="
+          echo "=== 清理并生成 .config ==="
           rm -rf ${{ env.OUTPUT_DIR }}
           rm -f .config
           rm -rf include/config include/generated
           make mrproper
-
           make -j$(nproc) O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
-          if [ ! -f "${{ env.OUTPUT_DIR }}/.config" ]; then
-            echo "::error::make defconfig 失败！"
-            exit 1
-          fi
 
           echo "=== 启用纯净 BakaSU 配置（无 SUSFS） ==="
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
@@ -243,12 +184,9 @@ jobs:
             --disable KSU_SUSFS \
             --disable HEADERS_INSTALL \
             --set-val FRAME_WARN 131072 \
-            --set-str LOCALVERSION "-edwin-pure-fixed-$(date +%m%d)"
+            --set-str LOCALVERSION "-edwin-pure-final-$(date +%m%d)"
 
           make O=${{ env.OUTPUT_DIR }} olddefconfig 2>&1 | tee olddefconfig.log
-
-          echo "=== 配置核对（关键项）==="
-          grep -E "CONFIG_KSU=|CONFIG_KSU_MANUAL_HOOK=|CONFIG_KSU_SUSFS=" ${{ env.OUTPUT_DIR }}/.config || true
 
       - name: Build Kernel
         working-directory: kernel
@@ -258,7 +196,6 @@ jobs:
           export PATH="${{ env.CLANG_DIR }}/bin:$PATH"
           export CCACHE_EXEC=$(which ccache)
           export CCACHE_DIR="${{ env.CCACHE_DIR }}"
-          ccache -M 6G
           export LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- \
                  CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
@@ -267,22 +204,12 @@ jobs:
                KCFLAGS="-Wno-error -Wframe-larger-than=131072 -Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-array-parameter -Wno-declaration-after-statement -Wno-sometimes-uninitialized -Wno-unused-variable -Wno-misleading-indentation -Wno-fortify-source -Wno-macro-redefined -Wno-unused-result -Wno-unused-label" \
                HOSTCFLAGS="" \
                2>&1 | tee build.log
-          BUILD_STATUS=${PIPESTATUS[0]}
-
-          if [ $BUILD_STATUS -ne 0 ]; then
-            echo "::error::编译失败，退出码 $BUILD_STATUS"
+          
+          if [ ${PIPESTATUS[0]} -ne 0 ] || [ ! -f "${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image" ]; then
+            echo "::error::编译失败"
             exit 1
           fi
-
-          if [ ! -f "${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image" ]; then
-            echo "::error::编译失败，未生成 Image"
-            exit 1
-          fi
-
-          echo "=== 编译产物的校验信息 ==="
-          md5sum ${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image
-          strings ${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image | grep "Linux version" | head -n 1
-          echo "✅ 编译成功，Image 已生成"
+          echo "✅ 编译成功"
 
       - name: Package AnyKernel3
         id: package
@@ -293,81 +220,28 @@ jobs:
           IMG_PATH="${{ env.KERNEL_DIR }}/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image"
           
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git $AK3_DIR
-          
           gzip -9 -c "$IMG_PATH" > "$AK3_DIR/Image.gz"
-          ls -lh "$AK3_DIR/Image.gz"
           
           printf '%s\n' \
             '#!/sbin/sh' \
-            '' \
             '### AnyKernel3 Flashable Kernel Script' \
-            '## Adapted for Xiaomi Mi 11 Ultra (star) with BakaSU (Pure Fixed)' \
-            '' \
             "properties() { '" \
-            'kernel.string=5.4.302-edwin-pure-fixed+ BakaSU for Xiaomi 11 Ultra' \
-            'do.devicecheck=1' \
-            'do.modules=0' \
-            'do.systemless=0' \
-            'do.cleanup=1' \
-            'do.cleanuponabort=0' \
-            'device.name1=star' \
-            'device.name2=mars' \
-            'device.name3=' \
-            'device.name4=' \
-            'device.name5=' \
-            'supported.versions=' \
-            'supported.patchlevels=' \
-            'supported.vendorpatchlevels=' \
+            'kernel.string=5.4.302-edwin-pure-final+ BakaSU for Xiaomi 11 Ultra' \
+            'do.devicecheck=1' 'do.modules=0' 'do.systemless=0' 'do.cleanup=1' 'do.cleanuponabort=0' \
+            'device.name1=star' 'device.name2=mars' \
             "'; } # end properties" \
-            '' \
-            '# boot shell variables' \
-            'BLOCK=boot;' \
-            'IS_SLOT_DEVICE=1;' \
-            'RAMDISK_COMPRESSION=auto;' \
-            'PATCH_VBMETA_FLAG=auto;' \
-            '' \
-            '# import functions/variables and setup patching - do not remove' \
+            'BLOCK=boot;' 'IS_SLOT_DEVICE=1;' 'RAMDISK_COMPRESSION=auto;' 'PATCH_VBMETA_FLAG=auto;' \
             '. tools/ak3-core.sh;' \
-            '' \
-            '# pure kernel swap: keep the existing ramdisk and repack with the new Image.gz' \
-            'split_boot;' \
-            'flash_boot;' \
+            'split_boot;' 'flash_boot;' \
             > "$AK3_DIR/anykernel.sh"
           
           chmod +x "$AK3_DIR/anykernel.sh"
-          
           cd $AK3_DIR
-          zip -r9 "../${{ env.DEVICE_CODENAME }}-BakaSU-PureFixed-${TIME}.zip" ./*
+          zip -r9 "../${{ env.DEVICE_CODENAME }}-BakaSU-PureFinal-${TIME}.zip" ./*
           cd ..
-          echo "zip_name=${{ env.DEVICE_CODENAME }}-BakaSU-PureFixed-${TIME}.zip" >> $GITHUB_OUTPUT
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kernel_bakasu_pure_fixed
-          path: ${{ env.DEVICE_CODENAME }}-BakaSU-PureFixed-*.zip
-
-      - name: Upload build.log on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build_log
-          path: kernel/build.log
-          if-no-files-found: ignore
-
-      - name: Optional Release
-        if: github.event_name == 'workflow_dispatch'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: bakasu_pure_fixed_${{ github.run_number }}
-          name: "BakaSU Pure Kernel (Fixed, No SUSFS)"
-          body: |
-            ## 测试内核 - BakaSU 纯净版（修复管理器识别，无 SUSFS）
-            - 移除了所有 SUSFS 功能，用于排查反作弊重启问题。
-            - 补全了 `ksu_handle_newfstat_ret` 和 `ksu_handle_fstat64_ret` 钩子，确保通过 BakaSU 编译前自检。
-            - 保留了 `selinux_hide.c` 的动态编译配置。
-            - LOCALVERSION: `-edwin-pure-fixed-日期`
-            - 刷机有风险，请备份原内核。
-          files: ${{ env.DEVICE_CODENAME }}-BakaSU-PureFixed-*.zip
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: kernel_bakasu_pure_final
+          path: ${{ env.DEVICE_CODENAME }}-BakaSU-PureFinal-*.zip
