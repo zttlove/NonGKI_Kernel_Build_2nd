@@ -1,4 +1,4 @@
-name: Build Kernel with BakaSU (SELinux Hide Only - Official Hook)
+name: Build Kernel with BakaSU (Pure No SUSFS)
 
 on:
   workflow_dispatch:
@@ -14,7 +14,6 @@ env:
   CLANG_DIR: "${{ github.workspace }}/clang"
   CCACHE_DIR: "${{ github.workspace }}/.ccache"
   KERNEL_DIR: "${{ github.workspace }}/kernel"
-  BAKASU_BRANCH: "sync-up"
 
 jobs:
   build:
@@ -35,6 +34,7 @@ jobs:
           echo "=== 当前内核源码 Git 信息 ==="
           echo "分支: ${{ env.KERNEL_BRANCH }}"
           echo "最新提交: $(git log --oneline -1)"
+          echo "提交哈希: $(git rev-parse HEAD)"
           echo "=== 强制清理可能存在的旧编译产物 ==="
           git reset --hard HEAD
           git clean -fdx
@@ -72,7 +72,7 @@ jobs:
           rm clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-22.04.tar.xz
           ${{ env.CLANG_DIR }}/bin/clang --version
 
-      - name: Integrate BakaSU & Apply Official Hooks
+      - name: Manual integrate BakaSU into Kernel
         working-directory: kernel
         run: |
           set -e
@@ -84,35 +84,35 @@ jobs:
           export LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- \
                  CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
+          echo "=== 强制拉取最新版 BakaSU ==="
+          rm -rf BakaSU_src
+          git clone --depth=1 https://github.com/Baka-SU/BakaSU.git BakaSU_src
+          echo "BakaSU HEAD: $(cd BakaSU_src && git log --oneline -1)"
+
           echo "=== 手动创建 seccomp_types.h 以规避 grep 警告 ==="
           if [ ! -f "include/linux/seccomp_types.h" ]; then
             touch "include/linux/seccomp_types.h"
+            echo "✅ 已创建空的 seccomp_types.h"
           fi
 
-          echo "=== 克隆并集成 BakaSU（分支: ${{ env.BAKASU_BRANCH }}）==="
-          rm -rf KernelSU BakaSU_src drivers/kernelsu drivers/KernelSU
-
-          # 分支存在性检查
-          if ! git ls-remote --heads https://github.com/Baka-SU/BakaSU.git "${{ env.BAKASU_BRANCH }}" | grep -q .; then
-            echo "::error::BakaSU 仓库中不存在分支 '${{ env.BAKASU_BRANCH }}'。"
-            echo "远程可用分支如下："
-            git ls-remote --heads https://github.com/Baka-SU/BakaSU.git | awk -F'refs/heads/' '{print $2}'
-            exit 1
-          fi
-
-          git clone --depth=1 --branch "${{ env.BAKASU_BRANCH }}" https://github.com/Baka-SU/BakaSU.git BakaSU_src
+          echo "=== 清理旧版 KernelSU 目录 ==="
+          rm -rf KernelSU
+          rm -rf drivers/kernelsu
+          rm -rf drivers/KernelSU
+          
           ln -sf ../BakaSU_src/kernel drivers/kernelsu
+          echo "✅ 软链接: $(readlink -f drivers/kernelsu)"
 
           if ! grep -q "kernelsu" drivers/Makefile; then
             printf "\nobj-\$(CONFIG_KSU) += kernelsu/\n" >> drivers/Makefile
           fi
+
           if ! grep -q 'source "drivers/kernelsu/Kconfig"' drivers/Kconfig; then
             sed -i '/^endmenu/i\source "drivers/kernelsu/Kconfig"' drivers/Kconfig
           fi
 
           # ============================================================
           # 修复 BakaSU preinit.h 中 void 函数返回 false 的源码 bug
-          # （保留此修复，让 preinit 能正常编译，供管理器识别）
           # ============================================================
           REAL_KSU_DIR=$(realpath drivers/kernelsu)
           PREINIT_H="$REAL_KSU_DIR/preinit/preinit.h"
@@ -128,11 +128,8 @@ jobs:
             echo "⚠️ 未找到 $PREINIT_H，跳过"
           fi
 
-          echo "=== 应用官方 Manual Hook 补丁 (使用 sed 和 perl 精准注入) ==="
-
-          # ============================================================
-          # 1. 完整 Hook fs/stat.c（入口 + 返回值，含 32 位兼容）
-          # ============================================================
+          echo "=== 应用官方 Manual Hook 补丁 ==="
+          # 1. Hook fs/stat.c
           STAT_C="fs/stat.c"
           if [ -f "$STAT_C" ]; then
             if ! grep -q "ksu_handle_newfstat_ret" "$STAT_C"; then
@@ -149,36 +146,19 @@ jobs:
           #endif
           #endif
           STAT_DECL_EOF
-              echo "✅ fs/stat.c: 已插入函数声明（含 ksu_handle_fstat64_ret）"
-            else
-              echo "⚠️ fs/stat.c: 声明已存在，跳过"
             fi
-
             if ! grep -q "ksu_handle_stat(&dfd" "$STAT_C"; then
               perl -0pi -e 's/(SYSCALL_DEFINE4\(newfstatat,.*?\{)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_stat(\&dfd, \&filename, \&flag);\n#endif\n/s' "$STAT_C"
-              echo "✅ fs/stat.c: 已注入 ksu_handle_stat (newfstatat)"
-            else
-              echo "⚠️ fs/stat.c: ksu_handle_stat (newfstatat) 已存在"
             fi
-
             if ! grep -q "ksu_handle_newfstat_ret(&fd" "$STAT_C"; then
               perl -0pi -e 's/(SYSCALL_DEFINE2\(newfstat,.*?if\s*\(!error\)\s*error\s*=\s*cp_new_stat\(&stat, statbuf\);)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_newfstat_ret(\&fd, \&statbuf);\n#endif\n/s' "$STAT_C"
-              echo "✅ fs/stat.c: 已注入 ksu_handle_newfstat_ret (newfstat)"
-            else
-              echo "⚠️ fs/stat.c: ksu_handle_newfstat_ret (newfstat) 已存在"
             fi
-
             if ! grep -q "ksu_handle_fstat64_ret(&fd" "$STAT_C"; then
               perl -0pi -e 's/(SYSCALL_DEFINE2\(fstat64,.*?if\s*\(!error\)\s*error\s*=\s*cp_new_stat64\(&stat, statbuf\);)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_fstat64_ret(\&fd, \&statbuf);\n#endif\n/s' "$STAT_C"
-              echo "✅ fs/stat.c: 已注入 ksu_handle_fstat64_ret (fstat64)"
-            else
-              echo "⚠️ fs/stat.c: ksu_handle_fstat64_ret (fstat64) 已存在"
             fi
           fi
 
-          # ============================================================
           # 2. Hook fs/exec.c
-          # ============================================================
           EXEC_C="fs/exec.c"
           if [ -f "$EXEC_C" ]; then
             if ! grep -q "ksu_handle_execveat" "$EXEC_C"; then
@@ -191,15 +171,10 @@ jobs:
               ' "$EXEC_C"
               perl -0pi -e 's/(static int\s+do_execveat_common\(.*?)(\tif\s*\(IS_ERR\(filename\)\))/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_execveat(\&fd, \&filename, \&argv, \&envp, \&flags);\n#endif\n\n$2/s' "$EXEC_C"
               perl -0pi -e 's/(static int\s+do_execveat_common\(.*?)(\tputname\(filename\);)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_post_execveat(\&fd, \&filename, \&argv, \&envp, \&flags, \&retval);\n#endif\n$2/s' "$EXEC_C"
-              echo "✅ fs/exec.c: Hook 完成"
-            else
-              echo "⚠️ fs/exec.c: Hook 已存在"
             fi
           fi
 
-          # ============================================================
           # 3. Hook fs/open.c
-          # ============================================================
           OPEN_C="fs/open.c"
           if [ -f "$OPEN_C" ]; then
             if ! grep -q "ksu_handle_faccessat" "$OPEN_C"; then
@@ -210,15 +185,10 @@ jobs:
               #endif\
               ' "$OPEN_C"
               perl -0pi -e 's/(SYSCALL_DEFINE3\(faccessat,.*?\{)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_faccessat(\&dfd, \&filename, \&mode, NULL);\n#endif\n/s' "$OPEN_C"
-              echo "✅ fs/open.c: Hook 完成"
-            else
-              echo "⚠️ fs/open.c: Hook 已存在"
             fi
           fi
 
-          # ============================================================
           # 4. Hook kernel/reboot.c
-          # ============================================================
           REBOOT_C="kernel/reboot.c"
           if [ -f "$REBOOT_C" ]; then
             if ! grep -q "ksu_handle_sys_reboot" "$REBOOT_C"; then
@@ -228,15 +198,10 @@ jobs:
               #endif\
               ' "$REBOOT_C"
               perl -0pi -e 's/(SYSCALL_DEFINE4\(reboot,.*?\{.*?char buffer\[256\];.*?int ret = 0;)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_sys_reboot(magic1, magic2, cmd, \&arg);\n#endif\n/s' "$REBOOT_C"
-              echo "✅ kernel/reboot.c: Hook 完成"
-            else
-              echo "⚠️ kernel/reboot.c: Hook 已存在"
             fi
           fi
 
-          # ============================================================
           # 5. 导出 SELinux 静态符号
-          # ============================================================
           SELINUXFS_C="security/selinux/selinuxfs.c"
           if [ -f "$SELINUXFS_C" ]; then
              sed -i 's/^static ssize_t (\*write_op\[\])/ssize_t (*write_op[])/' "$SELINUXFS_C"
@@ -247,51 +212,54 @@ jobs:
              sed -i 's/^static struct page \*selinux_status_page/struct page *selinux_status_page/' "$STATUS_C"
              sed -i 's/^static DEFINE_MUTEX(selinux_status_lock)/DEFINE_MUTEX(selinux_status_lock)/' "$STATUS_C"
           fi
-          SERVICES_C="security/selinux/ss/services.c"
-          if [ -f "$SERVICES_C" ]; then
-             sed -i 's/^static void security_dump_masked_av/void security_dump_masked_av/' "$SERVICES_C"
-             sed -i 's/^static void context_struct_compute_av/void context_struct_compute_av/' "$SERVICES_C"
-          fi
 
-          echo "✅ 官方 Hook 补丁已全部应用"
-
-          # ============================================================
-          # 针对 SELinux Hide 的修复与安全加固
-          # ============================================================
-          echo "=== 搜索并修复 selinux_hide.c ==="
+          # 6. 修复 selinux_hide.c 全局符号
           HIDE_FILE=$(find "$REAL_KSU_DIR" -name 'selinux_hide.c' | head -n1)
-
           if [ -f "$HIDE_FILE" ]; then
+            sed -i '/BakaSU non-GKI 修复/,+3d' "$HIDE_FILE"
             sed -i '/static struct mutex \*ksu_selinux_status_lock/d' "$HIDE_FILE"
             sed -i '/static struct selinux_state fake_state/d' "$HIDE_FILE"
-
             LAST_INCLUDE_LINE=$(grep -n '^#include' "$HIDE_FILE" | tail -n1 | cut -d: -f1)
             if [ -z "$LAST_INCLUDE_LINE" ]; then LAST_INCLUDE_LINE=1; fi
-            sed -i "${LAST_INCLUDE_LINE}r /dev/stdin" "$HIDE_FILE" << 'HIDE_EOF'
-
+            sed -i "${LAST_INCLUDE_LINE}r /dev/stdin" "$HIDE_FILE" << 'EOF'
+          
           /* === BakaSU non-GKI 修复：全局符号定义 === */
           struct selinux_state fake_state;
           struct mutex *ksu_selinux_status_lock = NULL;
-          HIDE_EOF
+          EOF
             sed -i 's/^\(\s*\)mutex_lock(ksu_selinux_status_lock);/\1if (ksu_selinux_status_lock) mutex_lock(ksu_selinux_status_lock);/' "$HIDE_FILE"
             sed -i 's/^\(\s*\)mutex_unlock(ksu_selinux_status_lock);/\1if (ksu_selinux_status_lock) mutex_unlock(ksu_selinux_status_lock);/' "$HIDE_FILE"
-            echo "✅ SELinux Hide 修复完成"
           fi
 
-          echo "=== 修复 focaltech_3680 Makefile 缩进 ==="
+          echo "=== 清理 ccache 并修复源码编译警告 ==="
+          ccache -C
+
           FOCALTECH_MAKEFILE="drivers/input/touchscreen/focaltech_3680/Makefile"
           if [ -f "$FOCALTECH_MAKEFILE" ]; then
             sed -i 's/^ \+/\t/' "$FOCALTECH_MAKEFILE"
           fi
 
-          echo "=== 清理并生成配置 ==="
+          for entry in \
+            "drivers/soc/qcom/Makefile:-Wno-unused-variable" \
+            "drivers/thermal/Makefile:-Wno-fortify-source" \
+            "techpack/bootinfo/Makefile:-Wno-unused-result" \
+            "drivers/usb/dwc3/Makefile:-Wno-unused-label"; do
+            MK="${entry%:*}"
+            FLAG="${entry#*:}"
+            if [ -f "$MK" ] && ! grep -q -- "$FLAG" "$MK" 2>/dev/null; then
+              echo "ccflags-y += $FLAG" >> "$MK"
+            fi
+          done
+
+          echo "=== 清理残留并生成 .config ==="
           rm -rf ${{ env.OUTPUT_DIR }}
           rm -f .config
           rm -rf include/config include/generated
           make mrproper
 
           make -j$(nproc) O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
-
+          
+          echo "=== 启用纯净 BakaSU 配置（无 SUSFS） ==="
           scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
             --enable KSU \
             --enable KSU_MANUAL_HOOK \
@@ -301,13 +269,12 @@ jobs:
             --disable KSU_SUSFS \
             --disable HEADERS_INSTALL \
             --set-val FRAME_WARN 131072 \
-            --set-str LOCALVERSION "-edwin-hide-$(date +%m%d)"
+            --set-str LOCALVERSION "-edwin-pure-$(date +%m%d)"
 
           make O=${{ env.OUTPUT_DIR }} olddefconfig 2>&1 | tee olddefconfig.log
 
           echo "=== 配置核对（关键项）==="
-          grep -E "CONFIG_KSU=|CONFIG_KSU_MANUAL_HOOK=|CONFIG_KSU_SUSFS=|CONFIG_KSU_PREINIT" \
-               ${{ env.OUTPUT_DIR }}/.config || true
+          grep -E "CONFIG_KSU=|CONFIG_KSU_MANUAL_HOOK=|CONFIG_KSU_SUSFS=" ${{ env.OUTPUT_DIR }}/.config || true
 
       - name: Build Kernel
         working-directory: kernel
@@ -350,20 +317,20 @@ jobs:
           TIME=$(date +"%Y.%m.%d-%H%M")
           AK3_DIR="AnyKernel3"
           IMG_PATH="${{ env.KERNEL_DIR }}/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image"
-
+          
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git $AK3_DIR
-
+          
           gzip -9 -c "$IMG_PATH" > "$AK3_DIR/Image.gz"
           ls -lh "$AK3_DIR/Image.gz"
-
+          
           printf '%s\n' \
             '#!/sbin/sh' \
             '' \
             '### AnyKernel3 Flashable Kernel Script' \
-            '## Adapted for Xiaomi Mi 11 Ultra (star) with BakaSU (Hide Only, No SUSFS)' \
+            '## Adapted for Xiaomi Mi 11 Ultra (star) with Pure BakaSU (No SUSFS)' \
             '' \
             "properties() { '" \
-            'kernel.string=5.4.302-edwin-hide+ BakaSU for Xiaomi 11 Ultra' \
+            'kernel.string=5.4.302-edwin-pure+ BakaSU for Xiaomi 11 Ultra' \
             'do.devicecheck=1' \
             'do.modules=0' \
             'do.systemless=0' \
@@ -392,19 +359,19 @@ jobs:
             'split_boot;' \
             'flash_boot;' \
             > "$AK3_DIR/anykernel.sh"
-
+          
           chmod +x "$AK3_DIR/anykernel.sh"
-
+          
           cd $AK3_DIR
-          zip -r9 "../${{ env.DEVICE_CODENAME }}-BakaSU-HideOnly-${TIME}.zip" ./*
+          zip -r9 "../${{ env.DEVICE_CODENAME }}-BakaSU-Pure-${TIME}.zip" ./*
           cd ..
-          echo "zip_name=${{ env.DEVICE_CODENAME }}-BakaSU-HideOnly-${TIME}.zip" >> $GITHUB_OUTPUT
+          echo "zip_name=${{ env.DEVICE_CODENAME }}-BakaSU-Pure-${TIME}.zip" >> $GITHUB_OUTPUT
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kernel_bakasu_hideonly
-          path: ${{ env.DEVICE_CODENAME }}-BakaSU-HideOnly-*.zip
+          name: kernel_bakasu_pure
+          path: ${{ env.DEVICE_CODENAME }}-BakaSU-Pure-*.zip
 
       - name: Upload build.log on failure
         if: failure()
@@ -418,20 +385,16 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: bakasu_hideonly_${{ github.run_number }}
-          name: "BakaSU Kernel (SELinux Hide Only, No SUSFS)"
+          tag_name: bakasu_pure_${{ github.run_number }}
+          name: "BakaSU Pure Kernel (No SUSFS)"
           body: |
-            ## 测试内核 - BakaSU（仅 BakaSU，无 SUSFS）
-            - 仅集成 BakaSU 原生 Root 功能与 SELinux Hide
-            - 保留 BakaSU 官方 Manual Hook
-            - 不包含 SUSFS（`--disable KSU_SUSFS`）
-            - **已启用 preinit（恢复管理器识别）**
-            - 已修复 BakaSU `preinit.h` 中 void 函数返回 false 的源码 bug
-            - 已补齐全部 stat 系列钩子（newfstatat / newfstat / fstat64）
-            - BakaSU 源分支：`${{ env.BAKASU_BRANCH }}`
-            - 为 SELinux 锁操作增加空指针检查，降低崩溃概率
-            - LOCALVERSION: `-edwin-hide-日期`
-            - 刷机有风险，请备份原内核
-          files: ${{ env.DEVICE_CODENAME }}-BakaSU-HideOnly-*.zip
+            ## 测试内核 - BakaSU 纯净版（无 SUSFS）
+            - 移除了所有的 SUSFS 相关功能，专用于排查“春秋检测”重启问题。
+            - 已补齐 BakaSU 官方 Manual Hook。
+            - 已修复 preinit 及 SELinux 符号。
+            - 注意：因为没有 SUSFS，反作弊检测可能会直接检测到 Root 痕迹。
+            - LOCALVERSION: `-edwin-pure-日期`
+            - 刷机有风险，请备份原内核。
+          files: ${{ env.DEVICE_CODENAME }}-BakaSU-Pure-*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
