@@ -80,6 +80,30 @@ jobs:
           grep -q 'CONFIG_KSU_SUSFS' fs/stat.c || { echo "::error::fs/stat.c lacks KSU_SUSFS hooks"; exit 1; }
           echo "-- kernel-side SUSFS hooks verified (no patching needed)"
 
+          echo "== 修复 vendor selinux_hide 补丁缺失的符号 =="
+          # BakaSU 现版把该锁定义为 static，而 vendor 内核补丁以 extern 引用，需去掉 static 共享同一变量
+          sed -i 's/^static struct mutex \*ksu_selinux_status_lock = NULL;/struct mutex *ksu_selinux_status_lock = NULL;/' \
+            BakaSU_src/kernel/feature/selinux_hide.c
+          grep -q '^struct mutex \*ksu_selinux_status_lock' BakaSU_src/kernel/feature/selinux_hide.c \
+            || { echo "::error::selinux_hide.c lock static-removal failed"; exit 1; }
+          # fake_state：vendor 补丁引用但 BakaSU 现版已不提供；在内核侧定义（保证与 vendor 的
+          # struct selinux_state 布局一致），并在 selinux 初始化后浅拷真实状态
+          if ! grep -q 'bakasu_fake_state_init' security/selinux/ss/services.c; then
+          cat >> security/selinux/ss/services.c <<'EOF'
+
+          /* BakaSU selinux_hide: fake selinux_state served to hidden apps by vendor kernel patch */
+          struct selinux_state fake_state;
+          static int __init bakasu_fake_state_init(void)
+          {
+          	fake_state = selinux_state;
+          	return 0;
+          }
+          core_initcall(bakasu_fake_state_init);
+          EOF
+          fi
+          tail -3 security/selinux/ss/services.c | grep -q 'core_initcall(bakasu_fake_state_init);' \
+            || { echo "::error::fake_state definition append failed"; exit 1; }
+
           echo "== 修复 preinit 的 void 函数 return false =="
           PREINIT_H="BakaSU_src/kernel/preinit/preinit.h"
           if [ -f "$PREINIT_H" ]; then
