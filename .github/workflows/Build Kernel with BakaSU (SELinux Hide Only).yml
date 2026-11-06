@@ -1,25 +1,21 @@
-name: Build Kernel with BakaSU (Pure No SUSFS - Final)
+name: Build Kernel with BakaSU (No SUSFS - Manual Hook)
 
 on:
   workflow_dispatch:
 
 env:
-  TZ: Asia/Shanghai
-  DEVICE_CODENAME: "star"
-  KERNEL_ARCH: "arm64"
-  KERNEL_REPO: "zttlove/android_kernel_xiaomi_sm8350-hyperos"
-  KERNEL_BRANCH: "dynamic"
-  DEFCONFIG_NAME: "vendor/star_defconfig"
-  OUTPUT_DIR: "out"
-  CLANG_DIR: "${{ github.workspace }}/clang"
-  CCACHE_DIR: "${{ github.workspace }}/.ccache"
-  KERNEL_DIR: "${{ github.workspace }}/kernel"
+  KERNEL_REPO: zttlove/android_kernel_xiaomi_sm8350-hyperos
+  KERNEL_BRANCH: dynamic
+  DEFCONFIG_NAME: vendor/star_defconfig
+  DEVICE_CODENAME: star
+  OUTPUT_DIR: out
+  CLANG_DIR: ${{ github.workspace }}/toolchains/clang
+  KERNEL_DIR: ${{ github.workspace }}/kernel
 
 jobs:
-  build:
+  build-kernel:
     runs-on: ubuntu-22.04
     steps:
-
       - name: Checkout Kernel Source
         uses: actions/checkout@v4
         with:
@@ -31,101 +27,137 @@ jobs:
       - name: Verify Kernel Commit & Clean Workspace
         working-directory: kernel
         run: |
-          echo "=== 清理内核源码 ==="
           git reset --hard HEAD
           git clean -fdx
-          echo "✅ 清理完成"
+          echo "Kernel: $(git log -1 --format='%h %s')"
 
-      - name: Checkout Workflow Repo (Patches)
-        uses: actions/checkout@v4
-        with:
-          path: workflow_repo
-          fetch-depth: 1
-
-      - name: Install Dependencies
+      - name: Install Build Dependencies
         run: |
-          sudo apt update
-          sudo apt install -y \
-            bc bison flex libelf-dev libssl-dev libncurses-dev \
-            make python3 device-tree-compiler git curl xz-utils \
-            ccache zip unzip zstd
-          if ! sudo apt install -y libtinfo5; then
-            sudo ln -sf /lib/x86_64-linux-gnu/libtinfo.so.6 /lib/x86_64-linux-gnu/libtinfo.so.5
-          fi
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bc bison flex libssl-dev libelf-dev \
+            zip unzip python3 perl git curl ccache xxd cpio kmod \
+            libtinfo5
+          sudo ln -sf /usr/lib/x86_64-linux-gnu/libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5 || true
 
-      - name: Download Clang 17.0.6 (Official Kernel Toolchain)
+      - name: Download Clang 17.0.6
         run: |
-          mkdir -p ${{ env.CLANG_DIR }}
-          curl -L --retry 3 -o clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-22.04.tar.xz "https://github.com/llvm/llvm-project/releases/download/llvmorg-17.0.6/clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-22.04.tar.xz"
-          tar -xf clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-22.04.tar.xz -C ${{ env.CLANG_DIR }} --strip-components=1
-          rm clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-22.04.tar.xz
+          mkdir -p "${{ env.CLANG_DIR }}"
+          curl -fL --retry 3 -o /tmp/clang.tar.xz \
+            https://github.com/llvm/llvm-project/releases/download/llvmorg-17.0.6/clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-22.04.tar.xz
+          tar -xf /tmp/clang.tar.xz -C "${{ env.CLANG_DIR }}" --strip-components=1
+          "${{ env.CLANG_DIR }}/bin/clang" --version
 
-      - name: Manual integrate BakaSU into Kernel
+      - name: Integrate BakaSU (manual hook, no SUSFS)
         working-directory: kernel
         run: |
-          set -e
-          export ARCH=${{ env.KERNEL_ARCH }}
+          set -euo pipefail
+          export ARCH=arm64
           export PATH="${{ env.CLANG_DIR }}/bin:$PATH"
-          export CCACHE_EXEC=$(which ccache)
-          export CCACHE_DIR="${{ env.CCACHE_DIR }}"
-          ccache -M 6G
-          export LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- \
-                 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          export LLVM=1 LLVM_IAS=1 \
+                 CLANG_TRIPLE=aarch64-linux-gnu- \
+                 CROSS_COMPILE=aarch64-linux-gnu- \
+                 CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
 
-          echo "=== 强制拉取最新版 BakaSU ==="
-          rm -rf BakaSU_src
+          echo "== 清理内核树 =="
+          make mrproper >/dev/null 2>&1 || true
+
+          echo "== 拉取 BakaSU 并接管 drivers/kernelsu =="
+          rm -rf BakaSU_src KernelSU drivers/kernelsu drivers/KernelSU
           git clone --depth=1 https://github.com/Baka-SU/BakaSU.git BakaSU_src
+          ln -sfn ../BakaSU_src/kernel drivers/kernelsu
 
-          echo "=== 手动创建 seccomp_types.h ==="
-          if [ ! -f "include/linux/seccomp_types.h" ]; then
-            touch "include/linux/seccomp_types.h"
-          fi
-
-          echo "=== 清理旧版 KernelSU 目录 ==="
-          rm -rf KernelSU
-          rm -rf drivers/kernelsu
-          rm -rf drivers/KernelSU
-          
-          ln -sf ../BakaSU_src/kernel drivers/kernelsu
-          KSU_SRC_DIR=$(readlink -f drivers/kernelsu)
-
-          if ! grep -q "kernelsu" drivers/Makefile; then
-            printf "\nobj-\$(CONFIG_KSU) += kernelsu/\n" >> drivers/Makefile
-          fi
-
-          if ! grep -q 'source "drivers/kernelsu/Kconfig"' drivers/Kconfig; then
+          grep -q 'kernelsu' drivers/Makefile || \
+            printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> drivers/Makefile
+          grep -q 'drivers/kernelsu/Kconfig' drivers/Kconfig || \
             sed -i '/^endmenu/i\source "drivers/kernelsu/Kconfig"' drivers/Kconfig
-          fi
 
-          # ============================================================
-          # 修复 BakaSU preinit.h 源码 Bug
-          # ============================================================
-          echo "=== 修复 preinit.h 中的 void 函数返回值错误 ==="
-          PREINIT_H="$KSU_SRC_DIR/preinit/preinit.h"
-          if [ -f "$PREINIT_H" ]; then
-            cp "$PREINIT_H" "${PREINIT_H}.bak"
-            # 精确修复：void 函数内的 return false; -> return;
-            perl -0pi -e 's/(void\s+[a-zA-Z_][a-zA-Z0-9_]*\s*\([^)]*\)\s*\{[^}]*?)\breturn\s+false;/${1}return;/gs' "$PREINIT_H"
-            if grep -qPzo 'void\s+[a-zA-Z_][a-zA-Z0-9_]*\s*\([^)]*\)\s*\{[^}]*?return\s+false;' "$PREINIT_H" 2>/dev/null; then
-              perl -0pi -e 's/(void\s+ksu_preinit_handle_execve_manual[^{]*\{[^}]*?)\breturn\s+false;/${1}return;/gs' "$PREINIT_H"
-            fi
-            echo "✅ preinit.h 修复完成"
-          else
-            echo "⚠️ 未找到 $PREINIT_H，跳过"
-          fi
+          echo "== 重新启用 manual hook 调用点 =="
+          cat > /tmp/bakasu_patch.py <<'PY'
+          import pathlib
+          import re
+          import sys
 
-          # ============================================================
-          # 补全 fs/stat.c 钩子
-          # ============================================================
-          echo "=== 补全 fs/stat.c 缺失的钩子 ==="
-          STAT_C="fs/stat.c"
-          if [ -f "$STAT_C" ]; then
-            if ! grep -q "ksu_handle_newfstat_ret" "$STAT_C"; then
-              LAST_INCLUDE_LINE=$(grep -n '^#include' "$STAT_C" | tail -n1 | cut -d: -f1)
-              if [ -z "$LAST_INCLUDE_LINE" ]; then LAST_INCLUDE_LINE=1; fi
-              sed -i "${LAST_INCLUDE_LINE}r /dev/stdin" "$STAT_C" << 'STAT_DECL_EOF'
+
+          def patch(path, anchor_re, replacement, marker):
+              p = pathlib.Path(path)
+              src = p.read_text()
+              if marker in src:
+                  print(f"  [skip] {path}: already patched")
+                  return
+              m = re.search(anchor_re, src, re.S | re.M)
+              if not m:
+                  sys.exit(f"  [FAIL] anchor not found in {path}: {anchor_re!r}")
+              p.write_text(src[: m.start()] + replacement + src[m.end():])
+              print(f"  [ok]   {path}")
+
+
+          # fs/exec.c: ksu_handle_execveat 是 su 的核心入口
+          patch(
+              "fs/exec.c",
+              r"extern int ksu_handle_post_execveat_sucompat\(int \*fd, struct filename \*\*filename_ptr, void \*argv,\n\t\t\t\tvoid \*envp, int \*flags, int \*retval\);\n#endif\n",
+              """extern int ksu_handle_post_execveat_sucompat(int *fd, struct filename **filename_ptr, void *argv,
+          				void *envp, int *flags, int *retval);
+          #endif
 
           #ifdef CONFIG_KSU_MANUAL_HOOK
+          extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,
+          				void *envp, int *flags);
+          #endif
+          """,
+              "#ifdef CONFIG_KSU_MANUAL_HOOK\nextern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,",
+          )
+
+          patch(
+              "fs/exec.c",
+              r"#else\n\treturn __do_execve_file\(fd, filename, argv, envp, flags, NULL\);\n#endif",
+              """#else
+          #ifdef CONFIG_KSU_MANUAL_HOOK
+          	/* BakaSU manual hook */
+          	ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
+          #endif
+          	return __do_execve_file(fd, filename, argv, envp, flags, NULL);
+          #endif""",
+              "ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);",
+          )
+
+          # fs/open.c: faccessat
+          patch(
+              "fs/open.c",
+              r"extern int ksu_handle_faccessat\(int \*dfd, struct filename \*\*filename,\n\t\tint \*mode, int \*flags\);\n#endif\n",
+              """extern int ksu_handle_faccessat(int *dfd, struct filename **filename,
+          		int *mode, int *flags);
+          #endif
+
+          #ifdef CONFIG_KSU_MANUAL_HOOK
+          extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user,
+          		int *mode, int *flags);
+          #endif
+          """,
+              "#ifdef CONFIG_KSU_MANUAL_HOOK\nextern int ksu_handle_faccessat(int *dfd, const char __user **filename_user,",
+          )
+
+          patch(
+              "fs/open.c",
+              r"#else\n\tres = user_path_at\(dfd, filename, lookup_flags, &path\);\n#endif",
+              """#else
+          #ifdef CONFIG_KSU_MANUAL_HOOK
+          	/* BakaSU manual hook */
+          	ksu_handle_faccessat(&dfd, &filename, &mode, NULL);
+          #endif
+          	res = user_path_at(dfd, filename, lookup_flags, &path);
+          #endif""",
+              "ksu_handle_faccessat(&dfd, &filename, &mode, NULL);",
+          )
+
+          # fs/stat.c: stat / fstat 返回值 hook
+          patch(
+              "fs/stat.c",
+              r'#include "internal\.h"\n',
+              """#include "internal.h"
+
+          #ifdef CONFIG_KSU_MANUAL_HOOK
+          /* BakaSU manual hook */
           __attribute__((hot))
           extern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);
           extern void ksu_handle_newfstat_ret(unsigned int *fd, struct stat __user **statbuf_ptr);
@@ -133,151 +165,239 @@ jobs:
           extern void ksu_handle_fstat64_ret(unsigned long *fd, struct stat64 __user **statbuf_ptr);
           #endif
           #endif
-          STAT_DECL_EOF
-            fi
+          """,
+              "extern void ksu_handle_newfstat_ret(unsigned int *fd, struct stat __user **statbuf_ptr);",
+          )
 
-            if ! grep -q "ksu_handle_newfstat_ret(&fd" "$STAT_C"; then
-              perl -0pi -e 's/(SYSCALL_DEFINE2\(newfstat,.*?if\s*\(!error\)\s*error\s*=\s*cp_new_stat\(&stat, statbuf\);)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_newfstat_ret(\&fd, \&statbuf);\n#endif\n/s' "$STAT_C"
-            fi
+          patch(
+              "fs/stat.c",
+              r"SYSCALL_DEFINE4\(newfstatat, int, dfd, const char __user \*, filename,\n\t\tstruct stat __user \*, statbuf, int, flag\)\n\{\n\tstruct kstat stat;\n\tint error;\n",
+              """SYSCALL_DEFINE4(newfstatat, int, dfd, const char __user *, filename,
+          		struct stat __user *, statbuf, int, flag)
+          {
+          	struct kstat stat;
+          	int error;
 
-            if ! grep -q "ksu_handle_fstat64_ret(&fd" "$STAT_C"; then
-              perl -0pi -e 's/(SYSCALL_DEFINE2\(fstat64,.*?if\s*\(!error\)\s*error\s*=\s*cp_new_stat64\(&stat, statbuf\);)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_fstat64_ret(\&fd, \&statbuf);\n#endif\n/s' "$STAT_C"
-            fi
+          #ifdef CONFIG_KSU_MANUAL_HOOK
+          	/* BakaSU manual hook */
+          	ksu_handle_stat(&dfd, &filename, &flag);
+          #endif
+          """,
+              "SYSCALL_DEFINE4(newfstatat, int, dfd, const char __user *, filename,\n\t\tstruct stat __user *, statbuf, int, flag)\n{\n\tstruct kstat stat;\n\tint error;\n\n#ifdef CONFIG_KSU_MANUAL_HOOK",
+          )
+
+          patch(
+              "fs/stat.c",
+              r"SYSCALL_DEFINE2\(newfstat, unsigned int, fd, struct stat __user \*, statbuf\)\n\{\n\tstruct kstat stat;\n\tint error = vfs_fstat\(fd, &stat\);\n\n\tif \(!error\)\n\t\terror = cp_new_stat\(&stat, statbuf\);\n",
+              """SYSCALL_DEFINE2(newfstat, unsigned int, fd, struct stat __user *, statbuf)
+          {
+          	struct kstat stat;
+          	int error = vfs_fstat(fd, &stat);
+
+          	if (!error)
+          		error = cp_new_stat(&stat, statbuf);
+          #ifdef CONFIG_KSU_MANUAL_HOOK
+          	/* BakaSU manual hook */
+          	ksu_handle_newfstat_ret(&fd, &statbuf);
+          #endif
+          """,
+              "ksu_handle_newfstat_ret(&fd, &statbuf);",
+          )
+
+          patch(
+              "fs/stat.c",
+              r"SYSCALL_DEFINE2\(fstat64, unsigned long, fd, struct stat64 __user \*, statbuf\)\n\{\n\tstruct kstat stat;\n\tint error = vfs_fstat\(fd, &stat\);\n\n\tif \(!error\)\n\t\terror = cp_new_stat64\(&stat, statbuf\);\n",
+              """SYSCALL_DEFINE2(fstat64, unsigned long, fd, struct stat64 __user *, statbuf)
+          {
+          	struct kstat stat;
+          	int error = vfs_fstat(fd, &stat);
+
+          	if (!error)
+          		error = cp_new_stat64(&stat, statbuf);
+          #ifdef CONFIG_KSU_MANUAL_HOOK
+          	/* BakaSU manual hook */
+          	ksu_handle_fstat64_ret(&fd, &statbuf);
+          #endif
+          """,
+              "ksu_handle_fstat64_ret(&fd, &statbuf);",
+          )
+
+          patch(
+              "fs/stat.c",
+              r"SYSCALL_DEFINE4\(fstatat64, int, dfd, const char __user \*, filename,\n\t\tstruct stat64 __user \*, statbuf, int, flag\)\n\{\n\tstruct kstat stat;\n\tint error;\n",
+              """SYSCALL_DEFINE4(fstatat64, int, dfd, const char __user *, filename,
+          		struct stat64 __user *, statbuf, int, flag)
+          {
+          	struct kstat stat;
+          	int error;
+
+          #ifdef CONFIG_KSU_MANUAL_HOOK
+          	/* BakaSU manual hook */
+          	ksu_handle_stat(&dfd, &filename, &flag);
+          #endif
+          """,
+              "SYSCALL_DEFINE4(fstatat64, int, dfd, const char __user *, filename,\n\t\tstruct stat64 __user *, statbuf, int, flag)\n{\n\tstruct kstat stat;\n\tint error;\n\n#ifdef CONFIG_KSU_MANUAL_HOOK",
+          )
+
+          # kernel/reboot.c: KernelSU supercall
+          patch(
+              "kernel/reboot.c",
+              r"#ifdef CONFIG_KSU_SUSFS\nextern int ksu_handle_sys_reboot",
+              "#if defined(CONFIG_KSU_SUSFS) || defined(CONFIG_KSU_MANUAL_HOOK)\nextern int ksu_handle_sys_reboot",
+              "defined(CONFIG_KSU_MANUAL_HOOK)\nextern int ksu_handle_sys_reboot",
+          )
+
+          patch(
+              "kernel/reboot.c",
+              r"#ifdef CONFIG_KSU_SUSFS\n\tret = ksu_handle_sys_reboot",
+              "#if defined(CONFIG_KSU_SUSFS) || defined(CONFIG_KSU_MANUAL_HOOK)\n\tret = ksu_handle_sys_reboot",
+              "defined(CONFIG_KSU_MANUAL_HOOK)\n\tret = ksu_handle_sys_reboot",
+          )
+
+          print("all manual-hook patches applied")
+          PY
+          python3 /tmp/bakasu_patch.py
+
+          echo "== 修复 preinit 的 void 函数 return false =="
+          PREINIT_H="BakaSU_src/kernel/preinit/preinit.h"
+          if [ -f "$PREINIT_H" ]; then
+            perl -0pi -e 's/(void\s+[a-zA-Z_][a-zA-Z0-9_]*\s*\([^)]*\)\s*\{[^}]*?)\breturn\s+false;/${1}return;/gs' "$PREINIT_H"
+            grep -qPzo '\bvoid\s+[a-zA-Z_][a-zA-Z0-9_]*\s*\([^)]*\)\s*\{[^}]*?\breturn\s+false;' "$PREINIT_H" \
+              && { echo "::error::preinit.h void-return patch failed"; exit 1; } || true
           fi
 
-          # ============================================================
-          # 动态编译 selinux_hide.o
-          # ============================================================
-          echo "=== 搜索并配置 selinux_hide.c 编译 ==="
-          HIDE_FILE=$(find "$KSU_SRC_DIR" -name 'selinux_hide.c' | head -n1)
-          if [ -n "$HIDE_FILE" ]; then
-            sed -i '/BakaSU non-GKI 修复/,+3d' "$HIDE_FILE"
-            sed -i '/static struct mutex \*ksu_selinux_status_lock/d' "$HIDE_FILE"
-            sed -i '/static struct selinux_state fake_state/d' "$HIDE_FILE"
-            
-            LAST_INCLUDE_LINE=$(grep -n '^#include' "$HIDE_FILE" | tail -n1 | cut -d: -f1)
-            if [ -z "$LAST_INCLUDE_LINE" ]; then LAST_INCLUDE_LINE=1; fi
-            
-            sed -i "${LAST_INCLUDE_LINE}r /dev/stdin" "$HIDE_FILE" << 'EOF'
-          
-          /* === BakaSU non-GKI 修复：全局符号定义 === */
-          struct selinux_state fake_state;
-          struct mutex *ksu_selinux_status_lock = NULL;
-          EOF
-            
-            HIDE_DIR=$(dirname "$HIDE_FILE")
-            SELINUX_MK="$HIDE_DIR/Makefile"
-            if [ ! -f "$SELINUX_MK" ]; then
-              SEARCH_DIR="$HIDE_DIR"
-              while [ "$SEARCH_DIR" != "." ] && [ "$SEARCH_DIR" != "/" ] && [ "$SEARCH_DIR" != "$KSU_SRC_DIR" ]; do
-                if [ -f "$SEARCH_DIR/Makefile" ]; then
-                  SELINUX_MK="$SEARCH_DIR/Makefile"
-                  break
-                fi
-                SEARCH_DIR=$(dirname "$SEARCH_DIR")
-              done
-            fi
-            
-            if [ -n "$SELINUX_MK" ] && [ -f "$SELINUX_MK" ]; then
-              MK_DIR=$(dirname "$SELINUX_MK")
-              HIDE_REL=$(realpath --relative-to="$MK_DIR" "$HIDE_FILE")
-              HIDE_OBJ="${HIDE_REL%.c}.o"
-              if ! grep -q "$HIDE_OBJ" "$SELINUX_MK"; then
-                echo "obj-y += $HIDE_OBJ" >> "$SELINUX_MK"
-              fi
-            fi
-          fi
+          echo "== 生成 defconfig =="
+          make O=out ARCH=arm64 "${{ env.DEFCONFIG_NAME }}"
 
-          echo "=== 修复编译警告 ==="
-          ccache -C
-          FOCALTECH_MAKEFILE="drivers/input/touchscreen/focaltech_3680/Makefile"
-          if [ -f "$FOCALTECH_MAKEFILE" ]; then
-            sed -i 's/^ \+/\t/' "$FOCALTECH_MAKEFILE"
-          fi
-          for entry in \
-            "drivers/soc/qcom/Makefile:-Wno-unused-variable" \
-            "drivers/thermal/Makefile:-Wno-fortify-source" \
-            "techpack/bootinfo/Makefile:-Wno-unused-result" \
-            "drivers/usb/dwc3/Makefile:-Wno-unused-label"; do
-            MK="${entry%:*}"
-            FLAG="${entry#*:}"
-            if [ -f "$MK" ] && ! grep -q -- "$FLAG" "$MK" 2>/dev/null; then
-              echo "ccflags-y += $FLAG" >> "$MK"
-            fi
-          done
-
-          echo "=== 清理并生成 .config ==="
-          rm -rf ${{ env.OUTPUT_DIR }}
-          rm -f .config
-          rm -rf include/config include/generated
-          make mrproper
-          make -j$(nproc) O=${{ env.OUTPUT_DIR }} ${{ env.DEFCONFIG_NAME }}
-
-          echo "=== 启用纯净 BakaSU 配置（无 SUSFS） ==="
-          scripts/config --file ${{ env.OUTPUT_DIR }}/.config \
-            --enable KSU \
-            --enable KSU_MANUAL_HOOK \
+          echo "== 配置 BakaSU =="
+          scripts/config --file out/.config \
+            --enable  KSU \
+            --enable  KSU_MANUAL_HOOK \
             --disable KSU_TRACEPOINT_HOOK \
-            --enable KSU_COMPAT_HAS_SELINUX_STATE \
-            --enable KSU_COMPAT_HAS_KVMALLOC \
             --disable KSU_SUSFS \
-            --disable HEADERS_INSTALL \
-            --set-val FRAME_WARN 131072 \
+            --enable  KALLSYMS_ALL \
+            --enable  KSU_MANUAL_HOOK_AUTO_SETUID_HOOK \
+            --enable  KSU_MANUAL_HOOK_AUTO_INITRC_HOOK \
+            --enable  KSU_MANUAL_HOOK_AUTO_INPUT_HOOK \
             --set-str LOCALVERSION "-edwin-pure-final-$(date +%m%d)"
 
-          make O=${{ env.OUTPUT_DIR }} olddefconfig 2>&1 | tee olddefconfig.log
+          make O=out ARCH=arm64 olddefconfig
+
+      - name: 修复编译警告
+        working-directory: kernel
+        run: |
+          set -e
+          FOCALTECH_MAKEFILE="drivers/input/touchscreen/focaltech_touch/Makefile"
+          if [ -f "$FOCALTECH_MAKEFILE" ]; then
+            sed -i 's/^ \+/\t/' "$FOCALTECH_MAKEFILE"
+            echo "Fixed leading spaces in focaltech Makefile"
+          fi
+
+          for entry in \
+            "drivers/staging/qcacld-3.0:-Wno-format" \
+            "drivers/staging/qca-wifi-host-cmn:-Wno-format" \
+            "drivers/thermal:-Wno-fortify-source"; do
+            DIR="${entry%%:*}"
+            FLAG="${entry##*:}"
+            if [ -d "$DIR" ] && [ -f "$DIR/Makefile" ]; then
+              grep -q -- "$FLAG" "$DIR/Makefile" || echo "ccflags-y += $FLAG" >> "$DIR/Makefile"
+            fi
+          done
 
       - name: Build Kernel
         working-directory: kernel
         run: |
-          set +e
-          export ARCH=${{ env.KERNEL_ARCH }}
+          export ARCH=arm64
           export PATH="${{ env.CLANG_DIR }}/bin:$PATH"
-          export CCACHE_EXEC=$(which ccache)
-          export CCACHE_DIR="${{ env.CCACHE_DIR }}"
-          export LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu- \
-                 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          export LLVM=1 LLVM_IAS=1 \
+                 CLANG_TRIPLE=aarch64-linux-gnu- \
+                 CROSS_COMPILE=aarch64-linux-gnu- \
+                 CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+          export CCACHE_DIR="${{ github.workspace }}/.ccache"
 
-          echo "=== 开始编译内核 ==="
-          make -j$(nproc) O=${{ env.OUTPUT_DIR }} \
-               KCFLAGS="-Wno-error -Wframe-larger-than=131072 -Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-array-parameter -Wno-declaration-after-statement -Wno-sometimes-uninitialized -Wno-unused-variable -Wno-misleading-indentation -Wno-fortify-source -Wno-macro-redefined -Wno-unused-result -Wno-unused-label" \
-               HOSTCFLAGS="" \
-               2>&1 | tee build.log
-          
-          if [ ${PIPESTATUS[0]} -ne 0 ] || [ ! -f "${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image" ]; then
-            echo "::error::编译失败"
+          set +e
+          make -j$(nproc) O=out ARCH=arm64 \
+            CC="clang" LD="ld.lld" AR="llvm-ar" NM="llvm-nm" \
+            OBJCOPY="llvm-objcopy" OBJDUMP="llvm-objdump" STRIP="llvm-strip" \
+            CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" \
+            KCFLAGS="-Wno-error -Wno-format -Wno-fortify-source -Wno-incompatible-pointer-types \
+            -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-missing-prototypes \
+            -Wno-int-conversion -Wno-declaration-after-statement \
+            -Wframe-larger-than=131072 -Wno-unused-variable -Wno-unused-function \
+            -Wno-missing-braces -Wno-int-to-pointer-cast -Wno-address-of-packed-member \
+            -Wno-return-type -Wno-shift-negative-value -Wno-array-bounds \
+            -Wno-stringop-overflow -Wno-error=maybe-uninitialized" \
+            HOSTCFLAGS="" 2>&1 | tee build.log
+
+          if [ ${PIPESTATUS[0]} -ne 0 ]; then
+            echo "::error::Kernel build failed. Last 200 lines:"
+            tail -n 200 build.log
             exit 1
           fi
-          echo "✅ 编译成功"
+
+          echo "=== Build finished ==="
+          ls -lh out/arch/arm64/boot/Image
 
       - name: Package AnyKernel3
-        id: package
         run: |
           set -e
-          TIME=$(date +"%Y.%m.%d-%H%M")
-          AK3_DIR="AnyKernel3"
+          TIME=$(date +%Y%m%d-%H%M)
           IMG_PATH="${{ env.KERNEL_DIR }}/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image"
-          
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git $AK3_DIR
-          gzip -9 -c "$IMG_PATH" > "$AK3_DIR/Image.gz"
-          
-          printf '%s\n' \
-            '#!/sbin/sh' \
-            '### AnyKernel3 Flashable Kernel Script' \
-            "properties() { '" \
-            'kernel.string=5.4.302-edwin-pure-final+ BakaSU for Xiaomi 11 Ultra' \
-            'do.devicecheck=1' 'do.modules=0' 'do.systemless=0' 'do.cleanup=1' 'do.cleanuponabort=0' \
-            'device.name1=star' 'device.name2=mars' \
-            "'; } # end properties" \
-            'BLOCK=boot;' 'IS_SLOT_DEVICE=1;' 'RAMDISK_COMPRESSION=auto;' 'PATCH_VBMETA_FLAG=auto;' \
-            '. tools/ak3-core.sh;' \
-            'split_boot;' 'flash_boot;' \
-            > "$AK3_DIR/anykernel.sh"
-          
-          chmod +x "$AK3_DIR/anykernel.sh"
-          cd $AK3_DIR
+          test -f "$IMG_PATH"
+
+          rm -rf AnyKernel3
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git
+          cd AnyKernel3
+
+          cp "$IMG_PATH" ./Image
+          gzip -9 -f ./Image
+          rm -f ./Image
+
+          cat > anykernel.sh <<'AK3'
+          ### AnyKernel3 Ramdisk Mod Script
+          ## osm0sis @ xda-developers
+
+          ### AnyKernel setup
+          # global properties
+          properties() { '
+          kernel.string=Edwin BakaSU Pure Final (No SUSFS) for Xiaomi 11 Ultra / Pro (star)
+          do.devicecheck=1
+          do.modules=0
+          do.systemless=1
+          do.cleanup=1
+          do.cleanuponabort=0
+          device.name1=star
+          device.name2=mars
+          supported.versions=
+          supported.patchlevels=
+          supported.vendorpatchlevels=
+          '; } # end properties
+
+          ### AnyKernel install
+          # boot files attributes
+          boot_attributes() {
+          set_perm_recursive 0 0 755 644 $RAMDISK/*;
+          set_perm_recursive 0 0 750 750 $RAMDISK/init* $RAMDISK/sbin;
+          } # end attributes
+
+          # boot shell variables
+          BLOCK=boot;
+          IS_SLOT_DEVICE=1;
+          RAMDISK_COMPRESSION=auto;
+          PATCH_VBMETA_FLAG=auto;
+
+          # import functions/variables and setup patching - see for reference (DO NOT REMOVE)
+          . tools/ak3-core.sh;
+
+          # boot install
+          split_boot;
+
+          flash_boot;
+          ## end boot install
+          AK3
+
+          chmod +x anykernel.sh
           zip -r9 "../${{ env.DEVICE_CODENAME }}-BakaSU-PureFinal-${TIME}.zip" ./*
-          cd ..
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
