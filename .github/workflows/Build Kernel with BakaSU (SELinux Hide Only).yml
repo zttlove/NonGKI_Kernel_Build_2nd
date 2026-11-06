@@ -87,6 +87,7 @@ jobs:
           rm -rf drivers/KernelSU
           
           ln -sf ../BakaSU_src/kernel drivers/kernelsu
+          KSU_SRC_DIR=$(readlink -f drivers/kernelsu)
 
           if ! grep -q "kernelsu" drivers/Makefile; then
             printf "\nobj-\$(CONFIG_KSU) += kernelsu/\n" >> drivers/Makefile
@@ -97,7 +98,24 @@ jobs:
           fi
 
           # ============================================================
-          # 关键修复：补全 fs/stat.c 钩子（关闭 SUSFS 后自检必须）
+          # 修复 BakaSU preinit.h 源码 Bug
+          # ============================================================
+          echo "=== 修复 preinit.h 中的 void 函数返回值错误 ==="
+          PREINIT_H="$KSU_SRC_DIR/preinit/preinit.h"
+          if [ -f "$PREINIT_H" ]; then
+            cp "$PREINIT_H" "${PREINIT_H}.bak"
+            # 精确修复：void 函数内的 return false; -> return;
+            perl -0pi -e 's/(void\s+[a-zA-Z_][a-zA-Z0-9_]*\s*\([^)]*\)\s*\{[^}]*?)\breturn\s+false;/${1}return;/gs' "$PREINIT_H"
+            if grep -qPzo 'void\s+[a-zA-Z_][a-zA-Z0-9_]*\s*\([^)]*\)\s*\{[^}]*?return\s+false;' "$PREINIT_H" 2>/dev/null; then
+              perl -0pi -e 's/(void\s+ksu_preinit_handle_execve_manual[^{]*\{[^}]*?)\breturn\s+false;/${1}return;/gs' "$PREINIT_H"
+            fi
+            echo "✅ preinit.h 修复完成"
+          else
+            echo "⚠️ 未找到 $PREINIT_H，跳过"
+          fi
+
+          # ============================================================
+          # 补全 fs/stat.c 钩子
           # ============================================================
           echo "=== 补全 fs/stat.c 缺失的钩子 ==="
           STAT_C="fs/stat.c"
@@ -128,12 +146,10 @@ jobs:
           fi
 
           # ============================================================
-          # 保留成功识别的逻辑：动态编译 selinux_hide.o
+          # 动态编译 selinux_hide.o
           # ============================================================
           echo "=== 搜索并配置 selinux_hide.c 编译 ==="
-          KSU_SRC_DIR=$(readlink -f drivers/kernelsu)
           HIDE_FILE=$(find "$KSU_SRC_DIR" -name 'selinux_hide.c' | head -n1)
-          
           if [ -n "$HIDE_FILE" ]; then
             sed -i '/BakaSU non-GKI 修复/,+3d' "$HIDE_FILE"
             sed -i '/static struct mutex \*ksu_selinux_status_lock/d' "$HIDE_FILE"
