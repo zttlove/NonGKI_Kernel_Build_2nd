@@ -279,6 +279,8 @@ jobs:
             --enable  KSU_MANUAL_HOOK_AUTO_SETUID_HOOK \
             --enable  KSU_MANUAL_HOOK_AUTO_INITRC_HOOK \
             --enable  KSU_MANUAL_HOOK_AUTO_INPUT_HOOK \
+            --disable UAPI_HEADER_TEST \
+            --disable HEADERS_INSTALL \
             --set-str LOCALVERSION "-edwin-pure-final-$(date +%m%d)"
 
           make O=out ARCH=arm64 olddefconfig
@@ -320,13 +322,12 @@ jobs:
             CC="clang" LD="ld.lld" AR="llvm-ar" NM="llvm-nm" \
             OBJCOPY="llvm-objcopy" OBJDUMP="llvm-objdump" STRIP="llvm-strip" \
             CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" \
-            KCFLAGS="-Wno-error -Wno-format -Wno-fortify-source -Wno-incompatible-pointer-types \
+            KCFLAGS="-Wno-unknown-warning-option -Wno-error -Wno-format -Wno-incompatible-pointer-types \
             -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-missing-prototypes \
             -Wno-int-conversion -Wno-declaration-after-statement \
             -Wframe-larger-than=131072 -Wno-unused-variable -Wno-unused-function \
             -Wno-missing-braces -Wno-int-to-pointer-cast -Wno-address-of-packed-member \
-            -Wno-return-type -Wno-shift-negative-value -Wno-array-bounds \
-            -Wno-stringop-overflow -Wno-error=maybe-uninitialized" \
+            -Wno-return-type -Wno-shift-negative-value -Wno-array-bounds" \
             HOSTCFLAGS="" 2>&1 | tee build.log
 
           if [ ${PIPESTATUS[0]} -ne 0 ]; then
