@@ -316,12 +316,19 @@ jobs:
           export CCACHE_DIR="${{ github.workspace }}/.ccache"
 
           set +e
-          make -j$(nproc) O=${{ env.OUTPUT_DIR }} \
-               KCFLAGS="-Wno-error -Wframe-larger-than=131072 -Wno-strict-prototypes -Wno-align-mismatch -Wno-unused-function -Wno-compare-distinct-pointer-types -Wno-void-pointer-to-int-cast -Wno-array-parameter -Wno-declaration-after-statement -Wno-sometimes-uninitialized -Wno-unused-variable -Wno-misleading-indentation -Wno-fortify-source -Wno-macro-redefined -Wno-unused-result -Wno-unused-label" \
-               HOSTCFLAGS="" \
-               2>&1 | tee build.log
-         
-          
+          make -j$(nproc) O=out ARCH=arm64 \
+            CC="clang" LD="ld.lld" AR="llvm-ar" NM="llvm-nm" \
+            OBJCOPY="llvm-objcopy" OBJDUMP="llvm-objdump" STRIP="llvm-strip" \
+            CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" \
+            KCFLAGS="-Wno-error -Wno-format -Wno-fortify-source -Wno-incompatible-pointer-types \
+            -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-missing-prototypes \
+            -Wno-int-conversion -Wno-declaration-after-statement \
+            -Wframe-larger-than=131072 -Wno-unused-variable -Wno-unused-function \
+            -Wno-missing-braces -Wno-int-to-pointer-cast -Wno-address-of-packed-member \
+            -Wno-return-type -Wno-shift-negative-value -Wno-array-bounds \
+            -Wno-stringop-overflow -Wno-error=maybe-uninitialized" \
+            HOSTCFLAGS="" 2>&1 | tee build.log
+
           if [ ${PIPESTATUS[0]} -ne 0 ]; then
             echo "::error::Kernel build failed. Last 200 lines:"
             tail -n 200 build.log
