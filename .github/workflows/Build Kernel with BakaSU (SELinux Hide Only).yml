@@ -1,4 +1,4 @@
-name: Build Kernel with BakaSU (No SUSFS - Manual Hook)
+name: Build Kernel with BakaSU (Full SUSFS)
 
 on:
   workflow_dispatch:
@@ -48,7 +48,7 @@ jobs:
           tar -xf /tmp/clang.tar.xz -C "${{ env.CLANG_DIR }}" --strip-components=1
           "${{ env.CLANG_DIR }}/bin/clang" --version
 
-      - name: Integrate BakaSU (manual hook, no SUSFS)
+      - name: Integrate BakaSU (full SUSFS)
         working-directory: kernel
         run: |
           set -euo pipefail
@@ -72,191 +72,13 @@ jobs:
           grep -q 'drivers/kernelsu/Kconfig' drivers/Kconfig || \
             sed -i '/^endmenu/i\source "drivers/kernelsu/Kconfig"' drivers/Kconfig
 
-          echo "== 重新启用 manual hook 调用点 =="
-          cat > /tmp/bakasu_patch.py <<'PY'
-          import pathlib
-          import re
-          import sys
-
-
-          def patch(path, anchor_re, replacement, marker):
-              p = pathlib.Path(path)
-              src = p.read_text()
-              if marker in src:
-                  print(f"  [skip] {path}: already patched")
-                  return
-              m = re.search(anchor_re, src, re.S | re.M)
-              if not m:
-                  sys.exit(f"  [FAIL] anchor not found in {path}: {anchor_re!r}")
-              p.write_text(src[: m.start()] + replacement + src[m.end():])
-              print(f"  [ok]   {path}")
-
-
-          # fs/exec.c: ksu_handle_execveat 是 su 的核心入口
-          patch(
-              "fs/exec.c",
-              r"extern int ksu_handle_post_execveat_sucompat\(int \*fd, struct filename \*\*filename_ptr, void \*argv,\n\t\t\t\tvoid \*envp, int \*flags, int \*retval\);\n#endif\n",
-              """extern int ksu_handle_post_execveat_sucompat(int *fd, struct filename **filename_ptr, void *argv,
-          				void *envp, int *flags, int *retval);
-          #endif
-
-          #ifdef CONFIG_KSU_MANUAL_HOOK
-          extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,
-          				void *envp, int *flags);
-          #endif
-          """,
-              "#ifdef CONFIG_KSU_MANUAL_HOOK\nextern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,",
-          )
-
-          patch(
-              "fs/exec.c",
-              r"#else\n\treturn __do_execve_file\(fd, filename, argv, envp, flags, NULL\);\n#endif",
-              """#else
-          #ifdef CONFIG_KSU_MANUAL_HOOK
-          	/* BakaSU manual hook */
-          	ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
-          #endif
-          	return __do_execve_file(fd, filename, argv, envp, flags, NULL);
-          #endif""",
-              "ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);",
-          )
-
-          # fs/open.c: faccessat
-          patch(
-              "fs/open.c",
-              r"extern int ksu_handle_faccessat\(int \*dfd, struct filename \*\*filename,\n\t\tint \*mode, int \*flags\);\n#endif\n",
-              """extern int ksu_handle_faccessat(int *dfd, struct filename **filename,
-          		int *mode, int *flags);
-          #endif
-
-          #ifdef CONFIG_KSU_MANUAL_HOOK
-          extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user,
-          		int *mode, int *flags);
-          #endif
-          """,
-              "#ifdef CONFIG_KSU_MANUAL_HOOK\nextern int ksu_handle_faccessat(int *dfd, const char __user **filename_user,",
-          )
-
-          patch(
-              "fs/open.c",
-              r"#else\n\tres = user_path_at\(dfd, filename, lookup_flags, &path\);\n#endif",
-              """#else
-          #ifdef CONFIG_KSU_MANUAL_HOOK
-          	/* BakaSU manual hook */
-          	ksu_handle_faccessat(&dfd, &filename, &mode, NULL);
-          #endif
-          	res = user_path_at(dfd, filename, lookup_flags, &path);
-          #endif""",
-              "ksu_handle_faccessat(&dfd, &filename, &mode, NULL);",
-          )
-
-          # fs/stat.c: stat / fstat 返回值 hook
-          patch(
-              "fs/stat.c",
-              r'#include "internal\.h"\n',
-              """#include "internal.h"
-
-          #ifdef CONFIG_KSU_MANUAL_HOOK
-          /* BakaSU manual hook */
-          __attribute__((hot))
-          extern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);
-          extern void ksu_handle_newfstat_ret(unsigned int *fd, struct stat __user **statbuf_ptr);
-          #if defined(__ARCH_WANT_STAT64) || defined(__ARCH_WANT_COMPAT_STAT64)
-          extern void ksu_handle_fstat64_ret(unsigned long *fd, struct stat64 __user **statbuf_ptr);
-          #endif
-          #endif
-          """,
-              "extern void ksu_handle_newfstat_ret(unsigned int *fd, struct stat __user **statbuf_ptr);",
-          )
-
-          patch(
-              "fs/stat.c",
-              r"SYSCALL_DEFINE4\(newfstatat, int, dfd, const char __user \*, filename,\n\t\tstruct stat __user \*, statbuf, int, flag\)\n\{\n\tstruct kstat stat;\n\tint error;\n",
-              """SYSCALL_DEFINE4(newfstatat, int, dfd, const char __user *, filename,
-          		struct stat __user *, statbuf, int, flag)
-          {
-          	struct kstat stat;
-          	int error;
-
-          #ifdef CONFIG_KSU_MANUAL_HOOK
-          	/* BakaSU manual hook */
-          	ksu_handle_stat(&dfd, &filename, &flag);
-          #endif
-          """,
-              "SYSCALL_DEFINE4(newfstatat, int, dfd, const char __user *, filename,\n\t\tstruct stat __user *, statbuf, int, flag)\n{\n\tstruct kstat stat;\n\tint error;\n\n#ifdef CONFIG_KSU_MANUAL_HOOK",
-          )
-
-          patch(
-              "fs/stat.c",
-              r"SYSCALL_DEFINE2\(newfstat, unsigned int, fd, struct stat __user \*, statbuf\)\n\{\n\tstruct kstat stat;\n\tint error = vfs_fstat\(fd, &stat\);\n\n\tif \(!error\)\n\t\terror = cp_new_stat\(&stat, statbuf\);\n",
-              """SYSCALL_DEFINE2(newfstat, unsigned int, fd, struct stat __user *, statbuf)
-          {
-          	struct kstat stat;
-          	int error = vfs_fstat(fd, &stat);
-
-          	if (!error)
-          		error = cp_new_stat(&stat, statbuf);
-          #ifdef CONFIG_KSU_MANUAL_HOOK
-          	/* BakaSU manual hook */
-          	ksu_handle_newfstat_ret(&fd, &statbuf);
-          #endif
-          """,
-              "ksu_handle_newfstat_ret(&fd, &statbuf);",
-          )
-
-          patch(
-              "fs/stat.c",
-              r"SYSCALL_DEFINE2\(fstat64, unsigned long, fd, struct stat64 __user \*, statbuf\)\n\{\n\tstruct kstat stat;\n\tint error = vfs_fstat\(fd, &stat\);\n\n\tif \(!error\)\n\t\terror = cp_new_stat64\(&stat, statbuf\);\n",
-              """SYSCALL_DEFINE2(fstat64, unsigned long, fd, struct stat64 __user *, statbuf)
-          {
-          	struct kstat stat;
-          	int error = vfs_fstat(fd, &stat);
-
-          	if (!error)
-          		error = cp_new_stat64(&stat, statbuf);
-          #ifdef CONFIG_KSU_MANUAL_HOOK
-          	/* BakaSU manual hook */
-          	ksu_handle_fstat64_ret(&fd, &statbuf);
-          #endif
-          """,
-              "ksu_handle_fstat64_ret(&fd, &statbuf);",
-          )
-
-          patch(
-              "fs/stat.c",
-              r"SYSCALL_DEFINE4\(fstatat64, int, dfd, const char __user \*, filename,\n\t\tstruct stat64 __user \*, statbuf, int, flag\)\n\{\n\tstruct kstat stat;\n\tint error;\n",
-              """SYSCALL_DEFINE4(fstatat64, int, dfd, const char __user *, filename,
-          		struct stat64 __user *, statbuf, int, flag)
-          {
-          	struct kstat stat;
-          	int error;
-
-          #ifdef CONFIG_KSU_MANUAL_HOOK
-          	/* BakaSU manual hook */
-          	ksu_handle_stat(&dfd, &filename, &flag);
-          #endif
-          """,
-              "SYSCALL_DEFINE4(fstatat64, int, dfd, const char __user *, filename,\n\t\tstruct stat64 __user *, statbuf, int, flag)\n{\n\tstruct kstat stat;\n\tint error;\n\n#ifdef CONFIG_KSU_MANUAL_HOOK",
-          )
-
-          # kernel/reboot.c: KernelSU supercall
-          patch(
-              "kernel/reboot.c",
-              r"#ifdef CONFIG_KSU_SUSFS\nextern int ksu_handle_sys_reboot",
-              "#if defined(CONFIG_KSU_SUSFS) || defined(CONFIG_KSU_MANUAL_HOOK)\nextern int ksu_handle_sys_reboot",
-              "defined(CONFIG_KSU_MANUAL_HOOK)\nextern int ksu_handle_sys_reboot",
-          )
-
-          patch(
-              "kernel/reboot.c",
-              r"#ifdef CONFIG_KSU_SUSFS\n\tret = ksu_handle_sys_reboot",
-              "#if defined(CONFIG_KSU_SUSFS) || defined(CONFIG_KSU_MANUAL_HOOK)\n\tret = ksu_handle_sys_reboot",
-              "defined(CONFIG_KSU_MANUAL_HOOK)\n\tret = ksu_handle_sys_reboot",
-          )
-
-          print("all manual-hook patches applied")
-          PY
-          python3 /tmp/bakasu_patch.py
+          echo "== 确认内核侧 SUSFS 完整性 =="
+          test -f fs/susfs.c || { echo "::error::fs/susfs.c missing - kernel branch lacks SUSFS"; exit 1; }
+          test -f include/linux/susfs_def.h || { echo "::error::include/linux/susfs_def.h missing"; exit 1; }
+          grep -q 'CONFIG_KSU_SUSFS' fs/exec.c || { echo "::error::fs/exec.c lacks KSU_SUSFS hooks"; exit 1; }
+          grep -q 'CONFIG_KSU_SUSFS' fs/open.c || { echo "::error::fs/open.c lacks KSU_SUSFS hooks"; exit 1; }
+          grep -q 'CONFIG_KSU_SUSFS' fs/stat.c || { echo "::error::fs/stat.c lacks KSU_SUSFS hooks"; exit 1; }
+          echo "-- kernel-side SUSFS hooks verified (no patching needed)"
 
           echo "== 修复 preinit 的 void 函数 return false =="
           PREINIT_H="BakaSU_src/kernel/preinit/preinit.h"
@@ -269,21 +91,35 @@ jobs:
           echo "== 生成 defconfig =="
           make O=out ARCH=arm64 "${{ env.DEFCONFIG_NAME }}"
 
-          echo "== 配置 BakaSU =="
+          echo "== 配置 BakaSU：SUSFS 全功能 =="
           scripts/config --file out/.config \
             --enable  KSU \
-            --enable  KSU_MANUAL_HOOK \
+            --enable  KSU_SUSFS \
             --disable KSU_TRACEPOINT_HOOK \
-            --disable KSU_SUSFS \
+            --disable KSU_MANUAL_HOOK \
             --enable  KALLSYMS_ALL \
-            --enable  KSU_MANUAL_HOOK_AUTO_SETUID_HOOK \
-            --enable  KSU_MANUAL_HOOK_AUTO_INITRC_HOOK \
-            --enable  KSU_MANUAL_HOOK_AUTO_INPUT_HOOK \
+            --enable  KSU_SUSFS_SUS_PATH \
+            --enable  KSU_SUSFS_SUS_MOUNT \
+            --enable  KSU_SUSFS_SUS_KSTAT \
+            --enable  KSU_SUSFS_SPOOF_UNAME \
+            --enable  KSU_SUSFS_ENABLE_LOG \
+            --enable  KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+            --enable  KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+            --enable  KSU_SUSFS_OPEN_REDIRECT \
+            --enable  KSU_SUSFS_SUS_MAP \
             --disable UAPI_HEADER_TEST \
             --disable HEADERS_INSTALL \
-            --set-str LOCALVERSION "-edwin-pure-final-$(date +%m%d)"
+            --set-str LOCALVERSION "-edwin-susfs-full-$(date +%m%d)"
 
           make O=out ARCH=arm64 olddefconfig
+
+          echo "== 校验 SUSFS 配置生效 =="
+          for sym in KSU KSU_SUSFS KSU_SUSFS_SUS_PATH KSU_SUSFS_SUS_MOUNT KSU_SUSFS_SUS_KSTAT \
+                     KSU_SUSFS_SPOOF_UNAME KSU_SUSFS_ENABLE_LOG KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+                     KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG KSU_SUSFS_OPEN_REDIRECT KSU_SUSFS_SUS_MAP; do
+            grep -q "^CONFIG_${sym}=y" out/.config || { echo "::error::CONFIG_${sym} not enabled"; exit 1; }
+          done
+          grep -q "^CONFIG_KSU_MANUAL_HOOK=" out/.config && { echo "::error::KSU_MANUAL_HOOK should be off"; exit 1; } || true
 
       - name: 修复编译警告
         working-directory: kernel
@@ -361,7 +197,7 @@ jobs:
           ### AnyKernel setup
           # global properties
           properties() { '
-          kernel.string=Edwin BakaSU Pure Final (No SUSFS) for Xiaomi 11 Ultra / Pro (star)
+          kernel.string=Edwin BakaSU Full SUSFS for Xiaomi 11 Ultra / Pro (star)
           do.devicecheck=1
           do.modules=0
           do.systemless=1
@@ -398,10 +234,10 @@ jobs:
           AK3
 
           chmod +x anykernel.sh
-          zip -r9 "../${{ env.DEVICE_CODENAME }}-BakaSU-PureFinal-${TIME}.zip" ./*
+          zip -r9 "../${{ env.DEVICE_CODENAME }}-BakaSU-SUSFS-Full-${TIME}.zip" ./*
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kernel_bakasu_pure_final
-          path: ${{ env.DEVICE_CODENAME }}-BakaSU-PureFinal-*.zip
+          name: kernel_bakasu_susfs_full
+          path: ${{ env.DEVICE_CODENAME }}-BakaSU-SUSFS-Full-*.zip
