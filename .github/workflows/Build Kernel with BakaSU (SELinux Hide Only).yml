@@ -1,4 +1,4 @@
-name: Build Kernel with BakaSU (Pure No SUSFS - Fixed Hook)
+name: Build Kernel with BakaSU (Pure No SUSFS - Final)
 
 on:
   workflow_dispatch:
@@ -31,7 +31,7 @@ jobs:
       - name: Verify Kernel Commit & Clean Workspace
         working-directory: kernel
         run: |
-          echo "=== 当前内核源码 Git 信息 ==="
+          echo "=== 清理内核源码 ==="
           git reset --hard HEAD
           git clean -fdx
           echo "✅ 清理完成"
@@ -76,11 +76,16 @@ jobs:
           rm -rf BakaSU_src
           git clone --depth=1 https://github.com/Baka-SU/BakaSU.git BakaSU_src
 
+          echo "=== 手动创建 seccomp_types.h ==="
           if [ ! -f "include/linux/seccomp_types.h" ]; then
             touch "include/linux/seccomp_types.h"
           fi
 
-          rm -rf KernelSU drivers/kernelsu drivers/KernelSU
+          echo "=== 清理旧版 KernelSU 目录 ==="
+          rm -rf KernelSU
+          rm -rf drivers/kernelsu
+          rm -rf drivers/KernelSU
+          
           ln -sf ../BakaSU_src/kernel drivers/kernelsu
 
           if ! grep -q "kernelsu" drivers/Makefile; then
@@ -92,17 +97,7 @@ jobs:
           fi
 
           # ============================================================
-          # 关键修复 1：屏蔽 preinit_runner 避免外部构建路径报错
-          # ============================================================
-          KSU_SRC_DIR=$(readlink -f drivers/kernelsu)
-          PREINIT_RUNNER_MK="$KSU_SRC_DIR/tools/code_generation/preinit_runner/preinit_runner.mk"
-          if [ -f "$PREINIT_RUNNER_MK" ]; then
-             echo "# Disabled by CI for non-GKI" > "$PREINIT_RUNNER_MK"
-             echo "✅ 已屏蔽 preinit_runner.mk 以防止 O=out 路径解析报错"
-          fi
-
-          # ============================================================
-          # 关键修复 2：补全 fs/stat.c 中缺失的返回值钩子
+          # 关键修复：补全 fs/stat.c 钩子（关闭 SUSFS 后自检必须）
           # ============================================================
           echo "=== 补全 fs/stat.c 缺失的钩子 ==="
           STAT_C="fs/stat.c"
@@ -126,15 +121,19 @@ jobs:
             if ! grep -q "ksu_handle_newfstat_ret(&fd" "$STAT_C"; then
               perl -0pi -e 's/(SYSCALL_DEFINE2\(newfstat,.*?if\s*\(!error\)\s*error\s*=\s*cp_new_stat\(&stat, statbuf\);)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_newfstat_ret(\&fd, \&statbuf);\n#endif\n/s' "$STAT_C"
             fi
+
             if ! grep -q "ksu_handle_fstat64_ret(&fd" "$STAT_C"; then
               perl -0pi -e 's/(SYSCALL_DEFINE2\(fstat64,.*?if\s*\(!error\)\s*error\s*=\s*cp_new_stat64\(&stat, statbuf\);)/$1\n#ifdef CONFIG_KSU_MANUAL_HOOK\n\tksu_handle_fstat64_ret(\&fd, \&statbuf);\n#endif\n/s' "$STAT_C"
             fi
           fi
 
           # ============================================================
-          # 关键修复 3：保留成功识别的逻辑，动态编译 selinux_hide.o
+          # 保留成功识别的逻辑：动态编译 selinux_hide.o
           # ============================================================
+          echo "=== 搜索并配置 selinux_hide.c 编译 ==="
+          KSU_SRC_DIR=$(readlink -f drivers/kernelsu)
           HIDE_FILE=$(find "$KSU_SRC_DIR" -name 'selinux_hide.c' | head -n1)
+          
           if [ -n "$HIDE_FILE" ]; then
             sed -i '/BakaSU non-GKI 修复/,+3d' "$HIDE_FILE"
             sed -i '/static struct mutex \*ksu_selinux_status_lock/d' "$HIDE_FILE"
@@ -208,7 +207,7 @@ jobs:
             --disable KSU_SUSFS \
             --disable HEADERS_INSTALL \
             --set-val FRAME_WARN 131072 \
-            --set-str LOCALVERSION "-edwin-pure-fixed-$(date +%m%d)"
+            --set-str LOCALVERSION "-edwin-pure-final-$(date +%m%d)"
 
           make O=${{ env.OUTPUT_DIR }} olddefconfig 2>&1 | tee olddefconfig.log
 
@@ -250,7 +249,7 @@ jobs:
             '#!/sbin/sh' \
             '### AnyKernel3 Flashable Kernel Script' \
             "properties() { '" \
-            'kernel.string=5.4.302-edwin-pure-fixed+ BakaSU for Xiaomi 11 Ultra' \
+            'kernel.string=5.4.302-edwin-pure-final+ BakaSU for Xiaomi 11 Ultra' \
             'do.devicecheck=1' 'do.modules=0' 'do.systemless=0' 'do.cleanup=1' 'do.cleanuponabort=0' \
             'device.name1=star' 'device.name2=mars' \
             "'; } # end properties" \
@@ -261,11 +260,11 @@ jobs:
           
           chmod +x "$AK3_DIR/anykernel.sh"
           cd $AK3_DIR
-          zip -r9 "../${{ env.DEVICE_CODENAME }}-BakaSU-PureFixed-${TIME}.zip" ./*
+          zip -r9 "../${{ env.DEVICE_CODENAME }}-BakaSU-PureFinal-${TIME}.zip" ./*
           cd ..
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kernel_bakasu_pure_fixed
-          path: ${{ env.DEVICE_CODENAME }}-BakaSU-PureFixed-*.zip
+          name: kernel_bakasu_pure_final
+          path: ${{ env.DEVICE_CODENAME }}-BakaSU-PureFinal-*.zip
