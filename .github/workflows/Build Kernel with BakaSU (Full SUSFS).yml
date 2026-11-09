@@ -1,0 +1,280 @@
+name: Build Kernel with BakaSU (Full SUSFS)
+
+on:
+  workflow_dispatch:
+
+env:
+  KERNEL_REPO: zttlove/android_kernel_xiaomi_sm8350-hyperos
+  KERNEL_BRANCH: dynamic
+  DEFCONFIG_NAME: vendor/star_defconfig
+  DEVICE_CODENAME: star
+  OUTPUT_DIR: out
+  CLANG_DIR: ${{ github.workspace }}/toolchains/clang
+  KERNEL_DIR: ${{ github.workspace }}/kernel
+
+jobs:
+  build-kernel:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.KERNEL_REPO }}
+          ref: ${{ env.KERNEL_BRANCH }}
+          path: kernel
+          fetch-depth: 1
+
+      - name: Verify Kernel Commit & Clean Workspace
+        working-directory: kernel
+        run: |
+          git reset --hard HEAD
+          git clean -fdx
+          echo "Kernel: $(git log -1 --format='%h %s')"
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bc bison flex libssl-dev libelf-dev \
+            zip unzip python3 perl git curl ccache xxd cpio kmod \
+            libtinfo5
+          sudo ln -sf /usr/lib/x86_64-linux-gnu/libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5 || true
+
+      - name: Download Clang 17.0.6
+        run: |
+          mkdir -p "${{ env.CLANG_DIR }}"
+          curl -fL --retry 3 -o /tmp/clang.tar.xz \
+            https://github.com/llvm/llvm-project/releases/download/llvmorg-17.0.6/clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-22.04.tar.xz
+          tar -xf /tmp/clang.tar.xz -C "${{ env.CLANG_DIR }}" --strip-components=1
+          "${{ env.CLANG_DIR }}/bin/clang" --version
+
+      - name: Integrate BakaSU (full SUSFS)
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          export ARCH=arm64
+          export PATH="${{ env.CLANG_DIR }}/bin:$PATH"
+          export LLVM=1 LLVM_IAS=1 \
+                 CLANG_TRIPLE=aarch64-linux-gnu- \
+                 CROSS_COMPILE=aarch64-linux-gnu- \
+                 CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+
+          echo "== 清理内核树 =="
+          make mrproper >/dev/null 2>&1 || true
+
+          echo "== 拉取 BakaSU 并接管 drivers/kernelsu =="
+          rm -rf BakaSU_src KernelSU drivers/kernelsu drivers/KernelSU
+          git clone --depth=1 https://github.com/Baka-SU/BakaSU.git BakaSU_src
+          ln -sfn ../BakaSU_src/kernel drivers/kernelsu
+
+          grep -q 'kernelsu' drivers/Makefile || \
+            printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> drivers/Makefile
+          grep -q 'drivers/kernelsu/Kconfig' drivers/Kconfig || \
+            sed -i '/^endmenu/i\source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+
+          echo "== 确认内核侧 SUSFS 完整性 =="
+          test -f fs/susfs.c || { echo "::error::fs/susfs.c missing - kernel branch lacks SUSFS"; exit 1; }
+          test -f include/linux/susfs_def.h || { echo "::error::include/linux/susfs_def.h missing"; exit 1; }
+          grep -q 'CONFIG_KSU_SUSFS' fs/exec.c || { echo "::error::fs/exec.c lacks KSU_SUSFS hooks"; exit 1; }
+          grep -q 'CONFIG_KSU_SUSFS' fs/open.c || { echo "::error::fs/open.c lacks KSU_SUSFS hooks"; exit 1; }
+          grep -q 'CONFIG_KSU_SUSFS' fs/stat.c || { echo "::error::fs/stat.c lacks KSU_SUSFS hooks"; exit 1; }
+          echo "-- kernel-side SUSFS hooks verified (no patching needed)"
+
+          echo "== 修复 vendor selinux_hide 补丁缺失的符号 =="
+          # BakaSU 现版把该锁定义为 static，而 vendor 内核补丁以 extern 引用，需去掉 static 共享同一变量
+          sed -i 's/^static struct mutex \*ksu_selinux_status_lock = NULL;/struct mutex *ksu_selinux_status_lock = NULL;/' \
+            BakaSU_src/kernel/feature/selinux_hide.c
+          grep -q '^struct mutex \*ksu_selinux_status_lock' BakaSU_src/kernel/feature/selinux_hide.c \
+            || { echo "::error::selinux_hide.c lock static-removal failed"; exit 1; }
+          # fake_state：vendor 补丁引用但 BakaSU 现版已不提供；在内核侧定义（保证与 vendor 的
+          # struct selinux_state 布局一致），并在 selinux 初始化后浅拷真实状态
+          if ! grep -q 'bakasu_fake_state_init' security/selinux/ss/services.c; then
+          cat >> security/selinux/ss/services.c <<'EOF'
+
+          /* BakaSU selinux_hide: fake selinux_state served to hidden apps by vendor kernel patch */
+          struct selinux_state fake_state;
+          static int __init bakasu_fake_state_init(void)
+          {
+          	fake_state = selinux_state;
+          	return 0;
+          }
+          core_initcall(bakasu_fake_state_init);
+          EOF
+          fi
+          tail -3 security/selinux/ss/services.c | grep -q 'core_initcall(bakasu_fake_state_init);' \
+            || { echo "::error::fake_state definition append failed"; exit 1; }
+
+          echo "== 修复 preinit 的 void 函数 return false =="
+          PREINIT_H="BakaSU_src/kernel/preinit/preinit.h"
+          if [ -f "$PREINIT_H" ]; then
+            perl -0pi -e 's/(void\s+[a-zA-Z_][a-zA-Z0-9_]*\s*\([^)]*\)\s*\{[^}]*?)\breturn\s+false;/${1}return;/gs' "$PREINIT_H"
+            grep -qPzo '\bvoid\s+[a-zA-Z_][a-zA-Z0-9_]*\s*\([^)]*\)\s*\{[^}]*?\breturn\s+false;' "$PREINIT_H" \
+              && { echo "::error::preinit.h void-return patch failed"; exit 1; } || true
+          fi
+
+          echo "== 直接向 defconfig 追加 SUSFS 配置 =="
+          DEFCONFIG_PATH="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
+          test -f "$DEFCONFIG_PATH" || { echo "::error::defconfig not found at $DEFCONFIG_PATH"; exit 1; }
+          for sym in KSU_SUSFS KSU_SUSFS_SUS_PATH KSU_SUSFS_SUS_MOUNT KSU_SUSFS_SUS_KSTAT \
+                     KSU_SUSFS_SPOOF_UNAME KSU_SUSFS_ENABLE_LOG KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+                     KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG KSU_SUSFS_OPEN_REDIRECT KSU_SUSFS_SUS_MAP \
+                     KSU_SUSFS_PRIORITY_UID_FILTER; do
+            echo "CONFIG_${sym}=y" >> "$DEFCONFIG_PATH"
+          done
+          grep -q 'CONFIG_KSU_SUSFS_SUS_MAP=y' "$DEFCONFIG_PATH" \
+            || { echo "::error::defconfig SUSFS append failed"; exit 1; }
+          # 注：KSU_SUSFS_PRIORITY_UID_FILTER 在当前版 BakaSU Kconfig 中不存在，olddefconfig 会自动丢弃
+
+          echo "== 生成 defconfig =="
+          make O=out ARCH=arm64 "${{ env.DEFCONFIG_NAME }}"
+
+          echo "== 配置 BakaSU：SUSFS 全功能 =="
+          scripts/config --file out/.config \
+            --enable  KSU \
+            --enable  KSU_SUSFS \
+            --disable KSU_TRACEPOINT_HOOK \
+            --disable KSU_MANUAL_HOOK \
+            --enable  KALLSYMS_ALL \
+            --enable  KSU_SUSFS_SUS_PATH \
+            --enable  KSU_SUSFS_SUS_MOUNT \
+            --enable  KSU_SUSFS_SUS_KSTAT \
+            --enable  KSU_SUSFS_SPOOF_UNAME \
+            --enable  KSU_SUSFS_ENABLE_LOG \
+            --enable  KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+            --enable  KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+            --enable  KSU_SUSFS_OPEN_REDIRECT \
+            --enable  KSU_SUSFS_SUS_MAP \
+            --disable UAPI_HEADER_TEST \
+            --disable HEADERS_INSTALL \
+            --set-str LOCALVERSION "-edwin-susfs-full-$(date +%m%d)"
+
+          make O=out ARCH=arm64 olddefconfig
+
+          echo "== 校验 SUSFS 配置生效 =="
+          for sym in KSU KSU_SUSFS KSU_SUSFS_SUS_PATH KSU_SUSFS_SUS_MOUNT KSU_SUSFS_SUS_KSTAT \
+                     KSU_SUSFS_SPOOF_UNAME KSU_SUSFS_ENABLE_LOG KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+                     KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG KSU_SUSFS_OPEN_REDIRECT KSU_SUSFS_SUS_MAP; do
+            grep -q "^CONFIG_${sym}=y" out/.config || { echo "::error::CONFIG_${sym} not enabled"; exit 1; }
+          done
+          grep -q "^CONFIG_KSU_MANUAL_HOOK=" out/.config && { echo "::error::KSU_MANUAL_HOOK should be off"; exit 1; } || true
+
+      - name: 修复编译警告
+        working-directory: kernel
+        run: |
+          set -e
+          FOCALTECH_MAKEFILE="drivers/input/touchscreen/focaltech_touch/Makefile"
+          if [ -f "$FOCALTECH_MAKEFILE" ]; then
+            sed -i 's/^ \+/\t/' "$FOCALTECH_MAKEFILE"
+            echo "Fixed leading spaces in focaltech Makefile"
+          fi
+
+          for entry in \
+            "drivers/staging/qcacld-3.0:-Wno-format" \
+            "drivers/staging/qca-wifi-host-cmn:-Wno-format" \
+            "drivers/thermal:-Wno-fortify-source"; do
+            DIR="${entry%%:*}"
+            FLAG="${entry##*:}"
+            if [ -d "$DIR" ] && [ -f "$DIR/Makefile" ]; then
+              grep -q -- "$FLAG" "$DIR/Makefile" || echo "ccflags-y += $FLAG" >> "$DIR/Makefile"
+            fi
+          done
+
+      - name: Build Kernel
+        working-directory: kernel
+        run: |
+          export ARCH=arm64
+          export PATH="${{ env.CLANG_DIR }}/bin:$PATH"
+          export LLVM=1 LLVM_IAS=1 \
+                 CLANG_TRIPLE=aarch64-linux-gnu- \
+                 CROSS_COMPILE=aarch64-linux-gnu- \
+                 CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+          export CCACHE_DIR="${{ github.workspace }}/.ccache"
+
+          set +e
+          make -j$(nproc) O=out ARCH=arm64 \
+            CC="clang" LD="ld.lld" AR="llvm-ar" NM="llvm-nm" \
+            OBJCOPY="llvm-objcopy" OBJDUMP="llvm-objdump" STRIP="llvm-strip" \
+            CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" \
+            KCFLAGS="-Wno-unknown-warning-option -Wno-error -Wno-format -Wno-incompatible-pointer-types \
+            -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-missing-prototypes \
+            -Wno-int-conversion -Wno-declaration-after-statement \
+            -Wframe-larger-than=131072 -Wno-unused-variable -Wno-unused-function \
+            -Wno-missing-braces -Wno-int-to-pointer-cast -Wno-address-of-packed-member \
+            -Wno-return-type -Wno-shift-negative-value -Wno-array-bounds" \
+            HOSTCFLAGS="" 2>&1 | tee build.log
+
+          if [ ${PIPESTATUS[0]} -ne 0 ]; then
+            echo "::error::Kernel build failed. Last 200 lines:"
+            tail -n 200 build.log
+            exit 1
+          fi
+
+          echo "=== Build finished ==="
+          ls -lh out/arch/arm64/boot/Image
+
+      - name: Package AnyKernel3
+        run: |
+          set -e
+          TIME=$(date +%Y%m%d-%H%M)
+          IMG_PATH="${{ env.KERNEL_DIR }}/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image"
+          test -f "$IMG_PATH"
+
+          rm -rf AnyKernel3
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git
+          cd AnyKernel3
+
+          cp "$IMG_PATH" ./Image
+          gzip -9 -f ./Image
+          rm -f ./Image
+
+          cat > anykernel.sh <<'AK3'
+          ### AnyKernel3 Ramdisk Mod Script
+          ## osm0sis @ xda-developers
+
+          ### AnyKernel setup
+          # global properties
+          properties() { '
+          kernel.string=Edwin BakaSU Full SUSFS for Xiaomi 11 Ultra / Pro (star)
+          do.devicecheck=1
+          do.modules=0
+          do.systemless=1
+          do.cleanup=1
+          do.cleanuponabort=0
+          device.name1=star
+          device.name2=mars
+          supported.versions=
+          supported.patchlevels=
+          supported.vendorpatchlevels=
+          '; } # end properties
+
+          ### AnyKernel install
+          # boot files attributes
+          boot_attributes() {
+          set_perm_recursive 0 0 755 644 $RAMDISK/*;
+          set_perm_recursive 0 0 750 750 $RAMDISK/init* $RAMDISK/sbin;
+          } # end attributes
+
+          # boot shell variables
+          BLOCK=boot;
+          IS_SLOT_DEVICE=1;
+          RAMDISK_COMPRESSION=auto;
+          PATCH_VBMETA_FLAG=auto;
+
+          # import functions/variables and setup patching - see for reference (DO NOT REMOVE)
+          . tools/ak3-core.sh;
+
+          # boot install
+          split_boot;
+
+          flash_boot;
+          ## end boot install
+          AK3
+
+          chmod +x anykernel.sh
+          zip -r9 "../${{ env.DEVICE_CODENAME }}-BakaSU-SUSFS-Full-${TIME}.zip" ./*
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel_bakasu_susfs_full
+          path: ${{ env.DEVICE_CODENAME }}-BakaSU-SUSFS-Full-*.zip
