@@ -112,6 +112,19 @@ jobs:
               && { echo "::error::preinit.h void-return patch failed"; exit 1; } || true
           fi
 
+          echo "== 直接向 defconfig 追加 SUSFS 配置 =="
+          DEFCONFIG_PATH="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
+          test -f "$DEFCONFIG_PATH" || { echo "::error::defconfig not found at $DEFCONFIG_PATH"; exit 1; }
+          for sym in KSU_SUSFS KSU_SUSFS_SUS_PATH KSU_SUSFS_SUS_MOUNT KSU_SUSFS_SUS_KSTAT \
+                     KSU_SUSFS_SPOOF_UNAME KSU_SUSFS_ENABLE_LOG KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+                     KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG KSU_SUSFS_OPEN_REDIRECT KSU_SUSFS_SUS_MAP \
+                     KSU_SUSFS_PRIORITY_UID_FILTER; do
+            echo "CONFIG_${sym}=y" >> "$DEFCONFIG_PATH"
+          done
+          grep -q 'CONFIG_KSU_SUSFS_SUS_MAP=y' "$DEFCONFIG_PATH" \
+            || { echo "::error::defconfig SUSFS append failed"; exit 1; }
+          # 注：KSU_SUSFS_PRIORITY_UID_FILTER 在当前版 BakaSU Kconfig 中不存在，olddefconfig 会自动丢弃
+
           echo "== 生成 defconfig =="
           make O=out ARCH=arm64 "${{ env.DEFCONFIG_NAME }}"
 
