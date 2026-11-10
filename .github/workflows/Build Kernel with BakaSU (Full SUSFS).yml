@@ -250,6 +250,17 @@ jobs:
                  CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
           export CCACHE_DIR="${{ github.workspace }}/.ccache"
 
+          echo "== 预装 UAPI 头文件以启用 BakaSU preinit =="
+          # vendor defconfig 不带 HEADERS_INSTALL，BakaSU preinit_runner.mk 检测不到
+          # out/usr/include 会优雅降级为 -DKSU_NO_PREINIT。这里显式安装，启用 preinit
+          make -j$(nproc) O=out ARCH=arm64 \
+            CC="clang" LD="ld.lld" AR="llvm-ar" NM="llvm-nm" \
+            headers_install INSTALL_HDR_PATH="$PWD/out/usr" \
+            || echo "::warning::headers_install failed, BakaSU preinit will stay disabled (non-fatal)"
+          test -f out/usr/include/linux/unistd.h \
+            && echo "-- preinit UAPI headers ready" \
+            || echo "::warning::usr/include/linux/unistd.h missing, preinit will be disabled"
+
           set +e
           make -j$(nproc) O=out ARCH=arm64 \
             CC="clang" LD="ld.lld" AR="llvm-ar" NM="llvm-nm" \
