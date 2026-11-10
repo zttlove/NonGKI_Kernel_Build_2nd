@@ -15,6 +15,7 @@ env:
 jobs:
   build-kernel:
     runs-on: ubuntu-22.04
+    timeout-minutes: 120
     steps:
       - name: Checkout Kernel Source
         uses: actions/checkout@v4
@@ -40,13 +41,31 @@ jobs:
             libtinfo5
           sudo ln -sf /usr/lib/x86_64-linux-gnu/libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5 || true
 
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-bakasu-star-${{ github.run_id }}
+          restore-keys: |
+            ccache-bakasu-star-
+
+      - name: Cache Clang Toolchain
+        uses: actions/cache@v4
+        id: clang-cache
+        with:
+          path: ${{ env.CLANG_DIR }}
+          key: clang-17.0.6-x86_64-ubuntu22.04
+
       - name: Download Clang 17.0.6
+        if: steps.clang-cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p "${{ env.CLANG_DIR }}"
           curl -fL --retry 3 -o /tmp/clang.tar.xz \
             https://github.com/llvm/llvm-project/releases/download/llvmorg-17.0.6/clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-22.04.tar.xz
           tar -xf /tmp/clang.tar.xz -C "${{ env.CLANG_DIR }}" --strip-components=1
-          "${{ env.CLANG_DIR }}/bin/clang" --version
+
+      - name: Verify Clang
+        run: ${{ env.CLANG_DIR }}/bin/clang --version
 
       - name: Integrate BakaSU (full SUSFS)
         working-directory: kernel
@@ -249,12 +268,18 @@ jobs:
                  CROSS_COMPILE=aarch64-linux-gnu- \
                  CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
           export CCACHE_DIR="${{ github.workspace }}/.ccache"
+          export CCACHE_MAXSIZE=8G
+          # 去除 CI 构建指纹：/proc/version 里嵌入的构建者/主机名/时间戳会被检测用作
+          # "自编内核" 信号，固定为普通本地构建形态（对反检测同样有意义）
+          export KBUILD_BUILD_USER=builder
+          export KBUILD_BUILD_HOST=android-build
+          export KBUILD_BUILD_TIMESTAMP="Thu Jun 12 10:00:00 UTC 2025"
 
           echo "== 预装 UAPI 头文件以启用 BakaSU preinit =="
           # vendor defconfig 不带 HEADERS_INSTALL，BakaSU preinit_runner.mk 检测不到
           # out/usr/include 会优雅降级为 -DKSU_NO_PREINIT。这里显式安装，启用 preinit
           make -j$(nproc) O=out ARCH=arm64 \
-            CC="clang" LD="ld.lld" AR="llvm-ar" NM="llvm-nm" \
+            CC="ccache clang" LD="ld.lld" AR="llvm-ar" NM="llvm-nm" \
             headers_install INSTALL_HDR_PATH="$PWD/out/usr" \
             || echo "::warning::headers_install failed, BakaSU preinit will stay disabled (non-fatal)"
           test -f out/usr/include/linux/unistd.h \
@@ -263,7 +288,7 @@ jobs:
 
           set +e
           make -j$(nproc) O=out ARCH=arm64 \
-            CC="clang" LD="ld.lld" AR="llvm-ar" NM="llvm-nm" \
+            CC="ccache clang" LD="ld.lld" AR="llvm-ar" NM="llvm-nm" \
             OBJCOPY="llvm-objcopy" OBJDUMP="llvm-objdump" STRIP="llvm-strip" \
             CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" \
             KCFLAGS="-Wno-unknown-warning-option -Wno-error -Wno-format -Wno-incompatible-pointer-types \
@@ -281,6 +306,7 @@ jobs:
           fi
 
           echo "=== Build finished ==="
+          ccache -s 2>/dev/null || true
           ls -lh out/arch/arm64/boot/Image
 
       - name: Package AnyKernel3
