@@ -64,7 +64,7 @@ jobs:
 
           echo "== 拉取 BakaSU 并接管 drivers/kernelsu =="
           rm -rf BakaSU_src KernelSU drivers/kernelsu drivers/KernelSU
-          git clone --depth=1 https://github.com/Baka-SU/BakaSU.git BakaSU_src
+          git clone --depth=1 -b sync-up https://github.com/Baka-SU/BakaSU.git BakaSU_src
           ln -sfn ../BakaSU_src/kernel drivers/kernelsu
 
           grep -q 'kernelsu' drivers/Makefile || \
@@ -115,6 +115,11 @@ jobs:
           echo "== 直接向 defconfig 追加 SUSFS 配置 =="
           DEFCONFIG_PATH="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
           test -f "$DEFCONFIG_PATH" || { echo "::error::defconfig not found at $DEFCONFIG_PATH"; exit 1; }
+          # 上游 defconfig 首行混入全角括号（"（CONFIG_MIHW=y"），kconfig 会警告并丢弃该行，
+          # 导致小米 millet 驱动（drivers/mihw）被静默关闭，这里剥离全角括号修复
+          sed -i 's/\xEF\xBC\x88//g; s/\xEF\xBC\x89//g' "$DEFCONFIG_PATH"
+          grep -q '^CONFIG_MIHW=y' "$DEFCONFIG_PATH" \
+            || { echo "::error::defconfig sanitize failed (MIHW line)"; exit 1; }
           for sym in KSU_SUSFS KSU_SUSFS_SUS_PATH KSU_SUSFS_SUS_MOUNT KSU_SUSFS_SUS_KSTAT \
                      KSU_SUSFS_SPOOF_UNAME KSU_SUSFS_ENABLE_LOG KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
                      KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG KSU_SUSFS_OPEN_REDIRECT KSU_SUSFS_SUS_MAP \
@@ -123,7 +128,7 @@ jobs:
           done
           grep -q 'CONFIG_KSU_SUSFS_SUS_MAP=y' "$DEFCONFIG_PATH" \
             || { echo "::error::defconfig SUSFS append failed"; exit 1; }
-          # 注：KSU_SUSFS_PRIORITY_UID_FILTER 在当前版 BakaSU Kconfig 中不存在，olddefconfig 会自动丢弃
+          # sync-up 支线新增 KSU_SUSFS_PRIORITY_UID_FILTER（Kconfig line 247），其余符号两分支通用
 
           echo "== 生成 defconfig =="
           make O=out ARCH=arm64 "${{ env.DEFCONFIG_NAME }}"
@@ -144,16 +149,20 @@ jobs:
             --enable  KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
             --enable  KSU_SUSFS_OPEN_REDIRECT \
             --enable  KSU_SUSFS_SUS_MAP \
+            --enable  KSU_SUSFS_PRIORITY_UID_FILTER \
             --disable UAPI_HEADER_TEST \
             --disable HEADERS_INSTALL \
-            --set-str LOCALVERSION "-edwin-susfs-full-$(date +%m%d)"
+            --set-str LOCALVERSION ""
+            # /proc/version 不受 SUSFS SPOOF_UNAME 伪造，版本串带 susfs 等字样会被
+            # 春秋/Momo 类检测直接读出；强制保持空串，内核串回归原厂形态
 
           make O=out ARCH=arm64 olddefconfig
 
           echo "== 校验 SUSFS 配置生效 =="
           for sym in KSU KSU_SUSFS KSU_SUSFS_SUS_PATH KSU_SUSFS_SUS_MOUNT KSU_SUSFS_SUS_KSTAT \
                      KSU_SUSFS_SPOOF_UNAME KSU_SUSFS_ENABLE_LOG KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
-                     KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG KSU_SUSFS_OPEN_REDIRECT KSU_SUSFS_SUS_MAP; do
+                     KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG KSU_SUSFS_OPEN_REDIRECT KSU_SUSFS_SUS_MAP \
+                     KSU_SUSFS_PRIORITY_UID_FILTER; do
             grep -q "^CONFIG_${sym}=y" out/.config || { echo "::error::CONFIG_${sym} not enabled"; exit 1; }
           done
           grep -q "^CONFIG_KSU_MANUAL_HOOK=" out/.config && { echo "::error::KSU_MANUAL_HOOK should be off"; exit 1; } || true
