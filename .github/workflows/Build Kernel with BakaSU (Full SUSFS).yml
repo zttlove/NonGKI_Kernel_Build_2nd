@@ -112,6 +112,33 @@ jobs:
               && { echo "::error::preinit.h void-return patch failed"; exit 1; } || true
           fi
 
+          echo "== 适配 sync-up 的 priority uid filter（vendor 内核 SUSFS 无内核侧支持）=="
+          # sync-up 分支引用的 CMD_SUSFS_SET_PRIORITY_UID_FILTER / susfs_set_priority_uid_filter /
+          # susfs_parse_priority_app_strings 由内核侧 susfs 提供，上游仅在 GKI 6.6-dev 分支实现，
+          # 本 5.4 vendor 内核（SUSFS v2.3.0）没有。这里优雅降级：命令返回 -EOPNOTSUPP（ksud
+          # 会将该功能标记为不支持），其余功能不受影响
+          if ! grep -q 'susfs_set_priority_uid_filter' fs/susfs.c; then
+            DISPATCH="BakaSU_src/kernel/supercall/dispatch.c"
+            test -f "$DISPATCH" || { echo "::error::dispatch.c not found"; exit 1; }
+            if ! grep -q 'define CMD_SUSFS_SET_PRIORITY_UID_FILTER' "$DISPATCH"; then
+              sed -i '\|#include <linux/susfs_def.h>|a\
+              #ifndef CMD_SUSFS_SET_PRIORITY_UID_FILTER\
+              #define CMD_SUSFS_SET_PRIORITY_UID_FILTER 0x60030 /* must match ksud magic.rs */\
+              #endif' "$DISPATCH"
+            fi
+            sed -i 's|susfs_set_priority_uid_filter(arg);|return -EOPNOTSUPP; /* vendor kernel susfs lacks kernel-side support */|' "$DISPATCH"
+            if ! grep -q 'void susfs_parse_priority_app_strings(void)' "$DISPATCH"; then
+              printf '\n#ifdef CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER\n/* vendor kernel susfs lacks this hook; keep it a no-op */\nvoid susfs_parse_priority_app_strings(void) {}\n#endif\n' >> "$DISPATCH"
+            fi
+            grep -q 'define CMD_SUSFS_SET_PRIORITY_UID_FILTER 0x60030' "$DISPATCH" \
+              && grep -q 'return -EOPNOTSUPP;' "$DISPATCH" \
+              && grep -q 'void susfs_parse_priority_app_strings(void) {}' "$DISPATCH" \
+              || { echo "::error::priority-uid-filter compat patch failed"; exit 1; }
+            echo "-- priority uid filter stubbed for this vendor kernel"
+          else
+            echo "-- vendor susfs has priority uid filter support, no stub needed"
+          fi
+
           echo "== 直接向 defconfig 追加 SUSFS 配置 =="
           DEFCONFIG_PATH="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
           test -f "$DEFCONFIG_PATH" || { echo "::error::defconfig not found at $DEFCONFIG_PATH"; exit 1; }
