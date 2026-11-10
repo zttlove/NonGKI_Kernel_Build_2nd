@@ -139,6 +139,30 @@ jobs:
             echo "-- vendor susfs has priority uid filter support, no stub needed"
           fi
 
+          echo "== 适配 sync-up 的 sus_type/avd 缓存（vendor 内核 SUSFS 无此实现）=="
+          # sepolicy.c 通过 extern 调用内核侧 susfs_add_sus_type / susfs_add_sus_avd_allowed_by_type
+          # （缓存注入策略的原始 type/avd 供新版 susfs 隐藏）。vendor 5.4 没有实现，置为
+          # no-op：运行时 sepolicy 注入本身不受影响，仅缺少该缓存细节
+          if ! grep -q 'susfs_add_sus_type' fs/susfs.c; then
+            SEPOL="BakaSU_src/kernel/selinux/sepolicy.c"
+            test -f "$SEPOL" || { echo "::error::sepolicy.c not found"; exit 1; }
+            if ! grep -q 'bakasu_compat_stub_sus_type' "$SEPOL"; then
+              cat >> "$SEPOL" <<'BSEOF'
+
+              /* bakasu_compat_stub_sus_type: vendor kernel susfs (5.4, v2.3.0) lacks sus_type caching;
+               * no-op so runtime sepolicy injection stays functional */
+              int susfs_add_sus_type(const char *secctx, u32 type_value) { return 0; }
+              int susfs_add_sus_avd_allowed_by_type(u32 s_type, u32 t_type, u32 c_type, u32 orig_avd_allowed) { return 0; }
+          BSEOF
+            fi
+            grep -q 'int susfs_add_sus_type(const char \*secctx' "$SEPOL" \
+              && grep -q 'int susfs_add_sus_avd_allowed_by_type(u32 s_type' "$SEPOL" \
+              || { echo "::error::sus_type stub failed"; exit 1; }
+            echo "-- sus_type/avd cache stubbed for this vendor kernel"
+          else
+            echo "-- vendor susfs has sus_type support, no stub needed"
+          fi
+
           echo "== 直接向 defconfig 追加 SUSFS 配置 =="
           DEFCONFIG_PATH="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
           test -f "$DEFCONFIG_PATH" || { echo "::error::defconfig not found at $DEFCONFIG_PATH"; exit 1; }
