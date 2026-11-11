@@ -114,8 +114,8 @@ jobs:
           struct selinux_state fake_state;
           static int __init bakasu_fake_state_init(void)
           {
-          	fake_state = selinux_state;
-          	return 0;
+          fake_state = selinux_state;
+          return 0;
           }
           core_initcall(bakasu_fake_state_init);
           EOF
@@ -177,126 +177,126 @@ jobs:
             static DEFINE_HASHTABLE(SUS_TYPE_HLIST, 10);
 
             struct st_susfs_sus_type_hlist {
-            	struct hlist_node			node;
+            struct hlist_node                        node;
             };
 
             int susfs_add_sus_type(const char *secctx, u32 type_value) {
-            	struct st_susfs_sus_type_hlist *new_entry, *tmp_entry;
-            	struct hlist_node *tmp_hlist_node;
-            	int err = 0;
+            struct st_susfs_sus_type_hlist *new_entry, *tmp_entry;
+            struct hlist_node *tmp_hlist_node;
+            int err = 0;
 
-            	mutex_lock(&susfs_mutex_lock_sus_type);
-            	hash_for_each_possible_safe(SUS_TYPE_HLIST, tmp_entry, tmp_hlist_node, node, type_value) {
-            		SUSFS_LOGE("secctx '%s', type_value '%u', was added before already\n",
-            			secctx, type_value);
-            		err = -EINVAL;
-            		goto unlock;
-            	}
+            mutex_lock(&susfs_mutex_lock_sus_type);
+            hash_for_each_possible_safe(SUS_TYPE_HLIST, tmp_entry, tmp_hlist_node, node, type_value) {
+            SUSFS_LOGE("secctx '%s', type_value '%u', was added before already\n",
+            secctx, type_value);
+            err = -EINVAL;
+            goto unlock;
+            }
 
-            	new_entry = kzalloc(sizeof(struct st_susfs_sus_type_hlist), GFP_KERNEL);
-            	if (!new_entry) {
-            		err = -ENOMEM;
-            		goto unlock;
-            	}
+            new_entry = kzalloc(sizeof(struct st_susfs_sus_type_hlist), GFP_KERNEL);
+            if (!new_entry) {
+            err = -ENOMEM;
+            goto unlock;
+            }
 
-            	hash_add_rcu(SUS_TYPE_HLIST, &new_entry->node, type_value);
-            	SUSFS_LOGI("secctx '%s', type '%u', has been added to SUS_TYPE_HLIST\n",
-            				secctx, type_value);
+            hash_add_rcu(SUS_TYPE_HLIST, &new_entry->node, type_value);
+            SUSFS_LOGI("secctx '%s', type '%u', has been added to SUS_TYPE_HLIST\n",
+            secctx, type_value);
             unlock:
-            	mutex_unlock(&susfs_mutex_lock_sus_type);
-            	return err;
+            mutex_unlock(&susfs_mutex_lock_sus_type);
+            return err;
             }
 
             bool susfs_is_sus_type_rcu(u32 type_value) {
-            	struct st_susfs_sus_type_hlist *entry = NULL;
+            struct st_susfs_sus_type_hlist *entry = NULL;
 
-            	hash_for_each_possible_rcu(SUS_TYPE_HLIST, entry, node, type_value) {
-            		return true;
-            	}
-            	return false;
+            hash_for_each_possible_rcu(SUS_TYPE_HLIST, entry, node, type_value) {
+            return true;
+            }
+            return false;
             }
 
             static DEFINE_MUTEX(susfs_mutex_lock_sus_avd_allowed_hlist);
             static DEFINE_HASHTABLE(SUS_AVD_ALLOWED_HLIST, 18);
 
             struct susfs_sus_av_rule {
-            	struct hlist_node node;
-            	u32 s_type;
-            	u32 t_type;
-            	u32 c_type;
-            	u32 orig_avd_allowed;
+            struct hlist_node node;
+            u32 s_type;
+            u32 t_type;
+            u32 c_type;
+            u32 orig_avd_allowed;
             };
 
             static inline u32 susfs_av_rule_hash(u32 ssid, u32 tsid, u16 tclass)
             {
-            	u32 h;
+            u32 h;
 
-            	h = hash_32(ssid, 32);
-            	h ^= rol32(hash_32(tsid, 32), 13);
-            	h ^= rol32(hash_32((u32)tclass, 32), 19);
+            h = hash_32(ssid, 32);
+            h ^= rol32(hash_32(tsid, 32), 13);
+            h ^= rol32(hash_32((u32)tclass, 32), 19);
 
-            	h += h << 13;
-            	h ^= h >> 7;
-            	h += h << 17;
-            	h ^= h >> 5;
+            h += h << 13;
+            h ^= h >> 7;
+            h += h << 17;
+            h ^= h >> 5;
 
-            	return h;
+            return h;
             }
 
             int susfs_add_sus_avd_allowed_by_type(u32 s_type, u32 t_type, u32 c_type, u32 orig_avd_allowed)
             {
-            	struct susfs_sus_av_rule *entry, *tmp_entry;
-            	struct hlist_node *tmp_hlist_node;
-            	int err = 0;
-            	u32 key;
+            struct susfs_sus_av_rule *entry, *tmp_entry;
+            struct hlist_node *tmp_hlist_node;
+            int err = 0;
+            u32 key;
 
-            	mutex_lock(&susfs_mutex_lock_sus_avd_allowed_hlist);
+            mutex_lock(&susfs_mutex_lock_sus_avd_allowed_hlist);
 
-            	entry = kzalloc(sizeof(*entry), GFP_ATOMIC);
-            	if (!entry) {
-            		err = -ENOMEM;
-            		goto unlock;
-            	}
+            entry = kzalloc(sizeof(*entry), GFP_ATOMIC);
+            if (!entry) {
+            err = -ENOMEM;
+            goto unlock;
+            }
 
-            	key = susfs_av_rule_hash(s_type, t_type, c_type);
-            	hash_for_each_possible_safe(SUS_AVD_ALLOWED_HLIST, tmp_entry, tmp_hlist_node, node, key) {
-            		if (tmp_entry->s_type == s_type &&
-            		    tmp_entry->t_type == t_type &&
-            		    tmp_entry->c_type == c_type)
-            		{
-            			/* Do not apply any new orig_avd_allowed for matched entry. */
-            			kfree(entry);
-            			goto unlock;
-            		}
-            	}
+            key = susfs_av_rule_hash(s_type, t_type, c_type);
+            hash_for_each_possible_safe(SUS_AVD_ALLOWED_HLIST, tmp_entry, tmp_hlist_node, node, key) {
+            if (tmp_entry->s_type == s_type &&
+                tmp_entry->t_type == t_type &&
+                tmp_entry->c_type == c_type)
+            {
+            /* Do not apply any new orig_avd_allowed for matched entry. */
+            kfree(entry);
+            goto unlock;
+            }
+            }
 
-            	entry->s_type = s_type;
-            	entry->t_type = t_type;
-            	entry->c_type = c_type;
-            	entry->orig_avd_allowed = orig_avd_allowed;
+            entry->s_type = s_type;
+            entry->t_type = t_type;
+            entry->c_type = c_type;
+            entry->orig_avd_allowed = orig_avd_allowed;
 
-            	hash_add_rcu(SUS_AVD_ALLOWED_HLIST, &entry->node, key);
-            	SUSFS_LOGI("av_rule '%u %u %u %u' has been added to SUS_AVD_ALLOWED_HLIST\n",
-            				s_type, t_type, c_type, orig_avd_allowed);
+            hash_add_rcu(SUS_AVD_ALLOWED_HLIST, &entry->node, key);
+            SUSFS_LOGI("av_rule '%u %u %u %u' has been added to SUS_AVD_ALLOWED_HLIST\n",
+            s_type, t_type, c_type, orig_avd_allowed);
             unlock:
-            	mutex_unlock(&susfs_mutex_lock_sus_avd_allowed_hlist);
-            	return err;
+            mutex_unlock(&susfs_mutex_lock_sus_avd_allowed_hlist);
+            return err;
             }
 
             void susfs_spoof_avd_allowed_rcu(u32 s_type, u32 t_type, u32 c_type, u32 *avd_allowed)
             {
-            	struct susfs_sus_av_rule *entry;
-            	u32 key = susfs_av_rule_hash(s_type, t_type, c_type);
+            struct susfs_sus_av_rule *entry;
+            u32 key = susfs_av_rule_hash(s_type, t_type, c_type);
 
-            	hash_for_each_possible_rcu(SUS_AVD_ALLOWED_HLIST, entry, node, key) {
-            		if (entry->s_type == s_type &&
-            		    entry->t_type == t_type &&
-            		    entry->c_type == c_type)
-            		{
-            			*avd_allowed = entry->orig_avd_allowed;
-            			return;
-            		}
-            	}
+            hash_for_each_possible_rcu(SUS_AVD_ALLOWED_HLIST, entry, node, key) {
+            if (entry->s_type == s_type &&
+                entry->t_type == t_type &&
+                entry->c_type == c_type)
+            {
+            *avd_allowed = entry->orig_avd_allowed;
+            return;
+            }
+            }
             }
           SUSTYPE_EOF
             # 2) security/selinux/ss/services.c：5.4 适配的过滤实现。与 6.6 原版的差异：
@@ -312,213 +312,213 @@ jobs:
             extern void susfs_spoof_avd_allowed_rcu(u32 s_type, u32 t_type, u32 c_type, u32 *avd_allowed);
 
             static int susfs_string_to_context_struct(struct policydb *pol,
-            				    struct sidtab *sidtabp,
-            				    char *scontext,
-            				    struct context *ctx,
-            				    u32 def_sid)
+                struct sidtab *sidtabp,
+                char *scontext,
+                struct context *ctx,
+                u32 def_sid)
             {
-            	struct role_datum *role;
-            	struct type_datum *typdatum;
-            	struct user_datum *usrdatum;
-            	char *scontextp, *p, oldc;
-            	int rc = 0;
+            struct role_datum *role;
+            struct type_datum *typdatum;
+            struct user_datum *usrdatum;
+            char *scontextp, *p, oldc;
+            int rc = 0;
 
-            	context_init(ctx);
+            context_init(ctx);
 
-            	/* Parse the security context. */
+            /* Parse the security context. */
 
-            	rc = -EINVAL;
-            	scontextp = (char *) scontext;
+            rc = -EINVAL;
+            scontextp = (char *) scontext;
 
-            	/* Extract the user. */
-            	p = scontextp;
-            	while (*p && *p != ':')
-            		p++;
+            /* Extract the user. */
+            p = scontextp;
+            while (*p && *p != ':')
+            p++;
 
-            	if (*p == 0)
-            		goto out;
+            if (*p == 0)
+            goto out;
 
-            	*p++ = 0;
+            *p++ = 0;
 
-            	usrdatum = hashtab_search(pol->p_users.table, scontextp);
-            	if (!usrdatum)
-            		goto out;
+            usrdatum = hashtab_search(pol->p_users.table, scontextp);
+            if (!usrdatum)
+            goto out;
 
-            	ctx->user = usrdatum->value;
+            ctx->user = usrdatum->value;
 
-            	/* Extract role. */
-            	scontextp = p;
-            	while (*p && *p != ':')
-            		p++;
+            /* Extract role. */
+            scontextp = p;
+            while (*p && *p != ':')
+            p++;
 
-            	if (*p == 0)
-            		goto out;
+            if (*p == 0)
+            goto out;
 
-            	*p++ = 0;
+            *p++ = 0;
 
-            	role = hashtab_search(pol->p_roles.table, scontextp);
-            	if (!role)
-            		goto out;
-            	ctx->role = role->value;
+            role = hashtab_search(pol->p_roles.table, scontextp);
+            if (!role)
+            goto out;
+            ctx->role = role->value;
 
-            	/* Extract type. */
-            	scontextp = p;
-            	while (*p && *p != ':')
-            		p++;
-            	oldc = *p;
-            	*p++ = 0;
+            /* Extract type. */
+            scontextp = p;
+            while (*p && *p != ':')
+            p++;
+            oldc = *p;
+            *p++ = 0;
 
-            	typdatum = hashtab_search(pol->p_types.table, scontextp);
-            	if (!typdatum || typdatum->attribute)
-            		goto out;
-            	if (likely(susfs_is_sus_type_rcu(typdatum->value)))
-            		goto out;
+            typdatum = hashtab_search(pol->p_types.table, scontextp);
+            if (!typdatum || typdatum->attribute)
+            goto out;
+            if (likely(susfs_is_sus_type_rcu(typdatum->value)))
+            goto out;
 
-            	ctx->type = typdatum->value;
+            ctx->type = typdatum->value;
 
-            	rc = mls_context_to_sid(pol, oldc, p, ctx, sidtabp, def_sid);
-            	if (rc)
-            		goto out;
+            rc = mls_context_to_sid(pol, oldc, p, ctx, sidtabp, def_sid);
+            if (rc)
+            goto out;
 
-            	/* Check the validity of the new context. */
-            	rc = -EINVAL;
-            	if (!policydb_context_isvalid(pol, ctx))
-            		goto out;
-            	rc = 0;
+            /* Check the validity of the new context. */
+            rc = -EINVAL;
+            if (!policydb_context_isvalid(pol, ctx))
+            goto out;
+            rc = 0;
             out:
-            	if (rc)
-            		context_destroy(ctx);
-            	return rc;
+            if (rc)
+            context_destroy(ctx);
+            return rc;
             }
 
             static int susfs_security_context_to_sid_core(const char *scontext, u32 scontext_len,
-            					u32 *sid, u32 def_sid, gfp_t gfp_flags,
-            					int force)
+            u32 *sid, u32 def_sid, gfp_t gfp_flags,
+            int force)
             {
-            	struct policydb *policydb;
-            	struct sidtab *sidtab;
-            	char *scontext2, *str = NULL;
-            	struct context context;
-            	int rc = 0;
+            struct policydb *policydb;
+            struct sidtab *sidtab;
+            char *scontext2, *str = NULL;
+            struct context context;
+            int rc = 0;
 
-            	/* An empty security context is never valid. */
-            	if (!scontext_len)
-            		return -EINVAL;
+            /* An empty security context is never valid. */
+            if (!scontext_len)
+            return -EINVAL;
 
-            	/* Copy the string to allow changes and ensure a NUL terminator */
-            	scontext2 = kmemdup_nul(scontext, scontext_len, gfp_flags);
-            	if (!scontext2)
-            		return -ENOMEM;
+            /* Copy the string to allow changes and ensure a NUL terminator */
+            scontext2 = kmemdup_nul(scontext, scontext_len, gfp_flags);
+            if (!scontext2)
+            return -ENOMEM;
 
-            	if (!selinux_state.initialized) {
-            		int i;
+            if (!selinux_state.initialized) {
+            int i;
 
-            		for (i = 1; i < SECINITSID_NUM; i++) {
-            			if (!strcmp(initial_sid_to_string[i], scontext2)) {
-            				*sid = i;
-            				goto out;
-            			}
-            		}
-            		*sid = SECINITSID_KERNEL;
-            		goto out;
-            	}
-            	*sid = SECSID_NULL;
+            for (i = 1; i < SECINITSID_NUM; i++) {
+            if (!strcmp(initial_sid_to_string[i], scontext2)) {
+            *sid = i;
+            goto out;
+            }
+            }
+            *sid = SECINITSID_KERNEL;
+            goto out;
+            }
+            *sid = SECSID_NULL;
 
-            	if (force) {
-            		/* Save another copy for storing in uninterpreted form */
-            		rc = -ENOMEM;
-            		str = kstrdup(scontext2, gfp_flags);
-            		if (!str)
-            			goto out;
-            	}
-            	read_lock(&selinux_state.ss->policy_rwlock);
-            	policydb = &selinux_state.ss->policydb;
-            	sidtab = selinux_state.ss->sidtab;
-            	rc = susfs_string_to_context_struct(policydb, sidtab, scontext2,
-            				      &context, def_sid);
-            	if (rc == -EINVAL && force) {
-            		context.str = str;
-            		context.len = strlen(str) + 1;
-            		str = NULL;
-            	} else if (rc)
-            		goto out_unlock;
-            	rc = context_add_hash(policydb, &context);
-            	if (rc)
-            		goto out_unlock;
-            	rc = sidtab_context_to_sid(sidtab, &context, sid);
-            	context_destroy(&context);
+            if (force) {
+            /* Save another copy for storing in uninterpreted form */
+            rc = -ENOMEM;
+            str = kstrdup(scontext2, gfp_flags);
+            if (!str)
+            goto out;
+            }
+            read_lock(&selinux_state.ss->policy_rwlock);
+            policydb = &selinux_state.ss->policydb;
+            sidtab = selinux_state.ss->sidtab;
+            rc = susfs_string_to_context_struct(policydb, sidtab, scontext2,
+                  &context, def_sid);
+            if (rc == -EINVAL && force) {
+            context.str = str;
+            context.len = strlen(str) + 1;
+            str = NULL;
+            } else if (rc)
+            goto out_unlock;
+            rc = context_add_hash(policydb, &context);
+            if (rc)
+            goto out_unlock;
+            rc = sidtab_context_to_sid(sidtab, &context, sid);
+            context_destroy(&context);
             out_unlock:
-            	read_unlock(&selinux_state.ss->policy_rwlock);
+            read_unlock(&selinux_state.ss->policy_rwlock);
             out:
-            	kfree(scontext2);
-            	kfree(str);
-            	return rc;
+            kfree(scontext2);
+            kfree(str);
+            return rc;
             }
 
             int susfs_security_context_to_sid(const char *scontext, u32 scontext_len, u32 *sid,
-            			    gfp_t gfp)
+                gfp_t gfp)
             {
-            	return susfs_security_context_to_sid_core(scontext, scontext_len,
-            					    sid, SECSID_NULL, gfp, 0);
+            return susfs_security_context_to_sid_core(scontext, scontext_len,
+                sid, SECSID_NULL, gfp, 0);
             }
 
             int susfs_security_context_str_to_sid(const char *scontext, u32 *sid, gfp_t gfp)
             {
-            	return susfs_security_context_to_sid(scontext, strlen(scontext),
-            				       sid, gfp);
+            return susfs_security_context_to_sid(scontext, strlen(scontext),
+                   sid, gfp);
             }
 
             void susfs_security_compute_av_user(u32 ssid,
-            			      u32 tsid,
-            			      u16 tclass,
-            			      struct av_decision *avd)
+                  u32 tsid,
+                  u16 tclass,
+                  struct av_decision *avd)
             {
-            	struct policydb *policydb;
-            	struct sidtab *sidtab;
-            	struct context *scontext = NULL, *tcontext = NULL;
+            struct policydb *policydb;
+            struct sidtab *sidtab;
+            struct context *scontext = NULL, *tcontext = NULL;
 
-            	read_lock(&selinux_state.ss->policy_rwlock);
-            	avd_init(&selinux_state, avd);
-            	if (!selinux_state.initialized)
-            		goto allow;
+            read_lock(&selinux_state.ss->policy_rwlock);
+            avd_init(&selinux_state, avd);
+            if (!selinux_state.initialized)
+            goto allow;
 
-            	policydb = &selinux_state.ss->policydb;
-            	sidtab = selinux_state.ss->sidtab;
+            policydb = &selinux_state.ss->policydb;
+            sidtab = selinux_state.ss->sidtab;
 
-            	scontext = sidtab_search(sidtab, ssid);
-            	if (!scontext) {
-            		pr_err("SELinux: %s:  unrecognized SID %d\n",
-            		       __func__, ssid);
-            		goto out;
-            	}
+            scontext = sidtab_search(sidtab, ssid);
+            if (!scontext) {
+            pr_err("SELinux: %s:  unrecognized SID %d\n",
+                   __func__, ssid);
+            goto out;
+            }
 
-            	/* permissive domain? */
-            	if (ebitmap_get_bit(&policydb->permissive_map, scontext->type))
-            		avd->flags |= AVD_FLAGS_PERMISSIVE;
+            /* permissive domain? */
+            if (ebitmap_get_bit(&policydb->permissive_map, scontext->type))
+            avd->flags |= AVD_FLAGS_PERMISSIVE;
 
-            	tcontext = sidtab_search(sidtab, tsid);
-            	if (!tcontext) {
-            		pr_err("SELinux: %s:  unrecognized SID %d\n",
-            		       __func__, tsid);
-            		goto out;
-            	}
+            tcontext = sidtab_search(sidtab, tsid);
+            if (!tcontext) {
+            pr_err("SELinux: %s:  unrecognized SID %d\n",
+                   __func__, tsid);
+            goto out;
+            }
 
-            	if (unlikely(!tclass)) {
-            		if (policydb->allow_unknown)
-            			goto allow;
-            		goto out;
-            	}
+            if (unlikely(!tclass)) {
+            if (policydb->allow_unknown)
+            goto allow;
+            goto out;
+            }
 
-            	context_struct_compute_av(policydb, scontext, tcontext, tclass, avd,
-            				  NULL);
-            	susfs_spoof_avd_allowed_rcu(scontext->type, tcontext->type, tclass,
-            				    &avd->allowed);
+            context_struct_compute_av(policydb, scontext, tcontext, tclass, avd,
+              NULL);
+            susfs_spoof_avd_allowed_rcu(scontext->type, tcontext->type, tclass,
+                &avd->allowed);
              out:
-            	read_unlock(&selinux_state.ss->policy_rwlock);
-            	return;
+            read_unlock(&selinux_state.ss->policy_rwlock);
+            return;
             allow:
-            	avd->allowed = 0xffffffff;
-            	goto out;
+            avd->allowed = 0xffffffff;
+            goto out;
             }
             #endif // #ifdef CONFIG_KSU_SUSFS
           SUSAVD_EOF
