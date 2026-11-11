@@ -158,6 +158,11 @@ jobs:
             echo "-- vendor susfs has priority uid filter support, no stub needed"
           fi
 
+      - name: Backport sus_type/avd hiding into vendor 5.4 susfs
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+
           echo "== 回移植 6.6-dev 的 sus_type/avd 隐藏实现到 vendor 5.4 =="
           # 上游 susfs4ksu（gki-android15-6.6-dev）把 BakaSU 注入的 policy 规则缓存在内核哈希表：
           #   - susfs_add_sus_type: 注册注入的 type；app 解析该 type 的 context 时按 -EINVAL 拒绝
@@ -565,6 +570,17 @@ jobs:
           else
             echo "-- vendor susfs has sus_type support, no stub needed"
           fi
+
+      - name: Configure Kernel (full SUSFS features)
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          export ARCH=arm64
+          export PATH="${{ env.CLANG_DIR }}/bin:$PATH"
+          export LLVM=1 LLVM_IAS=1 \
+                 CLANG_TRIPLE=aarch64-linux-gnu- \
+                 CROSS_COMPILE=aarch64-linux-gnu- \
+                 CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
 
           echo "== 直接向 defconfig 追加 SUSFS 配置 =="
           DEFCONFIG_PATH="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
