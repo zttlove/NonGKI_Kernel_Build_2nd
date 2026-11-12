@@ -193,14 +193,13 @@ jobs:
             || { echo "::error::hook manager source files not found"; exit 1; }
           if ! grep -q 'ksu_hook_statx' "$BRIDGE"; then
             echo "-- adding statx timing-alignment hook"
-            cat >> "$BRIDGE" <<'EOF'
+            # 保守版：纯透传。只保留"走一次钩子分发"的开销对齐，不做任何
+          # 语义处理（su 路径重写对计时检测无意义），排除一切运行时风险
+          cat >> "$BRIDGE" <<'EOF'
 
           long __nocfi ksu_hook_statx(int orig_nr, const struct pt_regs *regs)
           {
-              if (!static_branch_unlikely(&ksu_su_compat_enabled))
-                  return ksu_call_syscall(orig_nr, regs);
-
-              return ksu_handle_stat_sucompat_internal(orig_nr, (struct pt_regs *)regs);
+              return ksu_call_syscall(orig_nr, regs);
           }
           EOF
           fi
