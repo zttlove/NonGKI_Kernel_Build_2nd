@@ -785,7 +785,7 @@ jobs:
       - name: Package AnyKernel3
         run: |
           set -e
-          TIME=$(date +%Y%m%d-%H%M)
+          TIME=$(TZ=Asia/Shanghai date +%Y%m%d-%H%M)
           IMG_PATH="${{ env.KERNEL_DIR }}/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image"
           test -f "$IMG_PATH"
 
