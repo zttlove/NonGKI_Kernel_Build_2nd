@@ -166,6 +166,482 @@ jobs:
             || { echo "::error::stale bool definition remains in sucompat.c"; exit 1; }
           echo "-- ksu_su_compat_enabled now a real static key (matches kernel-side static_branch consumers)"
 
+          echo "== SukiSU builtin 适配：sulog event.c 的 strncpy_from_user_nofault =="
+          # builtin Kconfig 无独立 SULOG 开关（sulog/event.c 被 ksu_main.c 无条件
+          # #include），defconfig 关不掉；5.4 无该 API（编译期隐式声明、LTO 链接期
+          # undefined symbol）。替换为 strncpy_from_user（调用点在 execve 参数采集、
+          # 进程上下文，可安全睡眠）并补 <linux/uaccess.h>；\b 只命中裸调用，
+          # kernel_compat.h 的 ksu_strncpy_from_user_nofault 包装（event.c 其余两处）不受影响
+          EVENT="SukiSU_src/kernel/sulog/event.c"
+          test -f "$EVENT" || { echo "::error::sulog/event.c not found"; exit 1; }
+          grep -q '#include <linux/uaccess.h>' "$EVENT" || \
+            sed -i '1i #include <linux/uaccess.h>' "$EVENT"
+          grep -q '#include <linux/uaccess.h>' "$EVENT" \
+            || { echo "::error::uaccess.h include insertion failed"; exit 1; }
+          sed -i 's/\bstrncpy_from_user_nofault(/strncpy_from_user(/g' "$EVENT"
+          grep -q 'strncpy_from_user(arg, (const void __user' "$EVENT" \
+            && ! grep -Eq '\bstrncpy_from_user_nofault\(' "$EVENT" \
+            || { echo "::error::strncpy_from_user_nofault replacement failed"; exit 1; }
+          echo "-- sulog event.c now uses strncpy_from_user (5.4-safe)"
+
+          echo "== 修复 vendor selinux 预置钩子的 7 个未定义符号（内核侧 stub，特性关闭语义）=="
+          # vendor 树 security/selinux/{selinuxfs.c,hooks.c} 的 BakaSU 预置钩子以 extern
+          # 引用 selinux_hide 特性符号，SukiSU 不提供，LTO 链接期 undefined。新增内核侧
+          # stub TU，类型逐一对齐 BakaSU sync-up kernel/feature/selinux_hide.{c,h} 的
+          # 实际定义与 vendor extern 声明；门控 bool=false、静态键恒关、指针 NULL、
+          # 钩子空函数 —— 全部消费点自带判空/静态键守卫，行为即“特性关闭”
+          STUB_C="ksu_vendor_compat_stub.c"
+          if [ ! -f "$STUB_C" ]; then
+            cat > "$STUB_C" <<'KSU_STUB_EOF'
+          /*
+           * ksu_vendor_compat_stub.c - vendor selinux_hide hook symbols, feature off.
+           *
+           * vendor 树 security/selinux/{selinuxfs.c,hooks.c} 的 BakaSU 预置钩子以 extern
+           * 引用以下符号；SukiSU-Ultra 不提供，这里按 BakaSU sync-up 分支
+           * kernel/feature/selinux_hide.{c,h} 的实际类型给出"特性关闭"语义的定义。
+           */
+          #include <linux/cache.h>
+          #include <linux/init.h>
+          #include <linux/jump_label.h>
+          #include <linux/mm.h>
+          #include <linux/mutex.h>
+          #include <linux/types.h>
+
+          #include "../security/selinux/include/security.h"
+
+          /* BakaSU: __maybe_static bool ... __read_mostly = false（门控，false 即隐藏关闭） */
+          bool ksu_selinux_hide_enabled __read_mostly = false;
+          bool ksu_selinux_hide_running __read_mostly = false;
+
+          /* vendor: extern struct static_key_false ...; 经 __jump_table/static_branch 消费 */
+          DEFINE_STATIC_KEY_FALSE(fake_status_initialize_key);
+
+          /* BakaSU: __maybe_static struct page *fake_status = NULL（消费点判空） */
+          struct page *fake_status = NULL;
+
+          /* BakaSU 定义与 vendor extern 均为 struct mutex *（消费点判空后 lock/unlock），
+           * NULL 即不加锁；不能用 DEFINE_MUTEX：消费端按指针解引用 */
+          struct mutex *ksu_selinux_status_lock = NULL;
+
+          /* BakaSU: __maybe_static void initialize_fake_status(); 静态键恒关不可达 */
+          void initialize_fake_status(void)
+          {
+          }
+
+          /* vendor: extern struct selinux_state fake_state; 全部 &fake_state 调用点已被
+           * sus_type 回移植切到 susfs 过滤路径，此处保底定义并浅拷真实状态 */
+          struct selinux_state fake_state;
+          static int __init ksu_vendor_fake_state_init(void)
+          {
+              fake_state = selinux_state;
+              return 0;
+          }
+          core_initcall(ksu_vendor_fake_state_init);
+          KSU_STUB_EOF
+          fi
+          test -f "$STUB_C" || { echo "::error::ksu_vendor_compat_stub.c generation failed"; exit 1; }
+          for sym in ksu_selinux_hide_enabled ksu_selinux_hide_running \
+                     fake_status_initialize_key fake_status \
+                     ksu_selinux_status_lock initialize_fake_status fake_state; do
+            grep -q "\b$sym\b" "$STUB_C" || { echo "::error::stub missing symbol $sym"; exit 1; }
+          done
+          # stub 不需要 CONFIG 开关：obj-y 追加进 kernel/Makefile，不受 defconfig 生成时机影响
+          grep -q 'ksu_vendor_compat_stub\.o' Makefile || \
+            printf '\n# vendor selinux_hide compat stubs (SukiSU does not provide these symbols)\nobj-y += ksu_vendor_compat_stub.o\n' >> Makefile
+          grep -q '^obj-y += ksu_vendor_compat_stub\.o$' Makefile \
+            || { echo "::error::kernel/Makefile stub append failed"; exit 1; }
+          echo "-- 7 vendor selinux_hide symbols stubbed in kernel/ksu_vendor_compat_stub.c"
+
+
+      - name: Backport sus_type/avd hiding into vendor 5.4 susfs
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+
+          echo "== 回移植 6.6-dev 的 sus_type/avd 隐藏实现到 vendor 5.4 =="
+          # 上游 susfs4ksu（gki-android15-6.6-dev）把 BakaSU 注入的 policy 规则缓存在内核哈希表：
+          #   - susfs_add_sus_type: 注册注入的 type；app 解析该 type 的 context 时按 -EINVAL 拒绝
+          #   - susfs_add_sus_avd_allowed_by_type/susfs_spoof_avd_allowed_rcu: 记录注入前的
+          #     avd.allowed，app 走 /sys/fs/selinux/access 查询时还原为注入前的授权位
+          # vendor 5.4（susfs v2.3.0）无此实现，且 selinux 锁模型不同（policy_rwlock 而非 6.6 的
+          # RCU + selinux_policy），这里按 5.4 语义回移植内核侧存储与 services.c 过滤实现，并把
+          # selinuxfs.c/hooks.c 中 my_* 钩子的 fake_state 调用切到 susfs 过滤路径
+          if ! grep -q 'susfs_is_sus_type_rcu' fs/susfs.c; then
+            echo "-- backporting sus_type/avd hiding into vendor 5.4 susfs"
+            # 1) fs/susfs.c：sus_type / sus_avd_allowed 内核存储（照搬 6.6-dev，日志宏改用
+            #    v2.3.0 的 SUSFS_LOGE/SUSFS_LOGI，上游用 v2.4+ 才有的 *_RL 变体）
+            cat >> fs/susfs.c <<'SUSTYPE_EOF'
+
+            /* sus_type: backported from susfs4ksu gki-android15-6.6-dev */
+            static DEFINE_MUTEX(susfs_mutex_lock_sus_type);
+            static DEFINE_HASHTABLE(SUS_TYPE_HLIST, 10);
+
+            struct st_susfs_sus_type_hlist {
+            struct hlist_node                        node;
+            };
+
+            int susfs_add_sus_type(const char *secctx, u32 type_value) {
+            struct st_susfs_sus_type_hlist *new_entry, *tmp_entry;
+            struct hlist_node *tmp_hlist_node;
+            int err = 0;
+
+            mutex_lock(&susfs_mutex_lock_sus_type);
+            hash_for_each_possible_safe(SUS_TYPE_HLIST, tmp_entry, tmp_hlist_node, node, type_value) {
+            SUSFS_LOGE("secctx '%s', type_value '%u', was added before already\n",
+            secctx, type_value);
+            err = -EINVAL;
+            goto unlock;
+            }
+
+            new_entry = kzalloc(sizeof(struct st_susfs_sus_type_hlist), GFP_KERNEL);
+            if (!new_entry) {
+            err = -ENOMEM;
+            goto unlock;
+            }
+
+            hash_add_rcu(SUS_TYPE_HLIST, &new_entry->node, type_value);
+            SUSFS_LOGI("secctx '%s', type '%u', has been added to SUS_TYPE_HLIST\n",
+            secctx, type_value);
+            unlock:
+            mutex_unlock(&susfs_mutex_lock_sus_type);
+            return err;
+            }
+
+            bool susfs_is_sus_type_rcu(u32 type_value) {
+            struct st_susfs_sus_type_hlist *entry = NULL;
+
+            hash_for_each_possible_rcu(SUS_TYPE_HLIST, entry, node, type_value) {
+            return true;
+            }
+            return false;
+            }
+
+            static DEFINE_MUTEX(susfs_mutex_lock_sus_avd_allowed_hlist);
+            static DEFINE_HASHTABLE(SUS_AVD_ALLOWED_HLIST, 18);
+
+            struct susfs_sus_av_rule {
+            struct hlist_node node;
+            u32 s_type;
+            u32 t_type;
+            u32 c_type;
+            u32 orig_avd_allowed;
+            };
+
+            static inline u32 susfs_av_rule_hash(u32 ssid, u32 tsid, u16 tclass)
+            {
+            u32 h;
+
+            h = hash_32(ssid, 32);
+            h ^= rol32(hash_32(tsid, 32), 13);
+            h ^= rol32(hash_32((u32)tclass, 32), 19);
+
+            h += h << 13;
+            h ^= h >> 7;
+            h += h << 17;
+            h ^= h >> 5;
+
+            return h;
+            }
+
+            int susfs_add_sus_avd_allowed_by_type(u32 s_type, u32 t_type, u32 c_type, u32 orig_avd_allowed)
+            {
+            struct susfs_sus_av_rule *entry, *tmp_entry;
+            struct hlist_node *tmp_hlist_node;
+            int err = 0;
+            u32 key;
+
+            mutex_lock(&susfs_mutex_lock_sus_avd_allowed_hlist);
+
+            entry = kzalloc(sizeof(*entry), GFP_ATOMIC);
+            if (!entry) {
+            err = -ENOMEM;
+            goto unlock;
+            }
+
+            key = susfs_av_rule_hash(s_type, t_type, c_type);
+            hash_for_each_possible_safe(SUS_AVD_ALLOWED_HLIST, tmp_entry, tmp_hlist_node, node, key) {
+            if (tmp_entry->s_type == s_type &&
+                tmp_entry->t_type == t_type &&
+                tmp_entry->c_type == c_type)
+            {
+            /* Do not apply any new orig_avd_allowed for matched entry. */
+            kfree(entry);
+            goto unlock;
+            }
+            }
+
+            entry->s_type = s_type;
+            entry->t_type = t_type;
+            entry->c_type = c_type;
+            entry->orig_avd_allowed = orig_avd_allowed;
+
+            hash_add_rcu(SUS_AVD_ALLOWED_HLIST, &entry->node, key);
+            SUSFS_LOGI("av_rule '%u %u %u %u' has been added to SUS_AVD_ALLOWED_HLIST\n",
+            s_type, t_type, c_type, orig_avd_allowed);
+            unlock:
+            mutex_unlock(&susfs_mutex_lock_sus_avd_allowed_hlist);
+            return err;
+            }
+
+            void susfs_spoof_avd_allowed_rcu(u32 s_type, u32 t_type, u32 c_type, u32 *avd_allowed)
+            {
+            struct susfs_sus_av_rule *entry;
+            u32 key = susfs_av_rule_hash(s_type, t_type, c_type);
+
+            hash_for_each_possible_rcu(SUS_AVD_ALLOWED_HLIST, entry, node, key) {
+            if (entry->s_type == s_type &&
+                entry->t_type == t_type &&
+                entry->c_type == c_type)
+            {
+            *avd_allowed = entry->orig_avd_allowed;
+            return;
+            }
+            }
+            }
+          SUSTYPE_EOF
+            # 2) security/selinux/ss/services.c：5.4 适配的过滤实现。与 6.6 原版的差异：
+            #    - 6.6 用 rcu_read_lock + rcu_dereference(selinux_state.policy)，5.4 用
+            #      read_lock(&selinux_state.ss->policy_rwlock) + 内嵌 policydb/sidtab
+            #    - 5.4 的 context_to_sid 查找依赖 context->hash，需先 context_add_hash()
+            #    - string_to_context_struct 按本内核用 hashtab_search(pol->p_xxx.table, ...)
+            cat >> security/selinux/ss/services.c <<'SUSAVD_EOF'
+
+            /* sus_type hiding: backported from susfs4ksu gki-android15-6.6-dev (5.4 rwlock model) */
+            #ifdef CONFIG_KSU_SUSFS
+            extern bool susfs_is_sus_type_rcu(u32 sid);
+            extern void susfs_spoof_avd_allowed_rcu(u32 s_type, u32 t_type, u32 c_type, u32 *avd_allowed);
+
+            static int susfs_string_to_context_struct(struct policydb *pol,
+                struct sidtab *sidtabp,
+                char *scontext,
+                struct context *ctx,
+                u32 def_sid)
+            {
+            struct role_datum *role;
+            struct type_datum *typdatum;
+            struct user_datum *usrdatum;
+            char *scontextp, *p, oldc;
+            int rc = 0;
+
+            context_init(ctx);
+
+            /* Parse the security context. */
+
+            rc = -EINVAL;
+            scontextp = (char *) scontext;
+
+            /* Extract the user. */
+            p = scontextp;
+            while (*p && *p != ':')
+            p++;
+
+            if (*p == 0)
+            goto out;
+
+            *p++ = 0;
+
+            usrdatum = hashtab_search(pol->p_users.table, scontextp);
+            if (!usrdatum)
+            goto out;
+
+            ctx->user = usrdatum->value;
+
+            /* Extract role. */
+            scontextp = p;
+            while (*p && *p != ':')
+            p++;
+
+            if (*p == 0)
+            goto out;
+
+            *p++ = 0;
+
+            role = hashtab_search(pol->p_roles.table, scontextp);
+            if (!role)
+            goto out;
+            ctx->role = role->value;
+
+            /* Extract type. */
+            scontextp = p;
+            while (*p && *p != ':')
+            p++;
+            oldc = *p;
+            *p++ = 0;
+
+            typdatum = hashtab_search(pol->p_types.table, scontextp);
+            if (!typdatum || typdatum->attribute)
+            goto out;
+            if (likely(susfs_is_sus_type_rcu(typdatum->value)))
+            goto out;
+
+            ctx->type = typdatum->value;
+
+            rc = mls_context_to_sid(pol, oldc, p, ctx, sidtabp, def_sid);
+            if (rc)
+            goto out;
+
+            /* Check the validity of the new context. */
+            rc = -EINVAL;
+            if (!policydb_context_isvalid(pol, ctx))
+            goto out;
+            rc = 0;
+            out:
+            if (rc)
+            context_destroy(ctx);
+            return rc;
+            }
+
+            static int susfs_security_context_to_sid_core(const char *scontext, u32 scontext_len,
+            u32 *sid, u32 def_sid, gfp_t gfp_flags,
+            int force)
+            {
+            struct policydb *policydb;
+            struct sidtab *sidtab;
+            char *scontext2, *str = NULL;
+            struct context context;
+            int rc = 0;
+
+            /* An empty security context is never valid. */
+            if (!scontext_len)
+            return -EINVAL;
+
+            /* Copy the string to allow changes and ensure a NUL terminator */
+            scontext2 = kmemdup_nul(scontext, scontext_len, gfp_flags);
+            if (!scontext2)
+            return -ENOMEM;
+
+            if (!selinux_state.initialized) {
+            int i;
+
+            for (i = 1; i < SECINITSID_NUM; i++) {
+            if (!strcmp(initial_sid_to_string[i], scontext2)) {
+            *sid = i;
+            goto out;
+            }
+            }
+            *sid = SECINITSID_KERNEL;
+            goto out;
+            }
+            *sid = SECSID_NULL;
+
+            if (force) {
+            /* Save another copy for storing in uninterpreted form */
+            rc = -ENOMEM;
+            str = kstrdup(scontext2, gfp_flags);
+            if (!str)
+            goto out;
+            }
+            read_lock(&selinux_state.ss->policy_rwlock);
+            policydb = &selinux_state.ss->policydb;
+            sidtab = selinux_state.ss->sidtab;
+            rc = susfs_string_to_context_struct(policydb, sidtab, scontext2,
+                  &context, def_sid);
+            if (rc == -EINVAL && force) {
+            context.str = str;
+            context.len = strlen(str) + 1;
+            str = NULL;
+            } else if (rc)
+            goto out_unlock;
+            rc = context_add_hash(policydb, &context);
+            if (rc)
+            goto out_unlock;
+            rc = sidtab_context_to_sid(sidtab, &context, sid);
+            context_destroy(&context);
+            out_unlock:
+            read_unlock(&selinux_state.ss->policy_rwlock);
+            out:
+            kfree(scontext2);
+            kfree(str);
+            return rc;
+            }
+
+            int susfs_security_context_to_sid(const char *scontext, u32 scontext_len, u32 *sid,
+                gfp_t gfp)
+            {
+            return susfs_security_context_to_sid_core(scontext, scontext_len,
+                sid, SECSID_NULL, gfp, 0);
+            }
+
+            int susfs_security_context_str_to_sid(const char *scontext, u32 *sid, gfp_t gfp)
+            {
+            return susfs_security_context_to_sid(scontext, strlen(scontext),
+                   sid, gfp);
+            }
+
+            void susfs_security_compute_av_user(u32 ssid,
+                  u32 tsid,
+                  u16 tclass,
+                  struct av_decision *avd)
+            {
+            struct policydb *policydb;
+            struct sidtab *sidtab;
+            struct context *scontext = NULL, *tcontext = NULL;
+
+            read_lock(&selinux_state.ss->policy_rwlock);
+            avd_init(&selinux_state, avd);
+            if (!selinux_state.initialized)
+            goto allow;
+
+            policydb = &selinux_state.ss->policydb;
+            sidtab = selinux_state.ss->sidtab;
+
+            scontext = sidtab_search(sidtab, ssid);
+            if (!scontext) {
+            pr_err("SELinux: %s:  unrecognized SID %d\n",
+                   __func__, ssid);
+            goto out;
+            }
+
+            /* permissive domain? */
+            if (ebitmap_get_bit(&policydb->permissive_map, scontext->type))
+            avd->flags |= AVD_FLAGS_PERMISSIVE;
+
+            tcontext = sidtab_search(sidtab, tsid);
+            if (!tcontext) {
+            pr_err("SELinux: %s:  unrecognized SID %d\n",
+                   __func__, tsid);
+            goto out;
+            }
+
+            if (unlikely(!tclass)) {
+            if (policydb->allow_unknown)
+            goto allow;
+            goto out;
+            }
+
+            context_struct_compute_av(policydb, scontext, tcontext, tclass, avd,
+              NULL);
+            susfs_spoof_avd_allowed_rcu(scontext->type, tcontext->type, tclass,
+                &avd->allowed);
+             out:
+            read_unlock(&selinux_state.ss->policy_rwlock);
+            return;
+            allow:
+            avd->allowed = 0xffffffff;
+            goto out;
+            }
+            #endif // #ifdef CONFIG_KSU_SUSFS
+          SUSAVD_EOF
+            # 3) selinuxfs.c / hooks.c：my_* 钩子由 fake_state 路径切到 susfs 过滤路径
+            #    （fake_state 浅拷贝的 initialized 恒为 false，标准接口会退化为全放行/假 SID）
+            perl -0pi -e 's/security_context_to_sid\(&fake_state, buf, size, &sid, GFP_KERNEL\);/susfs_security_context_to_sid(buf, size, &sid, GFP_KERNEL);/; s/security_sid_to_context\(&fake_state, sid, &canon, &len\);/security_sid_to_context(&selinux_state, sid, &canon, &len);/; s/security_context_str_to_sid\(&fake_state, scon, &ssid, GFP_KERNEL\);/susfs_security_context_str_to_sid(scon, &ssid, GFP_KERNEL);/; s/security_context_str_to_sid\(&fake_state, tcon, &tsid, GFP_KERNEL\);/susfs_security_context_str_to_sid(tcon, &tsid, GFP_KERNEL);/; s/security_compute_av_user\(&fake_state, ssid, tsid, tclass, &avd\);/susfs_security_compute_av_user(ssid, tsid, tclass, &avd);/; s/security_context_to_sid\(&fake_state, value, size,\s*&sid, GFP_KERNEL\);/susfs_security_context_to_sid(value, size, &sid, GFP_KERNEL);/s' \
+              security/selinux/selinuxfs.c security/selinux/hooks.c
+            # 4) 落盘校验
+            grep -q 'int susfs_add_sus_type(const char \*secctx' fs/susfs.c \
+              && grep -q 'int susfs_add_sus_avd_allowed_by_type(u32 s_type' fs/susfs.c \
+              && grep -q 'bool susfs_is_sus_type_rcu(u32 type_value)' fs/susfs.c \
+              && grep -q 'void susfs_spoof_avd_allowed_rcu' fs/susfs.c \
+              && grep -q 'void susfs_security_compute_av_user(u32 ssid' security/selinux/ss/services.c \
+              && grep -q 'susfs_string_to_context_struct' security/selinux/ss/services.c \
+              && grep -q 'susfs_security_context_to_sid(buf, size' security/selinux/selinuxfs.c \
+              && grep -q 'susfs_security_compute_av_user(ssid' security/selinux/selinuxfs.c \
+              && grep -q 'susfs_security_context_to_sid(value, size' security/selinux/hooks.c \
+              && ! grep -q 'security_compute_av_user(&fake_state' security/selinux/selinuxfs.c \
+              || { echo "::error::sus_type backport verification failed"; exit 1; }
+          else
+            echo "-- sus_type backport already present, skipping"
+          fi
+
 
       - name: Configure Kernel (full SUSFS features)
         working-directory: kernel
