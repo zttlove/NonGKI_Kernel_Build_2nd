@@ -206,30 +206,81 @@ jobs:
            * 引用的符号，SukiSU builtin 在 5.4 下不提供（>=5.10 版本门控）。
            * fake_state 不在此列：其调用点已由 sus_type 回移植的 perl 替换消除，
            * 仅剩 extern 声明（无符号需求）。追加块所需 include：cache.h（__read_mostly）、
-           * jump_label.h（DEFINE_STATIC_KEY_FALSE）、mm.h（struct page，本 TU 原本未含）；
-           * mutex.h 本文件已直接包含，bool/NULL 由既有包含链提供。 */
+           * jump_label.h（DEFINE_STATIC_KEY_FALSE）、mm.h（alloc_page/page_address）；
+           * mutex.h 本文件已直接包含，bool/NULL 由既有包含链提供。
+           * 特性语义：常开。enabled/running=true 使 vendor 的 my_write_access /
+           * my_write_context / my_setprocattr / my_sel_open_handle_status 对 app uid
+           * （>=10000）走 susfs 过滤路径（uid<10000 与内核进程不受影响），配合 sus_type
+           * 回移植实现 /access、/context 探测的 -EINVAL 与 avd 还原。 */
           #include <linux/cache.h>
           #include <linux/jump_label.h>
           #include <linux/mm.h>
 
-          /* BakaSU: __maybe_static bool ... __read_mostly = false（门控，false 即隐藏关闭） */
-          bool ksu_selinux_hide_enabled __read_mostly = false;
-          bool ksu_selinux_hide_running __read_mostly = false;
+          bool ksu_selinux_hide_enabled __read_mostly = true;
+          bool ksu_selinux_hide_running __read_mostly = true;
 
-          /* vendor: extern struct static_key_false ...; 经 static_branch 消费，恒关不可达 */
+          /* vendor: extern struct static_key_false ...; 经 static_branch 消费，
+           * late_initcall 中置位以启用首开兜底初始化路径 */
           DEFINE_STATIC_KEY_FALSE(fake_status_initialize_key);
 
           /* BakaSU: __maybe_static struct page *fake_status = NULL（消费点判空） */
           struct page *fake_status = NULL;
 
-          /* BakaSU 定义与 vendor extern 均为 struct mutex *（消费点判空后 lock/unlock），
-           * NULL 即不加锁；不能用 DEFINE_MUTEX：消费端按指针解引用 */
+          /* BakaSU 定义与 vendor extern 均为 struct mutex *（消费点判空后 lock/unlock）；
+           * initialize_fake_status 里指向 5.4 的 selinux_state.ss->status_lock */
           struct mutex *ksu_selinux_status_lock = NULL;
 
-          /* BakaSU: __maybe_static void initialize_fake_status(); 静态键恒关不可达 */
+          /* 构造 stock 观感的状态页供 my_sel_open_handle_status 服务给 app uid：
+           * 真实页在 SukiSU 内核态注入后 sequence 已被抬升、policyload 因页晚于策略
+           * 加载分配而恒为 0（doc 注明 load 后"never zero"）——恰好是检测器抓的
+           * "status.sequence/policyload" 异常。这里复制真实页后规范化为一次加载、
+           * enforcing、无 pending 的 stock 形态。 */
           void initialize_fake_status(void)
           {
+          struct page *real_page, *new_page;
+          struct selinux_kernel_status *real, *fake;
+
+          ksu_selinux_status_lock = &selinux_state.ss->status_lock;
+
+          mutex_lock(ksu_selinux_status_lock);
+          if (fake_status)
+          goto out;
+
+          real_page = selinux_kernel_status_page(&selinux_state);
+          if (!real_page) {
+          pr_warn("initialize_fake_status: status page not available\n");
+          goto out;
           }
+          real = page_address(real_page);
+
+          new_page = alloc_page(GFP_KERNEL | __GFP_ZERO);
+          if (!new_page) {
+          pr_err("initialize_fake_status: page alloc failed\n");
+          goto out;
+          }
+          fake = page_address(new_page);
+          fake->version = real->version;
+          fake->sequence = 1;
+          fake->enforcing = 1;
+          fake->policyload = 1;
+          fake->deny_unknown = real->deny_unknown;
+
+          fake_status = new_page;
+          pr_info("initialize_fake_status: fake status page installed\n");
+          out:
+          mutex_unlock(ksu_selinux_status_lock);
+          }
+
+          /* 内核初始化尾段构造好假页（先于任何用户态打开 status 节点），同时打开
+           * 静态键：万一假页构造失败，首个 app 打开时走 my_sel_open_handle_status
+           * 的兜底路径重试 initialize_fake_status */
+          static int __init bakasu_fake_status_init(void)
+          {
+          static_key_enable(&fake_status_initialize_key.key);
+          initialize_fake_status();
+          return 0;
+          }
+          late_initcall(bakasu_fake_status_init);
           KSU_SVCCOMPAT_EOF
           fi
           for sym in ksu_selinux_hide_enabled ksu_selinux_hide_running \
