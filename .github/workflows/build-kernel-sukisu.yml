@@ -1,0 +1,367 @@
+name: Build Kernel with SukiSU-Ultra (Full SUSFS)
+
+on:
+  workflow_dispatch:
+
+env:
+  KERNEL_REPO: zttlove/android_kernel_xiaomi_sm8350-hyperos
+  KERNEL_BRANCH: dynamic
+  DEFCONFIG_NAME: vendor/star_defconfig
+  DEVICE_CODENAME: star
+  OUTPUT_DIR: out
+  CLANG_DIR: ${{ github.workspace }}/toolchains/clang
+  KERNEL_DIR: ${{ github.workspace }}/kernel
+  # SukiSU-Ultra 内核驱动（builtin 分支）。
+  # 分支选型依据（源码验证，2026-11）：
+  #   - main / v4.3.0-r2 是 kprobes 运行时 hook 线，不带 CONFIG_KSU_SUSFS*
+  #     Kconfig、不带 susfs_is_current_ksu_domain()，其 ksu_handle_*_sucompat
+  #     是 pt_regs 签名（供运行时 hook 用）；而本内核树在
+  #     #ifdef CONFIG_KSU_SUSFS 内直接调用 filename 指针签名的
+  #     ksu_handle_execveat/_sucompat/post_execveat_sucompat/faccessat/
+  #     vfs_fstat/stat，启用 KSU_SUSFS 即链接失败。
+  #   - builtin 分支正是为手工钩子内核设计：Kconfig 自带完整 KSU_SUSFS 菜单，
+  #     CONFIG_KSU_SUSFS=y 时按树期望的签名导出上述全部 ksu_handle_*，
+  #     提供 susfs_is_current_ksu_domain()，并在 ksu_main.c 里调用内核侧
+  #     fs/susfs.c 的 susfs_init()。
+  #   - builtin 无 tag；GitHub 不支持按裸 SHA fetch，故 clone builtin 后强校验
+  #     HEAD 是否为验证过的 commit（f9aa2fec，2026-11-13 复验），分支前移即失败，
+  #     避免上游漂移破坏下面对 sucompat.c 的行锚定胶水补丁。
+  SUKISU_REPO: https://github.com/SukiSU-Ultra/SukiSU-Ultra.git
+  SUKISU_BRANCH: builtin
+  SUKISU_PIN: f9aa2fec209551b03484357092ddc25e9b32322
+
+jobs:
+  build-kernel:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.KERNEL_REPO }}
+          ref: ${{ env.KERNEL_BRANCH }}
+          path: kernel
+          fetch-depth: 1
+
+      - name: Verify Kernel Commit & Clean Workspace
+        working-directory: kernel
+        run: |
+          git reset --hard HEAD
+          git clean -fdx
+          echo "Kernel: $(git log -1 --format='%h %s')"
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bc bison flex libssl-dev libelf-dev \
+            zip unzip python3 perl git curl ccache xxd cpio kmod \
+            libtinfo5
+          sudo ln -sf /usr/lib/x86_64-linux-gnu/libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5 || true
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-sukisu-star-${{ github.run_id }}
+          restore-keys: |
+            ccache-sukisu-star-
+
+      - name: Cache Clang Toolchain
+        uses: actions/cache@v4
+        id: clang-cache
+        with:
+          path: ${{ env.CLANG_DIR }}
+          key: clang-17.0.6-x86_64-ubuntu22.04
+
+      - name: Download Clang 17.0.6
+        if: steps.clang-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "${{ env.CLANG_DIR }}"
+          curl -fL --retry 3 -o /tmp/clang.tar.xz \
+            https://github.com/llvm/llvm-project/releases/download/llvmorg-17.0.6/clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-22.04.tar.xz
+          tar -xf /tmp/clang.tar.xz -C "${{ env.CLANG_DIR }}" --strip-components=1
+
+      - name: Verify Clang
+        run: ${{ env.CLANG_DIR }}/bin/clang --version
+
+      - name: Integrate SukiSU-Ultra (full SUSFS)
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          export ARCH=arm64
+          export PATH="${{ env.CLANG_DIR }}/bin:$PATH"
+          export LLVM=1 LLVM_IAS=1 \
+                 CLANG_TRIPLE=aarch64-linux-gnu- \
+                 CROSS_COMPILE=aarch64-linux-gnu- \
+                 CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+
+          echo "== 清理内核树 =="
+          make mrproper >/dev/null 2>&1 || true
+
+          echo "== 拉取 SukiSU-Ultra (builtin) 并接管 drivers/kernelsu =="
+          rm -rf SukiSU_src KernelSU drivers/kernelsu drivers/KernelSU
+          git clone --depth=1 -b "${{ env.SUKISU_BRANCH }}" "${{ env.SUKISU_REPO }}" SukiSU_src
+          # GitHub 不支持按裸 SHA fetch，clone 后强校验 HEAD == pin；
+          # 分支前移说明驱动源码可能变化，需人工复验胶水补丁并更新 SUKISU_PIN
+          ACTUAL_SHA="$(git -C SukiSU_src rev-parse HEAD)"
+          PIN_SHA="${{ env.SUKISU_PIN }}"
+          if [ "$ACTUAL_SHA" != "$PIN_SHA" ]; then
+            echo "::error::SukiSU ${{ env.SUKISU_BRANCH }} head ${ACTUAL_SHA:0:12} != pinned ${PIN_SHA:0:12}; branch moved - re-verify the sucompat static-key glue, then update SUKISU_PIN"
+            exit 1
+          fi
+          echo "SukiSU-Ultra: $(git -C SukiSU_src log -1 --format='%h %s')"
+          ln -sfn ../SukiSU_src/kernel drivers/kernelsu
+
+          grep -q 'kernelsu' drivers/Makefile || \
+            printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> drivers/Makefile
+          grep -q 'drivers/kernelsu/Kconfig' drivers/Kconfig || \
+            sed -i '/^endmenu/i\source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+
+          echo "== 确认内核侧 SUSFS 完整性 =="
+          test -f fs/susfs.c || { echo "::error::fs/susfs.c missing - kernel branch lacks SUSFS"; exit 1; }
+          test -f include/linux/susfs_def.h || { echo "::error::include/linux/susfs_def.h missing"; exit 1; }
+          grep -q 'CONFIG_KSU_SUSFS' fs/exec.c || { echo "::error::fs/exec.c lacks KSU_SUSFS hooks"; exit 1; }
+          grep -q 'CONFIG_KSU_SUSFS' fs/open.c || { echo "::error::fs/open.c lacks KSU_SUSFS hooks"; exit 1; }
+          grep -q 'CONFIG_KSU_SUSFS' fs/stat.c || { echo "::error::fs/stat.c lacks KSU_SUSFS hooks"; exit 1; }
+          echo "-- kernel-side SUSFS hooks verified (no kernel patching needed)"
+
+          echo "== SukiSU builtin 适配：ksu_su_compat_enabled 由 bool 改为静态键 =="
+          # 树侧 fs/exec.c|open.c|stat.c 以 static_branch_likely/unlikely 消费该开关
+          # （extern struct static_key_true），builtin 驱动却定义成 bool；保持同名
+          # bool 会被 jump_label 当静态键内存解释，语义错误。改为真正的静态键，
+          # 并同步 feature get/set 的读写方式（jump_label 经驱动 Kbuild 的
+          # kernel_includes.h 强制包含对全部 TU 可见，ksud.c 同款用法已验证）
+          SUC="SukiSU_src/kernel/feature/sucompat.c"
+          SUCH="SukiSU_src/kernel/feature/sucompat.h"
+          test -f "$SUC" && test -f "$SUCH" || { echo "::error::builtin sucompat sources not found"; exit 1; }
+          sed -i 's/^bool ksu_su_compat_enabled __read_mostly = true;$/DEFINE_STATIC_KEY_TRUE(ksu_su_compat_enabled);/' "$SUC"
+          sed -i 's/\*value = ksu_su_compat_enabled ? 1 : 0;/*value = static_key_enabled(\&ksu_su_compat_enabled) ? 1 : 0;/' "$SUC"
+          sed -i 's|^    ksu_su_compat_enabled = enable;$|    if (enable) static_branch_enable(\&ksu_su_compat_enabled); else static_branch_disable(\&ksu_su_compat_enabled);|' "$SUC"
+          sed -i 's/if (!ksu_su_compat_enabled)/if (!static_key_enabled(\&ksu_su_compat_enabled))/' "$SUC"
+          sed -i 's/^extern bool ksu_su_compat_enabled;$/extern struct static_key_true ksu_su_compat_enabled;/' "$SUCH"
+          grep -q 'DEFINE_STATIC_KEY_TRUE(ksu_su_compat_enabled);' "$SUC" \
+            || { echo "::error::ksu_su_compat_enabled static-key conversion failed (definition)"; exit 1; }
+          grep -q 'static_branch_enable(&ksu_su_compat_enabled);' "$SUC" \
+            && grep -q 'static_branch_disable(&ksu_su_compat_enabled);' "$SUC" \
+            || { echo "::error::ksu_su_compat_enabled static-key conversion failed (feature set)"; exit 1; }
+          grep -q 'static_key_enabled(&ksu_su_compat_enabled)' "$SUC" \
+            || { echo "::error::ksu_su_compat_enabled static-key conversion failed (getter)"; exit 1; }
+          grep -q 'extern struct static_key_true ksu_su_compat_enabled;' "$SUCH" \
+            || { echo "::error::ksu_su_compat_enabled static-key conversion failed (header)"; exit 1; }
+          ! grep -q 'bool ksu_su_compat_enabled __read_mostly' "$SUC" \
+            || { echo "::error::stale bool definition remains in sucompat.c"; exit 1; }
+          echo "-- ksu_su_compat_enabled now a real static key (matches kernel-side static_branch consumers)"
+
+
+      - name: Configure Kernel (full SUSFS features)
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          export ARCH=arm64
+          export PATH="${{ env.CLANG_DIR }}/bin:$PATH"
+          export LLVM=1 LLVM_IAS=1 \
+                 CLANG_TRIPLE=aarch64-linux-gnu- \
+                 CROSS_COMPILE=aarch64-linux-gnu- \
+                 CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+
+          echo "== 直接向 defconfig 追加 SUSFS 配置 =="
+          DEFCONFIG_PATH="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
+          test -f "$DEFCONFIG_PATH" || { echo "::error::defconfig not found at $DEFCONFIG_PATH"; exit 1; }
+          # 上游 defconfig 首行混入全角括号（"（CONFIG_MIHW=y"），kconfig 会警告并丢弃该行，
+          # 导致小米 millet 驱动（drivers/mihw）被静默关闭，这里剥离全角括号修复
+          sed -i 's/\xEF\xBC\x88//g; s/\xEF\xBC\x89//g' "$DEFCONFIG_PATH"
+          grep -q '^CONFIG_MIHW=y' "$DEFCONFIG_PATH" \
+            || { echo "::error::defconfig sanitize failed (MIHW line)"; exit 1; }
+          # 注意：不追加 KSU_SUSFS_PRIORITY_UID_FILTER —— builtin Kconfig 默认 y，
+          # 但本树内核侧 SUSFS v2.3.0 没有 susfs_parse_priority_app_strings() 等实现，
+          # 开启会在 pkg_observer.c 产生未定义符号，必须在下面显式 disable
+          for sym in KSU_SUSFS KSU_SUSFS_SUS_PATH KSU_SUSFS_SUS_MOUNT KSU_SUSFS_SUS_KSTAT \
+                     KSU_SUSFS_SPOOF_UNAME KSU_SUSFS_ENABLE_LOG KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+                     KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG KSU_SUSFS_OPEN_REDIRECT \
+                     KSU_SUSFS_SUS_MAP; do
+            echo "CONFIG_${sym}=y" >> "$DEFCONFIG_PATH"
+          done
+          grep -q 'CONFIG_KSU_SUSFS_SUS_MAP=y' "$DEFCONFIG_PATH" \
+            || { echo "::error::defconfig SUSFS append failed"; exit 1; }
+
+          echo "== 生成 defconfig =="
+          make O=out ARCH=arm64 "${{ env.DEFCONFIG_NAME }}"
+
+          echo "== 配置 SukiSU-Ultra builtin：SUSFS 全功能 =="
+          # builtin 的 KSU 无 KPROBES/EXT4_FS 依赖（manual-hook 形态，钩子调用点
+          # 全部位于内核树 #ifdef CONFIG_KSU_SUSFS 内），KSU_SUSFS 开启即生效
+          scripts/config --file out/.config \
+            --enable  KSU \
+            --enable  KSU_SUSFS \
+            --enable  KSU_SUSFS_SUS_PATH \
+            --enable  KSU_SUSFS_SUS_MOUNT \
+            --enable  KSU_SUSFS_SUS_KSTAT \
+            --enable  KSU_SUSFS_SPOOF_UNAME \
+            --enable  KSU_SUSFS_ENABLE_LOG \
+            --enable  KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+            --enable  KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+            --enable  KSU_SUSFS_OPEN_REDIRECT \
+            --enable  KSU_SUSFS_SUS_MAP \
+            --disable KSU_SUSFS_PRIORITY_UID_FILTER \
+            --disable KPM \
+            --disable KSU_DEBUG \
+            --enable  KALLSYMS_ALL \
+            --disable UAPI_HEADER_TEST \
+            --disable HEADERS_INSTALL \
+            --set-str LOCALVERSION ""
+            # /proc/version 不受 SUSFS SPOOF_UNAME 伪造，版本串带 susfs 等字样会被
+            # 春秋/Momo 类检测直接读出；强制保持空串，内核串回归原厂形态
+
+          make O=out ARCH=arm64 olddefconfig
+
+          echo "== 校验 SUSFS 配置生效 =="
+          for sym in KSU KSU_SUSFS KSU_SUSFS_SUS_PATH KSU_SUSFS_SUS_MOUNT KSU_SUSFS_SUS_KSTAT \
+                     KSU_SUSFS_SPOOF_UNAME KSU_SUSFS_ENABLE_LOG KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+                     KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG KSU_SUSFS_OPEN_REDIRECT \
+                     KSU_SUSFS_SUS_MAP; do
+            grep -q "^CONFIG_${sym}=y" out/.config || { echo "::error::CONFIG_${sym} not enabled"; exit 1; }
+          done
+          grep -q '^CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER=y' out/.config \
+            && { echo "::error::CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER must stay off (vendor 5.4 susfs lacks kernel-side support)"; exit 1; } || true
+          grep -q '^CONFIG_KPM=y' out/.config \
+            && { echo "::error::CONFIG_KPM should stay off"; exit 1; } || true
+
+      - name: 修复编译警告
+        working-directory: kernel
+        run: |
+          set -e
+          FOCALTECH_MAKEFILE="drivers/input/touchscreen/focaltech_touch/Makefile"
+          if [ -f "$FOCALTECH_MAKEFILE" ]; then
+            sed -i 's/^ \+/\t/' "$FOCALTECH_MAKEFILE"
+            echo "Fixed leading spaces in focaltech Makefile"
+          fi
+
+          for entry in \
+            "drivers/staging/qcacld-3.0:-Wno-format" \
+            "drivers/staging/qca-wifi-host-cmn:-Wno-format" \
+            "drivers/thermal:-Wno-fortify-source"; do
+            DIR="${entry%%:*}"
+            FLAG="${entry##*:}"
+            if [ -d "$DIR" ] && [ -f "$DIR/Makefile" ]; then
+              grep -q -- "$FLAG" "$DIR/Makefile" || echo "ccflags-y += $FLAG" >> "$DIR/Makefile"
+            fi
+          done
+
+      - name: Build Kernel
+        working-directory: kernel
+        run: |
+          export ARCH=arm64
+          export PATH="${{ env.CLANG_DIR }}/bin:$PATH"
+          export LLVM=1 LLVM_IAS=1 \
+                 CLANG_TRIPLE=aarch64-linux-gnu- \
+                 CROSS_COMPILE=aarch64-linux-gnu- \
+                 CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+          export CCACHE_DIR="${{ github.workspace }}/.ccache"
+          export CCACHE_MAXSIZE=8G
+          # 去除 CI 构建指纹：/proc/version 里嵌入的构建者/主机名/时间戳会被检测用作
+          # "自编内核" 信号，固定为普通本地构建形态（对反检测同样有意义）
+          export KBUILD_BUILD_USER=builder
+          export KBUILD_BUILD_HOST=android-build
+          export KBUILD_BUILD_TIMESTAMP="Thu Jun 12 10:00:00 UTC 2025"
+
+          echo "== 预装 UAPI 头文件以启用 SukiSU preinit runner =="
+          # vendor defconfig 不带 HEADERS_INSTALL，SukiSU builtin 的 preinit runner
+          # 检测不到 out/usr/include 会降级为 -DKSU_NO_PREINIT。这里显式安装以启用
+          make -j$(nproc) O=out ARCH=arm64 \
+            CC="ccache clang" LD="ld.lld" AR="llvm-ar" NM="llvm-nm" \
+            headers_install INSTALL_HDR_PATH="$PWD/out/usr" \
+            || echo "::warning::headers_install failed, SukiSU preinit will stay disabled (non-fatal)"
+          test -f out/usr/include/linux/unistd.h \
+            && echo "-- preinit UAPI headers ready" \
+            || echo "::warning::usr/include/linux/unistd.h missing, preinit will be disabled"
+
+          set +e
+          make -j$(nproc) O=out ARCH=arm64 \
+            CC="ccache clang" LD="ld.lld" AR="llvm-ar" NM="llvm-nm" \
+            OBJCOPY="llvm-objcopy" OBJDUMP="llvm-objdump" STRIP="llvm-strip" \
+            CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" \
+            KCFLAGS="-Wno-unknown-warning-option -Wno-error -Wno-format -Wno-incompatible-pointer-types \
+            -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-missing-prototypes \
+            -Wno-int-conversion -Wno-declaration-after-statement \
+            -Wframe-larger-than=131072 -Wno-unused-variable -Wno-unused-function \
+            -Wno-missing-braces -Wno-int-to-pointer-cast -Wno-address-of-packed-member \
+            -Wno-return-type -Wno-shift-negative-value -Wno-array-bounds" \
+            HOSTCFLAGS="" 2>&1 | tee build.log
+
+          if [ ${PIPESTATUS[0]} -ne 0 ]; then
+            echo "::error::Kernel build failed. Last 200 lines:"
+            tail -n 200 build.log
+            exit 1
+          fi
+
+          echo "=== Build finished ==="
+          ccache -s 2>/dev/null || true
+          ls -lh out/arch/arm64/boot/Image
+
+      - name: Package AnyKernel3
+        run: |
+          set -e
+          TIME=$(TZ='Asia/Shanghai' date +%Y%m%d-%H%M)
+          IMG_PATH="${{ env.KERNEL_DIR }}/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image"
+          test -f "$IMG_PATH"
+
+          rm -rf AnyKernel3
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git
+          cd AnyKernel3
+
+          cp "$IMG_PATH" ./Image
+          gzip -9 -f ./Image
+          rm -f ./Image
+
+          cat > anykernel.sh <<'AK3'
+          ### AnyKernel3 Ramdisk Mod Script
+          ## osm0sis @ xda-developers
+
+          ### AnyKernel setup
+          # global properties
+          properties() { '
+          kernel.string=Edwin SukiSU-Ultra Full SUSFS for Xiaomi 11 Ultra / Pro (star)
+          do.devicecheck=1
+          do.modules=0
+          do.systemless=1
+          do.cleanup=1
+          do.cleanuponabort=0
+          device.name1=star
+          device.name2=mars
+          supported.versions=
+          supported.patchlevels=
+          supported.vendorpatchlevels=
+          '; } # end properties
+
+          ### AnyKernel install
+          # boot files attributes
+          boot_attributes() {
+          set_perm_recursive 0 0 755 644 $RAMDISK/*;
+          set_perm_recursive 0 0 750 750 $RAMDISK/init* $RAMDISK/sbin;
+          } # end attributes
+
+          # boot shell variables
+          BLOCK=boot;
+          IS_SLOT_DEVICE=1;
+          RAMDISK_COMPRESSION=auto;
+          PATCH_VBMETA_FLAG=auto;
+
+          # import functions/variables and setup patching - see for reference (DO NOT REMOVE)
+          . tools/ak3-core.sh;
+
+          # boot install
+          split_boot;
+
+          flash_boot;
+          ## end boot install
+          AK3
+
+          chmod +x anykernel.sh
+          zip -r9 "../${{ env.DEVICE_CODENAME }}-SukiSU-SUSFS-Full-${TIME}.zip" ./*
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: star-SukiSU-SUSFS-Full
+          path: ${{ env.DEVICE_CODENAME }}-SukiSU-SUSFS-Full-*.zip
