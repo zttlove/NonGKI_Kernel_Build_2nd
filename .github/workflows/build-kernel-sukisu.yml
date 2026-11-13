@@ -1,4 +1,4 @@
-name: Build Kernel with SukiSU-Ultra (Full SUSFS)a
+name: Build Kernel with SukiSU-Ultra (Full SUSFS)
 
 on:
   workflow_dispatch:
@@ -217,10 +217,14 @@ jobs:
           #include <linux/mm.h>
 
           bool ksu_selinux_hide_enabled __read_mostly = true;
-          bool ksu_selinux_hide_running __read_mostly = true;
+          /* running 必须起步为 false：vendor my_* 钩子对 uid>=10000 走 susfs 过滤
+           * 路径，依赖 fake_status 就绪。若编译期即 true，fake_status 未就绪时 app
+           * 打开 /sys/fs/selinux/status 会解引用 NULL → 卡第一屏。仅在
+           * bakasu_fake_status_init 成功安装假页后才置 true。 */
+          bool ksu_selinux_hide_running __read_mostly = false;
 
           /* vendor: extern struct static_key_false ...; 经 static_branch 消费，
-           * late_initcall 中置位以启用首开兜底初始化路径 */
+           * 仅在 fake_status 安装成功后才置位以启用首开兜底初始化路径 */
           DEFINE_STATIC_KEY_FALSE(fake_status_initialize_key);
 
           /* BakaSU: __maybe_static struct page *fake_status = NULL（消费点判空） */
@@ -234,13 +238,23 @@ jobs:
            * 真实页在 SukiSU 内核态注入后 sequence 已被抬升、policyload 因页晚于策略
            * 加载分配而恒为 0（doc 注明 load 后"never zero"）——恰好是检测器抓的
            * "status.sequence/policyload" 异常。这里复制真实页后规范化为一次加载、
-           * enforcing、无 pending 的 stock 形态。 */
+           * enforcing、无 pending 的 stock 形态。
+           * 全程加 NULL 守卫：ss/lock/page/page_address 任一为空即安全退出，绝不
+           * 在 late_initcall 阶段引入 panic。 */
           void initialize_fake_status(void)
           {
           struct page *real_page, *new_page;
           struct selinux_kernel_status *real, *fake;
 
+          if (!selinux_state.ss) {
+          pr_warn("initialize_fake_status: selinux_state.ss not ready\n");
+          return;
+          }
           ksu_selinux_status_lock = &selinux_state.ss->status_lock;
+          if (!ksu_selinux_status_lock) {
+          pr_warn("initialize_fake_status: status_lock null\n");
+          return;
+          }
 
           mutex_lock(ksu_selinux_status_lock);
           if (fake_status)
@@ -252,6 +266,10 @@ jobs:
           goto out;
           }
           real = page_address(real_page);
+          if (!real) {
+          pr_warn("initialize_fake_status: real page_address null\n");
+          goto out;
+          }
 
           new_page = alloc_page(GFP_KERNEL | __GFP_ZERO);
           if (!new_page) {
@@ -259,6 +277,11 @@ jobs:
           goto out;
           }
           fake = page_address(new_page);
+          if (!fake) {
+          __free_page(new_page);
+          pr_err("initialize_fake_status: fake page_address null\n");
+          goto out;
+          }
           fake->version = real->version;
           fake->sequence = 1;
           fake->enforcing = 1;
@@ -271,13 +294,20 @@ jobs:
           mutex_unlock(ksu_selinux_status_lock);
           }
 
-          /* 内核初始化尾段构造好假页（先于任何用户态打开 status 节点），同时打开
-           * 静态键：万一假页构造失败，首个 app 打开时走 my_sel_open_handle_status
-           * 的兜底路径重试 initialize_fake_status */
+          /* 内核初始化尾段尝试构造假页；仅在成功后才开启静态键 + running，否则保持
+           * 特性全关、内核正常启动。这样即使 SELinux 状态页在 late_initcall 时尚未
+           * 分配也不会 panic——首个 app 打开 status 时由 vendor 兜底路径（静态键门控）
+           * 重试 initialize_fake_status，届时状态页已就绪。 */
           static int __init bakasu_fake_status_init(void)
           {
-          static_key_enable(&fake_status_initialize_key.key);
           initialize_fake_status();
+          if (fake_status) {
+          static_key_enable(&fake_status_initialize_key.key);
+          ksu_selinux_hide_running = true;
+          pr_info("bakasu_fake_status_init: selinux hide enabled (running)\n");
+          } else {
+          pr_warn("bakasu_fake_status_init: fake_status not ready, hide kept disabled\n");
+          }
           return 0;
           }
           late_initcall(bakasu_fake_status_init);
