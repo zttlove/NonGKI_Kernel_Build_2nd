@@ -126,6 +126,19 @@ jobs:
           grep -q 'CONFIG_KSU_SUSFS' fs/stat.c || { echo "::error::fs/stat.c lacks KSU_SUSFS hooks"; exit 1; }
           echo "-- kernel-side SUSFS hooks verified (no kernel patching needed)"
 
+          echo "== SukiSU builtin 适配：为 5.4 屏蔽 static_call 头 =="
+          # static_call 是 5.10+ 内核设施，5.4 无此头文件；builtin 的
+          # kernel_includes.h 无条件 include 它而全树无实际调用，5.4 下
+          # 直接 fatal error。加版本保护（>=5.10 才 include）
+          KIH="SukiSU_src/kernel/kernel_includes.h"
+          test -f "$KIH" || { echo "::error::kernel_includes.h not found"; exit 1; }
+          if ! grep -B1 '^#include <linux/static_call.h>' "$KIH" | grep -q 'KERNEL_VERSION(5, 10, 0)'; then
+            sed -i 's|^#include <linux/static_call.h>$|#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)\n#include <linux/static_call.h>\n#endif|' "$KIH"
+          fi
+          grep -B1 '^#include <linux/static_call.h>' "$KIH" | grep -q 'KERNEL_VERSION(5, 10, 0)' \
+            || { echo "::error::static_call.h version guard patch failed"; exit 1; }
+          echo "-- static_call.h guarded for pre-5.10 kernels"
+
           echo "== SukiSU builtin 适配：ksu_su_compat_enabled 由 bool 改为静态键 =="
           # 树侧 fs/exec.c|open.c|stat.c 以 static_branch_likely/unlikely 消费该开关
           # （extern struct static_key_true），builtin 驱动却定义成 bool；保持同名
