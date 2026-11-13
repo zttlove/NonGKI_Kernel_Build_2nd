@@ -28,7 +28,7 @@ env:
   #     避免上游漂移破坏下面对 sucompat.c 的行锚定胶水补丁。
   SUKISU_REPO: https://github.com/SukiSU-Ultra/SukiSU-Ultra.git
   SUKISU_BRANCH: builtin
-  SUKISU_PIN: f9aa2fec209551b03484357092ddc25e9b32322
+  SUKISU_PIN: f9aa2fec23c3f4a06a935f69dc04cb85b261e7f3
 
 jobs:
   build-kernel:
