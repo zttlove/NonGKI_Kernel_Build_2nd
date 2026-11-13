@@ -181,41 +181,6 @@ jobs:
             echo "-- vendor susfs has priority uid filter support, no stub needed"
           fi
 
-          echo "== 反计时侧信道：statx 对齐补丁 =="
-          # 春秋 Native check-Eros 以 newfstatat:statx 耗时比值 >1.2 判定 KernelSU：
-          # 内核挂钩了 newfstatat/faccessat 而 statx 未挂钩，钩子分发开销造成比值差。
-          # statx(dfd, path, ...) 与 newfstatat(dfd, path, ...) 参数布局一致，注册
-          # 同构钩子后单次开销相同，比值趋近 1，计时侧信道失效
-          BRIDGE="BakaSU_src/kernel/hook/syscall_event_bridge.c"
-          BRIDGE_H="BakaSU_src/kernel/hook/syscall_event_bridge.h"
-          HOOKMGR="BakaSU_src/kernel/hook/syscall_hook_manager.c"
-          test -f "$BRIDGE" && test -f "$BRIDGE_H" && test -f "$HOOKMGR" \
-            || { echo "::error::hook manager source files not found"; exit 1; }
-          if ! grep -q 'ksu_hook_statx' "$BRIDGE"; then
-            echo "-- adding statx timing-alignment hook"
-            # 保守版：纯透传。只保留"走一次钩子分发"的开销对齐，不做任何
-          # 语义处理（su 路径重写对计时检测无意义），排除一切运行时风险
-          cat >> "$BRIDGE" <<'EOF'
-
-          long __nocfi ksu_hook_statx(int orig_nr, const struct pt_regs *regs)
-          {
-              return ksu_call_syscall(orig_nr, regs);
-          }
-          EOF
-          fi
-          grep -q 'ksu_hook_statx' "$BRIDGE" \
-            || { echo "::error::statx bridge hook append failed"; exit 1; }
-          if ! grep -q 'ksu_hook_statx' "$BRIDGE_H"; then
-            sed -i '/^long ksu_hook_faccessat(int orig_nr, const struct pt_regs \*regs);$/a long ksu_hook_statx(int orig_nr, const struct pt_regs *regs);' "$BRIDGE_H"
-          fi
-          grep -q 'long ksu_hook_statx' "$BRIDGE_H" \
-            || { echo "::error::statx hook declaration failed"; exit 1; }
-          if ! grep -q 'ksu_register_syscall_hook(__NR_statx' "$HOOKMGR"; then
-            sed -i 's|ksu_register_syscall_hook(__NR_faccessat, ksu_hook_faccessat);|ksu_register_syscall_hook(__NR_faccessat, ksu_hook_faccessat);\n    ksu_register_syscall_hook(__NR_statx, ksu_hook_statx);|' "$HOOKMGR"
-          fi
-          grep -q 'ksu_register_syscall_hook(__NR_statx, ksu_hook_statx);' "$HOOKMGR" \
-            || { echo "::error::statx hook registration failed"; exit 1; }
-          echo "-- statx timing-alignment hook installed"
 
       - name: Backport sus_type/avd hiding into vendor 5.4 susfs
         working-directory: kernel
@@ -659,21 +624,9 @@ jobs:
             || { echo "::error::defconfig SUSFS append failed"; exit 1; }
           # sync-up 支线新增 KSU_SUSFS_PRIORITY_UID_FILTER（Kconfig line 247），其余符号两分支通用
 
-          echo "== 关闭内核配置暴露面（config.gz/kheaders） =="
-          # CONFIG_IKCONFIG_PROC 会把整份内核配置以 /proc/config.gz 全员可读放出，
-          # CONFIG_KSU_SUSFS* 等设置一览无余；IKHEADERS 同理暴露 /proc/kheaders.tar.xz。
-          # 一律硬关闭，消除免 Root 即可读取的"自编内核"指纹
-          sed -i '/^CONFIG_IKCONFIG=/d; /^CONFIG_IKCONFIG_PROC=/d; /^CONFIG_IKHEADERS=/d; /^CONFIG_IKHEADERS_PROC=/d' "$DEFCONFIG_PATH"
-          printf '# CONFIG_IKCONFIG is not set\n# CONFIG_IKCONFIG_PROC is not set\n# CONFIG_IKHEADERS is not set\n' >> "$DEFCONFIG_PATH"
-          grep -q '^# CONFIG_IKCONFIG_PROC is not set' "$DEFCONFIG_PATH" \
-            || { echo "::error::ikconfig disable append failed"; exit 1; }
 
           echo "== 生成 defconfig =="
           make O=out ARCH=arm64 "${{ env.DEFCONFIG_NAME }}"
-          # 生成后复核：嵌入式配置不得再被打开
-          if grep -q '^CONFIG_IKCONFIG_PROC=y\|^CONFIG_IKHEADERS_PROC=y' out/.config; then
-            echo "::error::config exposure still enabled after defconfig"; exit 1
-          fi
 
           echo "== 配置 BakaSU：SUSFS 全功能 =="
           scripts/config --file out/.config \
