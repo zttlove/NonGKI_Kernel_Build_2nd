@@ -184,36 +184,39 @@ jobs:
             || { echo "::error::strncpy_from_user_nofault replacement failed"; exit 1; }
           echo "-- sulog event.c now uses strncpy_from_user (5.4-safe)"
 
-          echo "== 修复 vendor selinux 预置钩子的 7 个未定义符号（内核侧 stub，特性关闭语义）=="
-          # vendor 树 security/selinux/{selinuxfs.c,hooks.c} 的 BakaSU 预置钩子以 extern
-          # 引用 selinux_hide 特性符号，SukiSU 不提供，LTO 链接期 undefined。新增内核侧
-          # stub TU，类型逐一对齐 BakaSU sync-up kernel/feature/selinux_hide.{c,h} 的
-          # 实际定义与 vendor extern 声明；门控 bool=false、静态键恒关、指针 NULL、
-          # 钩子空函数 —— 全部消费点自带判空/静态键守卫，行为即“特性关闭”
-          STUB_C="ksu_vendor_compat_stub.c"
-          if [ ! -f "$STUB_C" ]; then
-            cat > "$STUB_C" <<'KSU_STUB_EOF'
-          /*
-           * ksu_vendor_compat_stub.c - vendor selinux_hide hook symbols, feature off.
-           *
-           * vendor 树 security/selinux/{selinuxfs.c,hooks.c} 的 BakaSU 预置钩子以 extern
-           * 引用以下符号；SukiSU-Ultra 不提供，这里按 BakaSU sync-up 分支
-           * kernel/feature/selinux_hide.{c,h} 的实际类型给出"特性关闭"语义的定义。
-           */
+          echo "== 修复 vendor selinux 预置钩子的 6 个未定义符号（services.c 末尾追加定义，特性关闭语义）=="
+          # vendor 树 security/selinux/{selinuxfs.c,hooks.c} 的 BakaSU 预置钩子在
+          # #ifdef CONFIG_KSU_SUSFS 内以 extern 引用 selinux_hide 特性符号；SukiSU
+          # builtin 的 kernel/feature/selinux_hide.c 被 ksu_main.c 的
+          # #if LINUX_VERSION_CODE >= 5.10 门控，5.4 下不参与编译，符号无人提供，
+          # LTO 链接期 undefined。直接把“特性关闭”语义的定义追加进
+          # security/selinux/ss/services.c：CONFIG_SECURITY_SELINUX=y 下该 TU 必然
+          # 参与 vmlinux 链接。类型逐一对齐 BakaSU sync-up selinux_hide.{c,h}：
+          # 门控 bool=false、静态键恒关、指针 NULL、钩子空函数 —— 全部消费点自带
+          # 判空/静态键守卫，行为即“特性关闭”。
+          # 注意不可走独立 stub TU + 顶层 Makefile obj-y：kbuild 只在目录 Makefile
+          # 里消费 obj-y，顶层 Makefile 的 obj-y 是死赋值（也不 export），TU 永不
+          # 编译，守卫却 grep 同一死赋值照样通过 —— CI 实测 6 符号全部 undefined。
+          SVC="security/selinux/ss/services.c"
+          test -f "$SVC" || { echo "::error::security/selinux/ss/services.c not found"; exit 1; }
+          if ! grep -q 'bool ksu_selinux_hide_enabled' "$SVC"; then
+            cat >> "$SVC" <<'KSU_SVCCOMPAT_EOF'
+
+          /* ksu vendor selinux_hide compat：vendor selinuxfs.c/hooks.c 的 BakaSU 预置钩子
+           * 引用的符号，SukiSU builtin 在 5.4 下不提供（>=5.10 版本门控）。
+           * fake_state 不在此列：其调用点已由 sus_type 回移植的 perl 替换消除，
+           * 仅剩 extern 声明（无符号需求）。追加块所需 include：cache.h（__read_mostly）、
+           * jump_label.h（DEFINE_STATIC_KEY_FALSE）、mm.h（struct page，本 TU 原本未含）；
+           * mutex.h 本文件已直接包含，bool/NULL 由既有包含链提供。 */
           #include <linux/cache.h>
-          #include <linux/init.h>
           #include <linux/jump_label.h>
           #include <linux/mm.h>
-          #include <linux/mutex.h>
-          #include <linux/types.h>
-
-          #include "../security/selinux/include/security.h"
 
           /* BakaSU: __maybe_static bool ... __read_mostly = false（门控，false 即隐藏关闭） */
           bool ksu_selinux_hide_enabled __read_mostly = false;
           bool ksu_selinux_hide_running __read_mostly = false;
 
-          /* vendor: extern struct static_key_false ...; 经 __jump_table/static_branch 消费 */
+          /* vendor: extern struct static_key_false ...; 经 static_branch 消费，恒关不可达 */
           DEFINE_STATIC_KEY_FALSE(fake_status_initialize_key);
 
           /* BakaSU: __maybe_static struct page *fake_status = NULL（消费点判空） */
@@ -227,30 +230,14 @@ jobs:
           void initialize_fake_status(void)
           {
           }
-
-          /* vendor: extern struct selinux_state fake_state; 全部 &fake_state 调用点已被
-           * sus_type 回移植切到 susfs 过滤路径，此处保底定义并浅拷真实状态 */
-          struct selinux_state fake_state;
-          static int __init ksu_vendor_fake_state_init(void)
-          {
-              fake_state = selinux_state;
-              return 0;
-          }
-          core_initcall(ksu_vendor_fake_state_init);
-          KSU_STUB_EOF
+          KSU_SVCCOMPAT_EOF
           fi
-          test -f "$STUB_C" || { echo "::error::ksu_vendor_compat_stub.c generation failed"; exit 1; }
           for sym in ksu_selinux_hide_enabled ksu_selinux_hide_running \
                      fake_status_initialize_key fake_status \
-                     ksu_selinux_status_lock initialize_fake_status fake_state; do
-            grep -q "\b$sym\b" "$STUB_C" || { echo "::error::stub missing symbol $sym"; exit 1; }
+                     ksu_selinux_status_lock initialize_fake_status; do
+            grep -q "\b$sym\b" "$SVC" || { echo "::error::services.c missing symbol $sym"; exit 1; }
           done
-          # stub 不需要 CONFIG 开关：obj-y 追加进 kernel/Makefile，不受 defconfig 生成时机影响
-          grep -q 'ksu_vendor_compat_stub\.o' Makefile || \
-            printf '\n# vendor selinux_hide compat stubs (SukiSU does not provide these symbols)\nobj-y += ksu_vendor_compat_stub.o\n' >> Makefile
-          grep -q '^obj-y += ksu_vendor_compat_stub\.o$' Makefile \
-            || { echo "::error::kernel/Makefile stub append failed"; exit 1; }
-          echo "-- 7 vendor selinux_hide symbols stubbed in kernel/ksu_vendor_compat_stub.c"
+          echo "-- 6 vendor selinux_hide symbols defined in security/selinux/ss/services.c"
 
 
       - name: Backport sus_type/avd hiding into vendor 5.4 susfs
