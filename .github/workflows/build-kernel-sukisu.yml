@@ -208,30 +208,32 @@ jobs:
            * 仅剩 extern 声明（无符号需求）。追加块所需 include：cache.h（__read_mostly）、
            * jump_label.h（DEFINE_STATIC_KEY_FALSE）、mm.h（alloc_page/page_address）；
            * mutex.h 本文件已直接包含，bool/NULL 由既有包含链提供。
-           * 特性语义：常开。enabled/running=true 使 vendor 的 my_write_access /
-           * my_write_context / my_setprocattr / my_sel_open_handle_status 对 app uid
+           * 特性语义：延迟激活。enabled/running 起步 false（=可启动基线），仅当
+           * late_initcall 成功构造 fake_status 后才置 true，使 vendor 的 my_write_access
+           * / my_write_context / my_setprocattr / my_sel_open_handle_status 对 app uid
            * （>=10000）走 susfs 过滤路径（uid<10000 与内核进程不受影响），配合 sus_type
            * 回移植实现 /access、/context 探测的 -EINVAL 与 avd 还原。 */
           #include <linux/cache.h>
           #include <linux/jump_label.h>
           #include <linux/mm.h>
 
-          bool ksu_selinux_hide_enabled __read_mostly = true;
-          /* running 必须起步为 false：vendor my_* 钩子对 uid>=10000 走 susfs 过滤
-           * 路径，依赖 fake_status 就绪。若编译期即 true，fake_status 未就绪时 app
-           * 打开 /sys/fs/selinux/status 会解引用 NULL → 卡第一屏。仅在
-           * bakasu_fake_status_init 成功安装假页后才置 true。 */
+          /* enabled 门控 my_sel_open_handle_status（uid>=10000 时以 fake_status 换
+           * 真实页）；running 门控 my_write_access / my_write_context / my_setprocattr
+           * 的 susfs 还原路径（uid>=10000）。两者起步 false（与可启动基线等价），
+           * 仅当 late_initcall 成功构造 fake_status 后才整体置 true —— 任何失败路径
+           * 下内核照常启动，绝不卡第一屏。 */
+          bool ksu_selinux_hide_enabled __read_mostly = false;
           bool ksu_selinux_hide_running __read_mostly = false;
 
-          /* vendor: extern struct static_key_false ...; 经 static_branch 消费，
-           * 仅在 fake_status 安装成功后才置位以启用首开兜底初始化路径 */
+          /* vendor: extern struct static_key_false ...; 仅门控 selinuxfs.c:262 的
+           * 兜底重试（!fake_status 时才触发），置位本身无害 */
           DEFINE_STATIC_KEY_FALSE(fake_status_initialize_key);
 
           /* BakaSU: __maybe_static struct page *fake_status = NULL（消费点判空） */
           struct page *fake_status = NULL;
 
-          /* BakaSU 定义与 vendor extern 均为 struct mutex *（消费点判空后 lock/unlock）；
-           * initialize_fake_status 里指向 5.4 的 selinux_state.ss->status_lock */
+          /* BakaSU 定义与 vendor extern 均为 struct mutex *；vendor 消费点判空后
+           * lock/unlock 保护 fake_status 读取。此处仅接线指针，初始化函数自身无锁。 */
           struct mutex *ksu_selinux_status_lock = NULL;
 
           /* 构造 stock 观感的状态页供 my_sel_open_handle_status 服务给 app uid：
@@ -239,74 +241,54 @@ jobs:
            * 加载分配而恒为 0（doc 注明 load 后"never zero"）——恰好是检测器抓的
            * "status.sequence/policyload" 异常。这里复制真实页后规范化为一次加载、
            * enforcing、无 pending 的 stock 形态。
-           * 全程加 NULL 守卫：ss/lock/page/page_address 任一为空即安全退出，绝不
-           * 在 late_initcall 阶段引入 panic。 */
+           * 【锁定纪律】5.4 的 selinux_kernel_status_page() 内部自取 status_lock
+           * （ss/status.c:47）。旧版本函数在持锁状态下调用它 → 同一互斥锁自嵌套 →
+           * 死锁在 late_initcall → init 未启动内核即挂死 → 卡第一屏（两次 bootloop
+           * 根因）。本函数因此完全无锁：late_initcall 上下文无并发；vendor 兜底调用
+           * 点（selinuxfs.c:263）也在锁外；最坏并发是双份分配，内容一致后者胜出，
+           * 仅泄漏一页，无碍。 */
           void initialize_fake_status(void)
           {
-          struct page *real_page, *new_page;
-          struct selinux_kernel_status *real, *fake;
+          struct selinux_kernel_status *fake, *real = NULL;
+          struct page *new_page;
 
-          if (!selinux_state.ss) {
-          pr_warn("initialize_fake_status: selinux_state.ss not ready\n");
-          return;
-          }
-          ksu_selinux_status_lock = &selinux_state.ss->status_lock;
-          if (!ksu_selinux_status_lock) {
-          pr_warn("initialize_fake_status: status_lock null\n");
-          return;
-          }
-
-          mutex_lock(ksu_selinux_status_lock);
           if (fake_status)
-          goto out;
+          return;
+          if (!selinux_state.ss)
+          return;
 
-          real_page = selinux_kernel_status_page(&selinux_state);
-          if (!real_page) {
-          pr_warn("initialize_fake_status: status page not available\n");
-          goto out;
-          }
-          real = page_address(real_page);
-          if (!real) {
-          pr_warn("initialize_fake_status: real page_address null\n");
-          goto out;
-          }
+          if (selinux_state.ss->status_page)
+          real = page_address(selinux_state.ss->status_page);
 
           new_page = alloc_page(GFP_KERNEL | __GFP_ZERO);
           if (!new_page) {
           pr_err("initialize_fake_status: page alloc failed\n");
-          goto out;
+          return;
           }
           fake = page_address(new_page);
-          if (!fake) {
-          __free_page(new_page);
-          pr_err("initialize_fake_status: fake page_address null\n");
-          goto out;
-          }
-          fake->version = real->version;
+          fake->version = real ? real->version : SELINUX_KERNEL_STATUS_VERSION;
           fake->sequence = 1;
           fake->enforcing = 1;
           fake->policyload = 1;
-          fake->deny_unknown = real->deny_unknown;
+          fake->deny_unknown = real ? real->deny_unknown : 1;
 
           fake_status = new_page;
           pr_info("initialize_fake_status: fake status page installed\n");
-          out:
-          mutex_unlock(ksu_selinux_status_lock);
           }
 
-          /* 内核初始化尾段尝试构造假页；仅在成功后才开启静态键 + running，否则保持
-           * 特性全关、内核正常启动。这样即使 SELinux 状态页在 late_initcall 时尚未
-           * 分配也不会 panic——首个 app 打开 status 时由 vendor 兜底路径（静态键门控）
-           * 重试 initialize_fake_status，届时状态页已就绪。 */
+          /* 初始化尾段：先装假页，成功才激活 enabled/running。静态键无条件开——
+           * 它只门控兜底重试，假页就绪时 no-op，未就绪时给首次 open 一次重试机会
+           * （重试路径已无锁，不会死锁）。 */
           static int __init bakasu_fake_status_init(void)
           {
+          static_key_enable(&fake_status_initialize_key.key);
           initialize_fake_status();
           if (fake_status) {
-          static_key_enable(&fake_status_initialize_key.key);
+          ksu_selinux_hide_enabled = true;
           ksu_selinux_hide_running = true;
-          pr_info("bakasu_fake_status_init: selinux hide enabled (running)\n");
+          pr_info("bakasu_fake_status_init: selinux hide active\n");
           } else {
-          pr_warn("bakasu_fake_status_init: fake_status not ready, hide kept disabled\n");
+          pr_warn("bakasu_fake_status_init: fake page unavailable, hide off\n");
           }
           return 0;
           }
