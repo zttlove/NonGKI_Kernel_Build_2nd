@@ -57,7 +57,8 @@ jobs:
           repository: ${{ env.KERNEL_REPO }}
           ref: ${{ env.KERNEL_BRANCH }}
           path: kernel
-          fetch-depth: 1
+          # depth=2：合并 tip 时需要 HEAD^1 做对照 diff（cpufreq 回退步骤依赖）
+          fetch-depth: 2
 
       - name: Verify Kernel Commit & Clean Workspace
         working-directory: kernel
@@ -70,6 +71,32 @@ jobs:
             echo "::error::vendor kernel source drifted: branch tip ${SHORT_SHA} != pinned ${KERNEL_COMMIT_PIN}"
             echo "The 'dynamic' branch was moved/rewritten. Update KERNEL_COMMIT_PIN in workflow env ONLY after a build from the new tip is verified to boot."
             exit 1
+          fi
+
+      - name: Revert merge-brought cpufreq init-order change (bootloop fix)
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+
+          echo "== 回退合并带入的 qcom-cpufreq-hw.c 初始化时序改动 =="
+          # f4c3fdd4f 合并（Leecaarmy:dynamic → dynamic）相对 zttlove 侧基线的
+          # 全部差异只有这一个文件：把 cpufreq_register_driver() 挪到
+          # register_cpu_cycle_counter_cb()（WALT 周期计数回调）之后。这是
+          # boot 关键路径时序改动，实机构建后无限重启——与上一个能开机的
+          # 基线相比唯一的内核内容差异。回退它再做开机验证。
+          PC=drivers/cpufreq/qcom-cpufreq-hw.c
+          test -f "$PC" || { echo "::error::$PC not found"; exit 1; }
+          if [ "$(git log -1 --format=%P HEAD | wc -w)" -eq 2 ]; then
+            git diff HEAD^1 HEAD -- "$PC" | git apply -R --whitespace=nowarn
+            R=$(grep -n 'cpufreq_register_driver(&cpufreq_qcom_hw_driver)' "$PC" | head -1 | cut -d: -f1)
+            C=$(grep -n 'register_cpu_cycle_counter_cb(&cycle_counter_cb)' "$PC" | head -1 | cut -d: -f1)
+            if [ -n "$R" ] && [ -n "$C" ] && [ "$R" -lt "$C" ]; then
+              echo "-- reverted: cpufreq_register_driver (L$R) now precedes register_cpu_cycle_counter_cb (L$C)"
+            else
+              echo "::error::cpufreq revert verification failed (R=$R C=$C)"; exit 1
+            fi
+          else
+            echo "-- HEAD is not a merge commit, nothing to revert"
           fi
 
       - name: Install Build Dependencies
