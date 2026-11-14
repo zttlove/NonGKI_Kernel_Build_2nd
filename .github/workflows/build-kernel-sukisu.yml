@@ -184,6 +184,58 @@ jobs:
             || { echo "::error::strncpy_from_user_nofault replacement failed"; exit 1; }
           echo "-- sulog event.c now uses strncpy_from_user (5.4-safe)"
 
+          echo "== SukiSU builtin 加固：sys_reboot supercall fd 自举通道的调用方门控 =="
+          # builtin 的 ksu_handle_sys_reboot（SUSFS 变体，dispatch.c）对
+          # magic1=0xDEADBEEF + magic2=0xCAFEBABE 的 reboot() 调用无条件走
+          # ksu_supercall_reboot_handler：安装 supercall fd 并返回 0，全程无 uid 门控。
+          # 任何三方 app 无需 root 即可：发起该调用 → 观察返回 0（stock 对非
+          # CAP_SYS_BOOT 一律 -EPERM）/ 进程 fd 表多出 ksu fd → 100% 确认 KernelSU
+          # 存在。这是公开已知的 KSU 无 root 探测手法，即春秋 4.6.3
+          # "kernelsu detected（运行时行为特征）" 的实现向量。
+          # 修复：仅 root 与已识别管理器（经典 appid 或动态管理器注册，状态持久化，
+          # 重启后立即可用）保留自举通道；其余调用方返回 -EINVAL → reboot.c 的
+          # orig_flow 走 stock 流程 → 非 CAP_SYS_BOOT 得到与原厂逐字节一致的 -EPERM，
+          # 返回值与 fd 副作用双双归零。
+          DIS="SukiSU_src/kernel/supercall/dispatch.c"
+          test -f "$DIS" || { echo "::error::supercall/dispatch.c not found"; exit 1; }
+          python3 - "$DIS" <<'PYREBOOT_EOF'
+          import sys
+          path = sys.argv[1]
+          src = open(path).read()
+          old = (
+              "    if (magic2 == KSU_INSTALL_MAGIC2)\n"
+              "        return ksu_supercall_reboot_handler(arg);\n"
+          )
+          new = (
+              "    if (magic2 == KSU_INSTALL_MAGIC2) {\n"
+              "        /* bakasu anti-detect: third-party apps must neither bootstrap a\n"
+              "         * supercall fd nor observe a stock-divergent return. Stock\n"
+              "         * sys_reboot yields -EPERM to non-CAP_SYS_BOOT callers; a non-zero\n"
+              "         * return sends them down orig_flow (kernel/reboot.c) which produces\n"
+              "         * exactly that -EPERM. Root and the identified manager keep the\n"
+              "         * bootstrap channel. */\n"
+              "        if (current_uid().val != 0 &&\n"
+              "            !ksu_manager_uid_authorized(current_uid().val))\n"
+              "            return -EINVAL;\n"
+              "        return ksu_supercall_reboot_handler(arg);\n"
+              "    }\n"
+          )
+          if old in src:
+              src = src.replace(old, new, 1)
+          elif "bakasu anti-detect" in src:
+              pass
+          else:
+              sys.exit("reboot gate target not found in dispatch.c")
+          open(path, "w").write(src)
+          PYREBOOT_EOF
+          grep -q 'bakasu anti-detect' "$DIS" \
+            || { echo "::error::reboot gate patch failed"; exit 1; }
+          grep -q 'ksu_manager_uid_authorized(current_uid().val)' "$DIS" \
+            || { echo "::error::reboot gate authorization check missing"; exit 1; }
+          [ "$(grep -c 'return ksu_supercall_reboot_handler(arg);' "$DIS")" = "1" ] \
+            || { echo "::error::reboot gate call-site count unexpected"; exit 1; }
+          echo "-- sys_reboot bootstrap channel now gated to root/manager; third-party apps observe stock -EPERM"
+
           echo "== 修复 vendor selinux 预置钩子的 6 个未定义符号（services.c 末尾追加定义，特性关闭语义）=="
           # vendor 树 security/selinux/{selinuxfs.c,hooks.c} 的 BakaSU 预置钩子在
           # #ifdef CONFIG_KSU_SUSFS 内以 extern 引用 selinux_hide 特性符号；SukiSU
