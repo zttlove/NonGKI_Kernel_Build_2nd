@@ -21,7 +21,7 @@ env:
   # 的合并提交，**尚未经开机验证**；首个构建即为开机测试，若出现循环重启，
   # 排查方向是 Leecaarmy 侧带入的改动（其 fork 的 dynamic 分支）。
   # Build FAILS if the dynamic branch tip differs -- update ONLY after verifying a new-tip build boots.
-  KERNEL_COMMIT_PIN: "f4c3fdd4f"
+  KERNEL_COMMIT_PIN: "f4c3fdd4"
   DEFCONFIG_NAME: vendor/star_defconfig
   DEVICE_CODENAME: star
   OUTPUT_DIR: out
