@@ -2,10 +2,22 @@ name: Build Kernel with SukiSU-Ultra (Full SUSFS)
 
 on:
   workflow_dispatch:
+    inputs:
+      reboot_gate:
+        description: "启用 sys_reboot supercall fd 自举门控（反探测加固；出现开机循环请关掉）"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
 
 env:
   KERNEL_REPO: zttlove/android_kernel_xiaomi_sm8350-hyperos
   KERNEL_BRANCH: dynamic
+  # Pinned vendor source (8-char SHA, from booting kernel: 5.4.302--1-g36982074).
+  # Build FAILS if the dynamic branch tip differs -- update ONLY after verifying a new-tip build boots.
+  KERNEL_COMMIT_PIN: "36982074"
   DEFCONFIG_NAME: vendor/star_defconfig
   DEVICE_CODENAME: star
   OUTPUT_DIR: out
@@ -48,7 +60,13 @@ jobs:
         run: |
           git reset --hard HEAD
           git clean -fdx
+          SHORT_SHA=$(git rev-parse --short=8 HEAD)
           echo "Kernel: $(git log -1 --format='%h %s')"
+          if [ "$SHORT_SHA" != "$KERNEL_COMMIT_PIN" ]; then
+            echo "::error::vendor kernel source drifted: branch tip ${SHORT_SHA} != pinned ${KERNEL_COMMIT_PIN}"
+            echo "The 'dynamic' branch was moved/rewritten. Update KERNEL_COMMIT_PIN in workflow env ONLY after a build from the new tip is verified to boot."
+            exit 1
+          fi
 
       - name: Install Build Dependencies
         run: |
@@ -184,6 +202,8 @@ jobs:
             || { echo "::error::strncpy_from_user_nofault replacement failed"; exit 1; }
           echo "-- sulog event.c now uses strncpy_from_user (5.4-safe)"
 
+          REBOOT_GATE="${{ inputs.reboot_gate || 'false' }}"
+          if [ "$REBOOT_GATE" = "true" ]; then
           echo "== SukiSU builtin 加固：sys_reboot supercall fd 自举通道的调用方门控 =="
           # builtin 的 ksu_handle_sys_reboot（SUSFS 变体，dispatch.c）对
           # magic1=0xDEADBEEF + magic2=0xCAFEBABE 的 reboot() 调用无条件走
@@ -235,6 +255,9 @@ jobs:
           [ "$(grep -c 'return ksu_supercall_reboot_handler(arg);' "$DIS")" = "1" ] \
             || { echo "::error::reboot gate call-site count unexpected"; exit 1; }
           echo "-- sys_reboot bootstrap channel now gated to root/manager; third-party apps observe stock -EPERM"
+          else
+            echo "-- reboot gate DISABLED via workflow input; dispatch.c left untouched"
+          fi
 
           echo "== 修复 vendor selinux 预置钩子的 6 个未定义符号（services.c 末尾追加定义，特性关闭语义）=="
           # vendor 树 security/selinux/{selinuxfs.c,hooks.c} 的 BakaSU 预置钩子在
@@ -746,6 +769,51 @@ jobs:
             echo "-- sus_type backport already present, skipping"
           fi
 
+      - name: Patch SELinux status.c (policyload backfill)
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+
+          echo "== 修复：status 页惰性分配导致真实页 policyload 永远为 0 =="
+          # 5.4 状态页在首次 open/mmap /sys/fs/selinux/status 时才分配
+          # （ss/status.c selinux_kernel_status_page 惰性 alloc）；init 加载
+          # sepolicy 触发的 selinux_status_update_policyload(seqno=1) 当时页
+          # 不存在，更新被静默丢弃，真实页从此永远 policyload=0。对 enforcing
+          # 系统这是不可能状态（policy 从未加载不可能 enforcing），mainline 注释
+          # 亦声明该值 "never zero"——检测器（春秋 status.sequence/policyload 项）
+          # 以 root 读真实页即报篡改。修复：update_policyload 无论页是否存在都
+          # 记录 seqno，惰性分配时回填；两个函数同持 status_lock，无竞态。
+          STATUS_C=security/selinux/ss/status.c
+          test -f "$STATUS_C" || { echo "::error::$STATUS_C not found"; exit 1; }
+          if grep -q 'selinux_last_policyload' "$STATUS_C"; then
+            echo "-- policyload backfill already present, skipping"
+          else
+            python3 - "$STATUS_C" <<'PYEOF'
+          import sys
+          p = sys.argv[1]
+          s = open(p).read()
+          a = '#include "services.h"\n'
+          assert s.count(a) == 1, 'include anchor'
+          s = s.replace(a, a + '\n/* latest policyload seqno, for status page lazy-allocation backfill */\nstatic int selinux_last_policyload;\n')
+          key = 'selinux_status_update_policyload'
+          lock = 'mutex_lock(&state->ss->status_lock);'
+          i = s.index(key)
+          j = s.index(lock, i)
+          end = j + len(lock)
+          s = s[:end] + '\n\tselinux_last_policyload = seqno;' + s[end:]
+          z = 'status->policyload = 0;'
+          assert s.count(z) == 1, 'lazy alloc anchor'
+          s = s.replace(z, 'status->policyload = selinux_last_policyload;')
+          open(p, 'w').write(s)
+          print('policyload backfill patched')
+          PYEOF
+            grep -q 'static int selinux_last_policyload;' "$STATUS_C" \
+              && grep -q 'status->policyload = selinux_last_policyload;' "$STATUS_C" \
+              && grep -q 'selinux_last_policyload = seqno;' "$STATUS_C" \
+              && ! grep -q 'status->policyload = 0;' "$STATUS_C" \
+              || { echo "::error::policyload backfill patch verification failed"; exit 1; }
+            echo "-- policyload backfill patched & verified"
+          fi
 
       - name: Configure Kernel (full SUSFS features)
         working-directory: kernel
@@ -778,6 +846,11 @@ jobs:
           grep -q 'CONFIG_KSU_SUSFS_SUS_MAP=y' "$DEFCONFIG_PATH" \
             || { echo "::error::defconfig SUSFS append failed"; exit 1; }
 
+          echo "== 启用 pstore ramoops（异常开机取证：/sys/fs/pstore/console-ramoops-*）=="
+          for sym in PSTORE PSTORE_RAM PSTORE_CONSOLE; do
+            echo "CONFIG_${sym}=y" >> "$DEFCONFIG_PATH"
+          done
+
           echo "== 生成 defconfig =="
           make O=out ARCH=arm64 "${{ env.DEFCONFIG_NAME }}"
 
@@ -796,6 +869,9 @@ jobs:
             --enable  KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
             --enable  KSU_SUSFS_OPEN_REDIRECT \
             --enable  KSU_SUSFS_SUS_MAP \
+            --enable  PSTORE \
+            --enable  PSTORE_RAM \
+            --enable  PSTORE_CONSOLE \
             --disable KSU_SUSFS_PRIORITY_UID_FILTER \
             --disable KPM \
             --disable KSU_DEBUG \
@@ -812,7 +888,7 @@ jobs:
           for sym in KSU KSU_SUSFS KSU_SUSFS_SUS_PATH KSU_SUSFS_SUS_MOUNT KSU_SUSFS_SUS_KSTAT \
                      KSU_SUSFS_SPOOF_UNAME KSU_SUSFS_ENABLE_LOG KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
                      KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG KSU_SUSFS_OPEN_REDIRECT \
-                     KSU_SUSFS_SUS_MAP; do
+                     KSU_SUSFS_SUS_MAP PSTORE PSTORE_RAM PSTORE_CONSOLE; do
             grep -q "^CONFIG_${sym}=y" out/.config || { echo "::error::CONFIG_${sym} not enabled"; exit 1; }
           done
           grep -q '^CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER=y' out/.config \
