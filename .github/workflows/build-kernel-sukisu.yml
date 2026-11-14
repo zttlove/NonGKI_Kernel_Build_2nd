@@ -267,7 +267,9 @@ jobs:
           }
           fake = page_address(new_page);
           fake->version = real ? real->version : SELINUX_KERNEL_STATUS_VERSION;
-          fake->sequence = 1;
+          /* seqlock 稳定态必须为偶数：stock 在一次策略加载后 sequence=2（每次
+           * 事件 +2，奇数=更新中被按协议读取的检测器判可疑） */
+          fake->sequence = 2;
           fake->enforcing = 1;
           fake->policyload = 1;
           fake->deny_unknown = real ? real->deny_unknown : 1;
