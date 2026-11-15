@@ -1,4 +1,4 @@
-name: Build Kernel with SukiSU-Ultra (Full SUSFS)
+name: Build Kernel with SukiSU-Ultra (Full SUSFS)a
 
 on:
   workflow_dispatch:
