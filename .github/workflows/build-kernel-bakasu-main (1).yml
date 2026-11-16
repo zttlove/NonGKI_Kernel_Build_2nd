@@ -1,4 +1,4 @@
-name: Build Kernel BakaSU-Main (minimal + latest upstream driver)
+name: Build Kernel BakaSU-Main (minimal + latest upstream driver)kk
 
 on:
   workflow_dispatch:
