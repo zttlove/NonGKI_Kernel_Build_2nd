@@ -1,4 +1,4 @@
-name: Build Kernel Minimal (vendor BakaSU + SUSFS, boot-priority)
+name: Build Kernel Minimal (vendor BakaSU + SUSFS, boot-priority)ko
 
 on:
   workflow_dispatch:
