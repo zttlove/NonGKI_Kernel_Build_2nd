@@ -1,4 +1,4 @@
-name: Build Kernel Minimal (vendor BakaSU + SUSFS, full features)
+name: Build Kernel Minimal (vendor BakaSU + SUSFS, full features)KO
 
 on:
   workflow_dispatch:
