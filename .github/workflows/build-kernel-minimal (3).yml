@@ -6,8 +6,6 @@ on:
 env:
   KERNEL_REPO: zttlove/android_kernel_xiaomi_sm8350-hyperos
   KERNEL_BRANCH: dynamic
-  # Pinned vendor source (8-char SHA).
-  # Build FAILS if the dynamic branch tip differs -- update ONLY after verifying a new-tip build boots.
   KERNEL_COMMIT_PIN: "f4c3fdd4"
   DEFCONFIG_NAME: vendor/star_defconfig
   DEVICE_CODENAME: star
@@ -51,7 +49,7 @@ jobs:
             fi
           done
           echo "== 搜索所有包含 INLINE 或 MANUAL 的 Kconfig 符号 =="
-          grep -rn "INLINE_HOOK\|MANUAL_HOOK" --include=Kconfig . | head -50
+          grep -rn "INLINE_HOOK\|MANUAL_HOOK\|SUSFS" --include=Kconfig . | head -50
 
       - name: Enforce cpufreq init order + defconfig sanitize
         working-directory: kernel
@@ -258,9 +256,8 @@ jobs:
           sed -i '/^CONFIG_KSU_SUSFS/d' "$DEFCONFIG_PATH"
           sed -i '/^CONFIG_KSU=/d' "$DEFCONFIG_PATH"
 
-          # 2. 核心主开关 & 唯一正确的 Hook 模式（5.4 内核选 Manual Hook）
+          # 2. 核心主开关：KSU + SUSFS Inline Hook（5.4 内核选择 SUSFS Hook 模式）
           echo "CONFIG_KSU=y" >> "$DEFCONFIG_PATH"
-          echo "CONFIG_KSU_MANUAL_HOOK=y" >> "$DEFCONFIG_PATH"
           echo "CONFIG_KSU_SUSFS=y" >> "$DEFCONFIG_PATH"
 
           # 3. SUSFS 全特性开启（独立开关，不参与 Hook choice）
@@ -281,10 +278,9 @@ jobs:
           make O=out ARCH=arm64 "${{ env.DEFCONFIG_NAME }}"
 
           echo "== scripts/config 终态修正 =="
-          # 注意：不要在此处使用 --enable KSU_SUSFS，避免二次触发 choice 覆盖
           scripts/config --file out/.config \
             --enable  KSU \
-            --enable  KSU_MANUAL_HOOK \
+            --enable  KSU_SUSFS \
             --set-str LOCALVERSION ""
 
           make O=out ARCH=arm64 olddefconfig
@@ -294,17 +290,16 @@ jobs:
           grep -nE '^CONFIG_(KSU|KSU_SUSFS)' out/.config || true
           
           grep -q '^CONFIG_KSU=y' out/.config || { echo "::error::CONFIG_KSU not enabled"; exit 1; }
-          grep -q '^CONFIG_KSU_SUSFS=y' out/.config || { echo "::error::CONFIG_KSU_SUSFS not enabled"; exit 1; }
           
-          # 硬校验 Manual Hook（5.4 内核唯一正确的 Hook 模式）
-          grep -q '^CONFIG_KSU_MANUAL_HOOK=y' out/.config || { echo "::error::CONFIG_KSU_MANUAL_HOOK not enabled"; exit 1; }
+          # 硬校验：SUSFS Inline Hook 模式已启用（替代 Manual Hook）
+          grep -q '^CONFIG_KSU_SUSFS=y' out/.config || { echo "::error::CONFIG_KSU_SUSFS not enabled (SUSFS Inline Hook mode required)"; exit 1; }
 
-          # 确认没有误开其他 Hook 模式
+          # 确认没有误开 Manual Hook 或 Tracepoint Hook
+          if grep -q '^CONFIG_KSU_MANUAL_HOOK=y' out/.config; then
+            echo "::warning::CONFIG_KSU_MANUAL_HOOK is enabled, but it conflicts with SUSFS Inline Hook"
+          fi
           if grep -q '^CONFIG_KSU_TRACEPOINT_HOOK=y' out/.config; then
             echo "::warning::CONFIG_KSU_TRACEPOINT_HOOK is enabled, but it's not suitable for kernel 5.4"
-          fi
-          if grep -q '^CONFIG_KSU_SUSFS_INLINE_HOOK=y' out/.config; then
-            echo "::warning::CONFIG_KSU_SUSFS_INLINE_HOOK conflicts with Manual Hook"
           fi
 
           MISSING=""
