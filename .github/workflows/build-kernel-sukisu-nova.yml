@@ -1206,8 +1206,10 @@ jobs:
             --disable LOCALVERSION_AUTO \
             --disable IKCONFIG \
             --disable IKCONFIG_PROC \
-
             --set-str LOCALVERSION ""
+            grep -q '^CONFIG_IKCONFIG_PROC=y' out/.config \
+            && { echo "::error::/proc/config.gz exposed - any app can grep CONFIG_KSU from it"; exit 1; } || true
+
             # /proc/version 不受 SUSFS SPOOF_UNAME 伪造，版本串带 susfs 等字样会被
             # 春秋/Momo 类检测直接读出；强制保持空串，内核串回归原厂形态
           make O=out ARCH=arm64 olddefconfig
