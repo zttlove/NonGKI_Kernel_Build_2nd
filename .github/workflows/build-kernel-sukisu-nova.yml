@@ -1204,6 +1204,9 @@ jobs:
             --disable UAPI_HEADER_TEST \
             --disable HEADERS_INSTALL \
             --disable LOCALVERSION_AUTO \
+            --disable IKCONFIG \
+            --disable IKCONFIG_PROC \
+
             --set-str LOCALVERSION ""
             # /proc/version 不受 SUSFS SPOOF_UNAME 伪造，版本串带 susfs 等字样会被
             # 春秋/Momo 类检测直接读出；强制保持空串，内核串回归原厂形态
