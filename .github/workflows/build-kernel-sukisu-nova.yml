@@ -163,9 +163,10 @@ jobs:
           open(p, "w").write(s.replace(old, new))
           print("-- mi_dsi_panel.c: else braces added, indentation aligned (semantics unchanged)")
           PYEOF
-          CNT=$(grep -c '^\t\t\telse {' techpack/display/msm/mi_disp/mi_dsi_panel.c || true)
+          # 注意：$'...' 才是真 tab，普通 '\t' 在 grep BRE 下是字面量 't'
+          CNT=$(grep -c $'^\t\t\telse {' techpack/display/msm/mi_disp/mi_dsi_panel.c || true)
           if [ "${CNT:-0}" -lt 1 ]; then
-            echo "::error::mi_dsi_panel.c brace fix verification failed"; exit 1
+            echo "::error::mi_dsi_panel.c brace fix verification failed (count=${CNT:-0})"; exit 1
           fi
           echo "-- verified: brace fix in place (${CNT} match)"
       - name: Fix missing brace in cam_flash_core.c add_req error check (no behavior change)
@@ -231,8 +232,9 @@ jobs:
           open(p, "w").write(s)
           print("-- bootinfo.c: kstrtou32 return propagated (2 sites)")
           PYEOF
-          grep -c '^\treturn kstrtou32(buf, 16, &p[ud]_reason);$' techpack/bootinfo/bootinfo.c | grep -q '^2$' \
-            || { echo "::error::bootinfo.c kstrtou32 fix verification failed"; exit 1; }
+          # 同上：$'...' 展开为真 tab；'[ud]' 在 BRE 中作字符类匹配 u/d
+          CNT=$(grep -c $'^\treturn kstrtou32(buf, 16, &p[ud]_reason);$' techpack/bootinfo/bootinfo.c || true)
+          [ "$CNT" = "2" ] || { echo "::error::bootinfo.c kstrtou32 fix verification failed (count=$CNT)"; exit 1; }
           echo "-- verified: 2 return-kstrtou32 sites in place"
       - name: Fix misleading indentation in cyttsp5_device_access.c (pure reindent)
         working-directory: kernel
