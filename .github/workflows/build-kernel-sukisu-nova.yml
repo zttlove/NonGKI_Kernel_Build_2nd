@@ -384,6 +384,70 @@ jobs:
           [ "$(grep -cE '^#define PCI_VENDOR_ID_ASIX[[:space:]]+0x9710' drivers/tty/serial/8250/8250_pci.c)" = "1" ] \
             || { echo "::error::local 0x9710 define missing or duplicated"; exit 1; }
           echo "-- verified: #undef precedes local 0x9710 define; L70 keeps 0x125b, L2680/L5801 keep 0x9710"
+      - name: Fix unused label reset_assert in dwc3-qcom.c (no behavior change)
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          # drivers/usb/dwc3/dwc3-qcom.c L732 的 reset_assert 标签在当前 defconfig 下
+          # 无任何 goto 引用（-Wunused-label）。两种成因：
+          #   a) 代码演进中删除全部 goto reset_assert，标签残留 → 删除安全
+          #   b) goto 在某个 #ifdef CONFIG_XXX 块内被当前配置排除 → 删除会在
+          #      未来启用该配置时导致 "label not found" 编译错误
+          # 脚本先扫全文（含条件编译块）确认无 goto 引用；有则报错让手动用
+          # 相同 #ifdef 包裹标签，无则删除标签行。零行为变更。
+          python3 <<'PYEOF'
+          import re, sys
+          p = "drivers/usb/dwc3/dwc3-qcom.c"
+          s = open(p).read()
+          if re.search(r'\bgoto\s+reset_assert\s*;', s):
+              sys.exit("::error::goto reset_assert exists in file (possibly under #ifdef) - "
+                       "manual review needed: wrap label with matching #ifdef or confirm "
+                       "current defconfig excludes it")
+          label_pat = re.compile(r'^reset_assert:[ \t]*\n', re.M)
+          m = label_pat.search(s)
+          if not m:
+              if "reset_assert:" not in s:
+                  print("-- dwc3-qcom.c: reset_assert label already removed, skipping")
+                  sys.exit(0)
+              sys.exit("::error::anchor '^reset_assert:' not found (source moved?)")
+          s = s[:m.start()] + s[m.end():]
+          open(p, "w").write(s)
+          print("-- dwc3-qcom.c: removed unused reset_assert label (no goto references)")
+          PYEOF
+          ! grep -q '^reset_assert:' drivers/usb/dwc3/dwc3-qcom.c \
+            || { echo "::error::reset_assert label still present"; exit 1; }
+          echo "-- verified: reset_assert label removed, no goto references in file"
+      - name: Fix array-parameter mismatch in qcacld parser_api.c (no behavior change)
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          # drivers/staging/qcacld-3.0/.../parser_api.c L6177 定义
+          # uint8_t mdie[SIR_MDIE_SIZE]，而 core/mac/src/include/parser_api.h L1056
+          # 声明 uint8_t mdie[]。C 中数组参数退化为指针，[] 与 [SIR_MDIE_SIZE]
+          # 在函数体内均为 uint8_t *，行为完全相同；Clang -Warray-parameter
+          # 只检查声明/定义边界一致性。修复：源文件定义改为 []，与头文件一致。
+          # 函数体内 mdie[0..2] / sizeof(mdie)（参数上下文恒为指针大小）不受影响。
+          python3 <<'PYEOF'
+          import sys
+          p = "drivers/staging/qcacld-3.0/core/mac/src/sys/legacy/src/utils/src/parser_api.c"
+          s = open(p).read()
+          old = "uint8_t mdie[SIR_MDIE_SIZE])"
+          new = "uint8_t mdie[])"
+          c_old, c_new = s.count(old), s.count(new)
+          if c_old == 1:
+              s = s.replace(old, new)
+              open(p, "w").write(s)
+              print("-- parser_api.c: mdie[SIR_MDIE_SIZE] -> mdie[] (matches header)")
+          elif c_new >= 1 and c_old == 0:
+              print("-- parser_api.c: already fixed, skipping")
+          else:
+              sys.exit(f"::error::mdie anchor count old={c_old} new={c_new} (source moved?)")
+          PYEOF
+          grep -q 'uint8_t mdie\[\])' drivers/staging/qcacld-3.0/core/mac/src/sys/legacy/src/utils/src/parser_api.c \
+            || { echo "::error::mdie[] fix verification failed"; exit 1; }
+          ! grep -q 'uint8_t mdie\[SIR_MDIE_SIZE\])' drivers/staging/qcacld-3.0/core/mac/src/sys/legacy/src/utils/src/parser_api.c \
+            || { echo "::error::old mdie[SIR_MDIE_SIZE] definition still present"; exit 1; }
+          echo "-- verified: mdie[] matches header declaration (array-parameter silenced)"
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
