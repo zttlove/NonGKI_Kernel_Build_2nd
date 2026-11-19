@@ -1,4 +1,4 @@
-name: Build Kernel with KernelSU (backslashxx master, no SUSFS)A
+name: Build Kernel with KernelSU (backslashxx master, no SUSFS)
 
 on:
   workflow_dispatch:
@@ -195,13 +195,28 @@ jobs:
           s = s[:i] + good + s[j:]
           R = s.find("rc = cpufreq_register_driver(&cpufreq_qcom_hw_driver);")
           C = s.find("rc = register_cpu_cycle_counter_cb(&cycle_counter_cb);")
-          assert R != -1 and C != -1 and R < C, "order verification failed"
-          print(f"-- enforced: cpufreq_register_driver(offset {R}) precedes register_cpu_cycle_counter_cb (offset {C})")
+          assert R != -1 and C != -1 and R < C, "order verification failed (in-memory)"
+          # 必须写回磁盘：只改内存变量不会改变源码，后续 shell 校验会读到旧顺序。
+          # （2026-11-19 修正版曾漏掉这一行，导致 R=710 C=704 校验失败）
+          with open(pc, "w") as f:
+              f.write(s)
+          # 读回校验：确认写回真实生效，防止以后再次漏掉 write 而静默构建出错误顺序
+          on_disk = open(pc).read()
+          R2 = on_disk.find("rc = cpufreq_register_driver(&cpufreq_qcom_hw_driver);")
+          C2 = on_disk.find("rc = register_cpu_cycle_counter_cb(&cycle_counter_cb);")
+          assert R2 != -1 and C2 != -1 and R2 < C2, \
+              "on-disk order verification failed - write-back did not take effect"
+          print(f"-- written & re-read OK: cpufreq_register_driver(offset {R2}) precedes register_cpu_cycle_counter_cb (offset {C2})")
           PYEOF
           R=$(grep -n 'cpufreq_register_driver(&cpufreq_qcom_hw_driver)' drivers/cpufreq/qcom-cpufreq-hw.c | head -1 | cut -d: -f1)
           C=$(grep -n 'register_cpu_cycle_counter_cb(&cycle_counter_cb)' drivers/cpufreq/qcom-cpufreq-hw.c | head -1 | cut -d: -f1)
           if [ -z "$R" ] || [ -z "$C" ] || [ "$R" -ge "$C" ]; then
-            echo "::error::cpufreq order verification failed (R=$R C=$C)"; exit 1
+            echo "::error::cpufreq order verification failed (R=$R C=$C)"
+            echo "-- 磁盘上实际匹配到的调用（应为 register_driver 在前）："
+            grep -nF -e 'cpufreq_register_driver(&cpufreq_qcom_hw_driver)' \
+                     -e 'register_cpu_cycle_counter_cb(&cycle_counter_cb)' \
+                     drivers/cpufreq/qcom-cpufreq-hw.c || true
+            exit 1
           fi
           echo "-- verified: cpufreq_register_driver (L$R) precedes register_cpu_cycle_counter_cb (L$C)"
 
