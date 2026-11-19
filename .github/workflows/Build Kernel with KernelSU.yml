@@ -1,4 +1,4 @@
-name: Build Kernel with KernelSU (vendor bundled SukiSU/BakaSU, Full SUSFS)
+name: Build Kernel with KernelSU (backslashxx master, no SUSFS)
 
 on:
   workflow_dispatch:
@@ -19,25 +19,26 @@ env:
   CLANG_DIR: ${{ github.workspace }}/toolchains/clang
   KERNEL_DIR: ${{ github.workspace }}/kernel
   # ---------------------------------------------------------------------------
-  # KernelSU 驱动源：使用内核树自带的 KernelSU/（BakaSU/SukiSU manual-hook 线）
+  # KernelSU 驱动源：backslashxx/KernelSU master 主线（unity build + hook 自包含）
   # ---------------------------------------------------------------------------
-  # 为什么不再 clone 外部驱动（SukiSU-Ultra / Nova / backslashxx）：
-  #   1. vendor 树根目录自带完整的 KernelSU/ 驱动仓库（kernel/ + uapi/ +
-  #      manager/），checkout 里 drivers/kernelsu 本身就是指向
-  #      ../KernelSU/kernel/ 的符号链接 —— 这是这棵树原生的驱动形态。
-  #   2. 内核源码的 #ifdef CONFIG_KSU / CONFIG_KSU_SUSFS 埋点调用的是
-  #      SukiSU/BakaSU manual-hook 符号（ksu_handle_vfs_fstat、
-  #      ksu_handle_execveat_sucompat、susfs_is_current_ksu_domain、
-  #      ksu_is_init_rc_hook_enabled 等 11 个），只有自带驱动实现它们。
-  #      换用 backslashxx（unity-build + syscall-table hook）会在 LTO 链接期
-  #      产生这 11 个 undefined symbol —— 实测构建失败，故回退。
-  #   3. 自带驱动原生带齐 5.4 兼容层：ksu_strncpy_from_user_nofault 包装、
-  #      DEFINE_STATIC_KEY_TRUE(ksu_su_compat_enabled)、Kconfig 全套
-  #      CONFIG_KSU_SUSFS* 符号、feature/selinux_hide.c 的 6 个全局符号、
-  #      kernel_compat.h —— 无需任何外部注入或 sed 适配。
-  #   4. hooking method 是 choice 单选：KSU_SUSFS（5.4 走这条，依赖内核侧
-  #      SUSFS 补丁已就位）与 KSU_MANUAL_HOOK / KSU_TRACEPOINT_HOOK 互斥。
-  # 维持默认即可：不改动驱动源码，只用自带版本。
+  # 为什么这次不再有 SUSFS，也不再需要任何驱动侧源码补丁：
+  #   1. vendor 内核树的 ksu_handle_* / susfs_* 埋点全部写在
+  #      #ifdef CONFIG_KSU_SUSFS 内（exec.c 还有 #else 走纯净 __do_execve_file）。
+  #      全树只有自带驱动 KernelSU/kernel/Kconfig 定义 CONFIG_KSU_SUSFS 符号，
+  #      star_defconfig 里也没有任何 CONFIG_KSU_SUSFS*。
+  #   2. 换成 backslashxx 主线后，驱动 Kconfig 根本没有 SUSFS 符号，且本工作流
+  #      全程不定义 CONFIG_KSU_SUSFS —— 那些埋点整段不参与编译，上一版的
+  #      11 个 LTO undefined symbol 从根源上消失。
+  #   3. backslashxx 主线自带 5.4 兼容层（kernel_compat.h 中 <5.8 的
+  #      __weak strncpy_from_user_nofault fallback），不需要 sulog 替换；
+  #      sucompat 走主线自己的 syscall-table / branch-link / LSM hook，
+  #      不依赖内核树埋点，因此也不需要 static-key 转换、Kconfig 注入等补丁。
+  #   4. 身份：KSU_PACKAGE_NAME := me.weishu.kernelsu，-DKSU_VERSION=32731。
+  #      Integrate 步骤会校验；PIN 钉住 master 一次提交，每次构建源码一致。
+  #      upgrade PIN 前请重新实机验证能否开机。
+  KSU_REPO: https://github.com/backslashxx/KernelSU.git
+  KSU_BRANCH: master
+  KSU_PIN: "ae59aa5509c39276117e15f8fedc0740e5bda7f8"
 
 jobs:
   build-kernel:
@@ -473,462 +474,60 @@ jobs:
       - name: Verify Clang
         run: ${{ env.CLANG_DIR }}/bin/clang --version
 
-      - name: Verify Bundled KernelSU (BakaSU/SukiSU manual-hook) Driver
+      - name: Integrate KernelSU (backslashxx master, no SUSFS)
         working-directory: kernel
         run: |
           set -euo pipefail
-          echo "== 使用内核树自带的 KernelSU/ 驱动（不 clone 外部驱动）=="
-          # vendor 树根目录自带完整 KernelSU/ 驱动仓库，且 drivers/kernelsu 是
-          # 指向 ../KernelSU/kernel/ 的符号链接（checkout 里原生就在）。这套
-          # BakaSU/SukiSU manual-hook 驱动与内核源码 #ifdef CONFIG_KSU_SUSFS
-          # 埋点天然配套，提供全部 11 个 manual-hook 符号。切勿删除/替换它。
-          test -L drivers/kernelsu || {
-            echo "::error::drivers/kernelsu symlink missing - vendor tree layout changed"; exit 1; }
+          echo "== 使用 backslashxx/KernelSU master 主线驱动（无 SUSFS）=="
+          # vendor 树的 ksu_handle_*/susfs_* 埋点全部在 #ifdef CONFIG_KSU_SUSFS 内；
+          # 本工作流不定义该宏，它们整段不编译。主线靠自己的 hook 机制工作，
+          # 因此这里 zero source patch：不注入 Kconfig、不改 sucompat/sulog。
+          echo "== 删除内核树自带的 SukiSU/BakaSU 驱动，换上主线 =="
+          rm -rf KernelSU
+          git clone --filter=blob:none --no-checkout -b "${{ env.KSU_BRANCH }}" \
+            "${{ env.KSU_REPO }}" KernelSU
+          git -C KernelSU fetch --depth=1 origin "${{ env.KSU_PIN }}" \
+            || git -C KernelSU fetch origin "${{ env.KSU_PIN }}"
+          git -C KernelSU checkout --detach "${{ env.KSU_PIN }}"
+          ACTUAL_SHORT="$(git -C KernelSU rev-parse --short=8 HEAD)"
+          PIN_SHORT="${{ env.KSU_PIN }}"
+          if [ "${PIN_SHORT:0:8}" != "$ACTUAL_SHORT" ]; then
+            echo "::error::KernelSU checkout ${ACTUAL_SHORT} != pinned ${PIN_SHORT}"
+            exit 1
+          fi
+          echo "KernelSU: $(git -C KernelSU log -1 --format='%h %s')"
+          echo "== 校验主线身份（me.weishu.kernelsu / KSU_VERSION 32731，无 SUSFS）=="
+          grep -Eq '^KSU_PACKAGE_NAME[[:space:]]*:=[[:space:]]*me\.weishu\.kernelsu$' KernelSU/kernel/Makefile \
+            || { echo "::error::not backslashxx mainline (KSU_PACKAGE_NAME != me.weishu.kernelsu)"; exit 1; }
+          grep -q -- '-DKSU_VERSION=32731' KernelSU/kernel/Makefile \
+            || { echo "::error::not backslashxx mainline (KSU_VERSION != 32731)"; exit 1; }
+          ! grep -rq 'com\.sukisu\.' KernelSU/kernel \
+            || { echo "::error::SukiSU source detected - expected backslashxx mainline"; exit 1; }
+          ! grep -q 'config KSU_SUSFS' KernelSU/kernel/Kconfig \
+            || { echo "::error::driver unexpectedly carries SUSFS Kconfig - source drifted"; exit 1; }
+          echo "-- backslashxx mainline identity verified (me.weishu.kernelsu, SUSFS absent)"
+          echo "== 确认主线自带 5.4 兼容层（无需源码补丁）=="
+          grep -q 'strncpy_from_user_nofault' KernelSU/kernel/kernel_compat.h \
+            || { echo "::error::kernel_compat.h missing - 5.4 build would fail"; exit 1; }
+          test -f KernelSU/kernel/Makefile \
+            || { echo "::error::KernelSU/kernel/Makefile missing (unity-build entry)"; exit 1; }
+          echo "-- 5.4 compat layer present (kernel_compat.h weak fallback); zero source patch"
+          echo "== 接线 drivers/kernelsu（checkout 里现成的符号链接）=="
+          test -L drivers/kernelsu || { echo "::error::drivers/kernelsu symlink missing"; exit 1; }
           LINK_TARGET="$(readlink drivers/kernelsu)"
           echo "-- drivers/kernelsu -> $LINK_TARGET"
           case "$LINK_TARGET" in
             *KernelSU/kernel*) ;;
             *) echo "::error::unexpected drivers/kernelsu target: $LINK_TARGET"; exit 1 ;;
           esac
-          test -f drivers/kernelsu/Kconfig \
-            || { echo "::error::drivers/kernelsu/Kconfig missing"; exit 1; }
-          test -f KernelSU/kernel/Kbuild \
-            || { echo "::error::KernelSU/kernel/Kbuild missing"; exit 1; }
+          test -f drivers/kernelsu/Makefile || { echo "::error::drivers/kernelsu/Makefile missing"; exit 1; }
           grep -q 'obj-$(CONFIG_KSU)' drivers/Makefile \
             || { echo "::error::drivers/Makefile lacks KSU object"; exit 1; }
           grep -q 'drivers/kernelsu/Kconfig' drivers/Kconfig \
             || { echo "::error::drivers/Kconfig lacks kernelsu source"; exit 1; }
-          echo "-- bundled driver wiring verified (symlink + Kbuild + Makefile + Kconfig)"
-          echo "== 确认驱动是 BakaSU/SukiSU manual-hook 线（非 backslashxx / 非 Nova）=="
-          # 身份校验：自带驱动是 BakaSU（Kconfig 里有 KSU_MANUAL_HOOK choice 与
-          # SUSFS hook 项），且提供 11 个 manual-hook 符号。若上游把驱动换成
-          # backslashxx 的 unity-build 形态，这些锚点会消失 -> 立即失败，避免
-          # 又走到 LTO 链接期 undefined symbol。
-          grep -q 'config KSU_MANUAL_HOOK' drivers/kernelsu/Kconfig \
-            || { echo "::error::bundled driver is not BakaSU manual-hook line (no KSU_MANUAL_HOOK)"; exit 1; }
-          grep -q 'config KSU_SUSFS' drivers/kernelsu/Kconfig \
-            || { echo "::error::bundled driver Kconfig lacks KSU_SUSFS"; exit 1; }
-          ! grep -q 'KSU_TAMPER_SYSCALL_TABLE' drivers/kernelsu/Kconfig \
-            || { echo "::error::backslashxx-style driver detected - incompatible with vendor manual-hook tree"; exit 1; }
-          echo "-- bundled driver identity verified (BakaSU/SukiSU manual-hook + SUSFS)"
-          echo "== 确认 11 个 manual-hook 符号由自带驱动提供 =="
-          for sym in ksu_is_init_rc_hook_enabled ksu_is_input_hook_enabled \
-                     ksu_handle_setresuid ksu_handle_sys_read ksu_handle_vfs_fstat \
-                     ksu_handle_execveat_sucompat ksu_handle_post_execveat_sucompat \
-                     susfs_is_current_ksu_domain susfs_ksu_sid susfs_priv_app_sid \
-                     ksu_handle_input_handle_event; do
-            grep -rq "$sym" KernelSU/kernel \
-              || { echo "::error::bundled driver missing manual-hook symbol $sym"; exit 1; }
-          done
-          echo "-- all 11 vendor manual-hook symbols present in bundled driver"
-          echo "== 确认内核侧 SUSFS 完整性 =="
-          test -f fs/susfs.c || { echo "::error::fs/susfs.c missing - kernel branch lacks SUSFS"; exit 1; }
-          test -f include/linux/susfs_def.h || { echo "::error::include/linux/susfs_def.h missing"; exit 1; }
-          grep -q 'CONFIG_KSU_SUSFS' fs/exec.c || { echo "::error::fs/exec.c lacks KSU_SUSFS hooks"; exit 1; }
-          grep -q 'CONFIG_KSU_SUSFS' fs/open.c || { echo "::error::fs/open.c lacks KSU_SUSFS hooks"; exit 1; }
-          grep -q 'CONFIG_KSU_SUSFS' fs/stat.c || { echo "::error::fs/stat.c lacks KSU_SUSFS hooks"; exit 1; }
-          echo "-- kernel-side SUSFS hooks verified"
-      - name: Backport sus_type/avd hiding into vendor 5.4 susfs
-        working-directory: kernel
-        run: |
-          set -euo pipefail
-          echo "== 回移植 6.6-dev 的 sus_type/avd 隐藏实现到 vendor 5.4 =="
-          # 上游 susfs4ksu（gki-android15-6.6-dev）把 BakaSU 注入的 policy 规则缓存在内核哈希表：
-          #   - susfs_add_sus_type: 注册注入的 type；app 解析该 type 的 context 时按 -EINVAL 拒绝
-          #   - susfs_add_sus_avd_allowed_by_type/susfs_spoof_avd_allowed_rcu: 记录注入前的
-          #     avd.allowed，app 走 /sys/fs/selinux/access 查询时还原为注入前的授权位
-          # vendor 5.4（susfs v2.3.0）无此实现，且 selinux 锁模型不同（policy_rwlock 而非 6.6 的
-          # RCU + selinux_policy），这里按 5.4 语义回移植内核侧存储与 services.c 过滤实现，并把
-          # selinuxfs.c/hooks.c 中 my_* 钩子的 fake_state 调用切到 susfs 过滤路径
-          if ! grep -q 'susfs_is_sus_type_rcu' fs/susfs.c; then
-            echo "-- backporting sus_type/avd hiding into vendor 5.4 susfs"
-            # 1) fs/susfs.c：sus_type / sus_avd_allowed 内核存储（照搬 6.6-dev，日志宏改用
-            #    v2.3.0 的 SUSFS_LOGE/SUSFS_LOGI，上游用 v2.4+ 才有的 *_RL 变体）
-            cat >> fs/susfs.c <<'SUSTYPE_EOF'
-            /* sus_type: backported from susfs4ksu gki-android15-6.6-dev */
-            static DEFINE_MUTEX(susfs_mutex_lock_sus_type);
-            static DEFINE_HASHTABLE(SUS_TYPE_HLIST, 10);
-            struct st_susfs_sus_type_hlist {
-            struct hlist_node                        node;
-            };
-            int susfs_add_sus_type(const char *secctx, u32 type_value) {
-            struct st_susfs_sus_type_hlist *new_entry, *tmp_entry;
-            struct hlist_node *tmp_hlist_node;
-            int err = 0;
-            mutex_lock(&susfs_mutex_lock_sus_type);
-            hash_for_each_possible_safe(SUS_TYPE_HLIST, tmp_entry, tmp_hlist_node, node, type_value) {
-            SUSFS_LOGE("secctx '%s', type_value '%u', was added before already\n",
-            secctx, type_value);
-            err = -EINVAL;
-            goto unlock;
-            }
-            new_entry = kzalloc(sizeof(struct st_susfs_sus_type_hlist), GFP_KERNEL);
-            if (!new_entry) {
-            err = -ENOMEM;
-            goto unlock;
-            }
-            hash_add_rcu(SUS_TYPE_HLIST, &new_entry->node, type_value);
-            SUSFS_LOGI("secctx '%s', type '%u', has been added to SUS_TYPE_HLIST\n",
-            secctx, type_value);
-            unlock:
-            mutex_unlock(&susfs_mutex_lock_sus_type);
-            return err;
-            }
-            bool susfs_is_sus_type_rcu(u32 type_value) {
-            struct st_susfs_sus_type_hlist *entry = NULL;
-            hash_for_each_possible_rcu(SUS_TYPE_HLIST, entry, node, type_value) {
-            return true;
-            }
-            return false;
-            }
-            static DEFINE_MUTEX(susfs_mutex_lock_sus_avd_allowed_hlist);
-            static DEFINE_HASHTABLE(SUS_AVD_ALLOWED_HLIST, 18);
-            struct susfs_sus_av_rule {
-            struct hlist_node node;
-            u32 s_type;
-            u32 t_type;
-            u32 c_type;
-            u32 orig_avd_allowed;
-            };
-            static inline u32 susfs_av_rule_hash(u32 ssid, u32 tsid, u16 tclass)
-            {
-            u32 h;
-            h = hash_32(ssid, 32);
-            h ^= rol32(hash_32(tsid, 32), 13);
-            h ^= rol32(hash_32((u32)tclass, 32), 19);
-            h += h << 13;
-            h ^= h >> 7;
-            h += h << 17;
-            h ^= h >> 5;
-            return h;
-            }
-            int susfs_add_sus_avd_allowed_by_type(u32 s_type, u32 t_type, u32 c_type, u32 orig_avd_allowed)
-            {
-            struct susfs_sus_av_rule *entry, *tmp_entry;
-            struct hlist_node *tmp_hlist_node;
-            int err = 0;
-            u32 key;
-            mutex_lock(&susfs_mutex_lock_sus_avd_allowed_hlist);
-            entry = kzalloc(sizeof(*entry), GFP_ATOMIC);
-            if (!entry) {
-            err = -ENOMEM;
-            goto unlock;
-            }
-            key = susfs_av_rule_hash(s_type, t_type, c_type);
-            hash_for_each_possible_safe(SUS_AVD_ALLOWED_HLIST, tmp_entry, tmp_hlist_node, node, key) {
-            if (tmp_entry->s_type == s_type &&
-                tmp_entry->t_type == t_type &&
-                tmp_entry->c_type == c_type)
-            {
-            /* Do not apply any new orig_avd_allowed for matched entry. */
-            kfree(entry);
-            goto unlock;
-            }
-            }
-            entry->s_type = s_type;
-            entry->t_type = t_type;
-            entry->c_type = c_type;
-            entry->orig_avd_allowed = orig_avd_allowed;
-            hash_add_rcu(SUS_AVD_ALLOWED_HLIST, &entry->node, key);
-            SUSFS_LOGI("av_rule '%u %u %u %u' has been added to SUS_AVD_ALLOWED_HLIST\n",
-            s_type, t_type, c_type, orig_avd_allowed);
-            unlock:
-            mutex_unlock(&susfs_mutex_lock_sus_avd_allowed_hlist);
-            return err;
-            }
-            void susfs_spoof_avd_allowed_rcu(u32 s_type, u32 t_type, u32 c_type, u32 *avd_allowed)
-            {
-            struct susfs_sus_av_rule *entry;
-            u32 key = susfs_av_rule_hash(s_type, t_type, c_type);
-            hash_for_each_possible_rcu(SUS_AVD_ALLOWED_HLIST, entry, node, key) {
-            if (entry->s_type == s_type &&
-                entry->t_type == t_type &&
-                entry->c_type == c_type)
-            {
-            *avd_allowed = entry->orig_avd_allowed;
-            return;
-            }
-            }
-            }
-          SUSTYPE_EOF
-            # 2) security/selinux/ss/services.c：5.4 适配的过滤实现。与 6.6 原版的差异：
-            #    - 6.6 用 rcu_read_lock + rcu_dereference(selinux_state.policy)，5.4 用
-            #      read_lock(&selinux_state.ss->policy_rwlock) + 内嵌 policydb/sidtab
-            #    - 5.4 的 context_to_sid 查找依赖 context->hash，需先 context_add_hash()
-            #    - string_to_context_struct 按本内核用 hashtab_search(pol->p_xxx.table, ...)
-            cat >> security/selinux/ss/services.c <<'SUSAVD_EOF'
-            /* sus_type hiding: backported from susfs4ksu gki-android15-6.6-dev (5.4 rwlock model) */
-            #ifdef CONFIG_KSU_SUSFS
-            extern bool susfs_is_sus_type_rcu(u32 sid);
-            extern void susfs_spoof_avd_allowed_rcu(u32 s_type, u32 t_type, u32 c_type, u32 *avd_allowed);
-            static int susfs_string_to_context_struct(struct policydb *pol,
-                struct sidtab *sidtabp,
-                char *scontext,
-                struct context *ctx,
-                u32 def_sid)
-            {
-            struct role_datum *role;
-            struct type_datum *typdatum;
-            struct user_datum *usrdatum;
-            char *scontextp, *p, oldc;
-            int rc = 0;
-            context_init(ctx);
-            /* Parse the security context. */
-            rc = -EINVAL;
-            scontextp = (char *) scontext;
-            /* Extract the user. */
-            p = scontextp;
-            while (*p && *p != ':')
-            p++;
-            if (*p == 0)
-            goto out;
-            *p++ = 0;
-            usrdatum = hashtab_search(pol->p_users.table, scontextp);
-            if (!usrdatum)
-            goto out;
-            ctx->user = usrdatum->value;
-            /* Extract role. */
-            scontextp = p;
-            while (*p && *p != ':')
-            p++;
-            if (*p == 0)
-            goto out;
-            *p++ = 0;
-            role = hashtab_search(pol->p_roles.table, scontextp);
-            if (!role)
-            goto out;
-            ctx->role = role->value;
-            /* Extract type. */
-            scontextp = p;
-            while (*p && *p != ':')
-            p++;
-            oldc = *p;
-            *p++ = 0;
-            typdatum = hashtab_search(pol->p_types.table, scontextp);
-            if (!typdatum || typdatum->attribute)
-            goto out;
-            if (likely(susfs_is_sus_type_rcu(typdatum->value)))
-            goto out;
-            ctx->type = typdatum->value;
-            rc = mls_context_to_sid(pol, oldc, p, ctx, sidtabp, def_sid);
-            if (rc)
-            goto out;
-            /* Check the validity of the new context. */
-            rc = -EINVAL;
-            if (!policydb_context_isvalid(pol, ctx))
-            goto out;
-            rc = 0;
-            out:
-            if (rc)
-            context_destroy(ctx);
-            return rc;
-            }
-            static int susfs_security_context_to_sid_core(const char *scontext, u32 scontext_len,
-            u32 *sid, u32 def_sid, gfp_t gfp_flags,
-            int force)
-            {
-            struct policydb *policydb;
-            struct sidtab *sidtab;
-            char *scontext2, *str = NULL;
-            struct context context;
-            int rc = 0;
-            /* An empty security context is never valid. */
-            if (!scontext_len)
-            return -EINVAL;
-            /* Copy the string to allow changes and ensure a NUL terminator */
-            scontext2 = kmemdup_nul(scontext, scontext_len, gfp_flags);
-            if (!scontext2)
-            return -ENOMEM;
-            if (!selinux_state.initialized) {
-            int i;
-            for (i = 1; i < SECINITSID_NUM; i++) {
-            if (!strcmp(initial_sid_to_string[i], scontext2)) {
-            *sid = i;
-            goto out;
-            }
-            }
-            *sid = SECINITSID_KERNEL;
-            goto out;
-            }
-            *sid = SECSID_NULL;
-            if (force) {
-            /* Save another copy for storing in uninterpreted form */
-            rc = -ENOMEM;
-            str = kstrdup(scontext2, gfp_flags);
-            if (!str)
-            goto out;
-            }
-            read_lock(&selinux_state.ss->policy_rwlock);
-            policydb = &selinux_state.ss->policydb;
-            sidtab = selinux_state.ss->sidtab;
-            rc = susfs_string_to_context_struct(policydb, sidtab, scontext2,
-                  &context, def_sid);
-            if (rc == -EINVAL && force) {
-            context.str = str;
-            context.len = strlen(str) + 1;
-            str = NULL;
-            } else if (rc)
-            goto out_unlock;
-            rc = context_add_hash(policydb, &context);
-            if (rc)
-            goto out_unlock;
-            rc = sidtab_context_to_sid(sidtab, &context, sid);
-            context_destroy(&context);
-            out_unlock:
-            read_unlock(&selinux_state.ss->policy_rwlock);
-            out:
-            kfree(scontext2);
-            kfree(str);
-            return rc;
-            }
-            int susfs_security_context_to_sid(const char *scontext, u32 scontext_len, u32 *sid,
-                gfp_t gfp)
-            {
-            return susfs_security_context_to_sid_core(scontext, scontext_len,
-                sid, SECSID_NULL, gfp, 0);
-            }
-            int susfs_security_context_str_to_sid(const char *scontext, u32 *sid, gfp_t gfp)
-            {
-            return susfs_security_context_to_sid(scontext, strlen(scontext),
-                   sid, gfp);
-            }
-            void susfs_security_compute_av_user(u32 ssid,
-                  u32 tsid,
-                  u16 tclass,
-                  struct av_decision *avd)
-            {
-            struct policydb *policydb;
-            struct sidtab *sidtab;
-            struct context *scontext = NULL, *tcontext = NULL;
-            read_lock(&selinux_state.ss->policy_rwlock);
-            avd_init(&selinux_state, avd);
-            if (!selinux_state.initialized)
-            goto allow;
-            policydb = &selinux_state.ss->policydb;
-            sidtab = selinux_state.ss->sidtab;
-            scontext = sidtab_search(sidtab, ssid);
-            if (!scontext) {
-            pr_err("SELinux: %s:  unrecognized SID %d\n",
-                   __func__, ssid);
-            goto out;
-            }
-            /* permissive domain? */
-            if (ebitmap_get_bit(&policydb->permissive_map, scontext->type))
-            avd->flags |= AVD_FLAGS_PERMISSIVE;
-            tcontext = sidtab_search(sidtab, tsid);
-            if (!tcontext) {
-            pr_err("SELinux: %s:  unrecognized SID %d\n",
-                   __func__, tsid);
-            goto out;
-            }
-            if (unlikely(!tclass)) {
-            if (policydb->allow_unknown)
-            goto allow;
-            goto out;
-            }
-            context_struct_compute_av(policydb, scontext, tcontext, tclass, avd,
-              NULL);
-            susfs_spoof_avd_allowed_rcu(scontext->type, tcontext->type, tclass,
-                &avd->allowed);
-             out:
-            read_unlock(&selinux_state.ss->policy_rwlock);
-            return;
-            allow:
-            avd->allowed = 0xffffffff;
-            goto out;
-            }
-            #endif // #ifdef CONFIG_KSU_SUSFS
-          SUSAVD_EOF
-            # 3) selinuxfs.c / hooks.c：my_* 钩子由 fake_state 路径切到 susfs 过滤路径
-            #    （fake_state 浅拷贝的 initialized 恒为 false，标准接口会退化为全放行/假 SID）
-            perl -0pi -e 's/security_context_to_sid\(&fake_state, buf, size, &sid, GFP_KERNEL\);/susfs_security_context_to_sid(buf, size, &sid, GFP_KERNEL);/; s/security_sid_to_context\(&fake_state, sid, &canon, &len\);/security_sid_to_context(&selinux_state, sid, &canon, &len);/; s/security_context_str_to_sid\(&fake_state, scon, &ssid, GFP_KERNEL\);/susfs_security_context_str_to_sid(scon, &ssid, GFP_KERNEL);/; s/security_context_str_to_sid\(&fake_state, tcon, &tsid, GFP_KERNEL\);/susfs_security_context_str_to_sid(tcon, &tsid, GFP_KERNEL);/; s/security_compute_av_user\(&fake_state, ssid, tsid, tclass, &avd\);/susfs_security_compute_av_user(ssid, tsid, tclass, &avd);/; s/security_context_to_sid\(&fake_state, value, size,\s*&sid, GFP_KERNEL\);/susfs_security_context_to_sid(value, size, &sid, GFP_KERNEL);/s' \
-              security/selinux/selinuxfs.c security/selinux/hooks.c
-            # 4) 落盘校验
-            grep -q 'int susfs_add_sus_type(const char \*secctx' fs/susfs.c \
-              && grep -q 'int susfs_add_sus_avd_allowed_by_type(u32 s_type' fs/susfs.c \
-              && grep -q 'bool susfs_is_sus_type_rcu(u32 type_value)' fs/susfs.c \
-              && grep -q 'void susfs_spoof_avd_allowed_rcu' fs/susfs.c \
-              && grep -q 'void susfs_security_compute_av_user(u32 ssid' security/selinux/ss/services.c \
-              && grep -q 'susfs_string_to_context_struct' security/selinux/ss/services.c \
-              && grep -q 'susfs_security_context_to_sid(buf, size' security/selinux/selinuxfs.c \
-              && grep -q 'susfs_security_compute_av_user(ssid' security/selinux/selinuxfs.c \
-              && grep -q 'susfs_security_context_to_sid(value, size' security/selinux/hooks.c \
-              && ! grep -q 'security_compute_av_user(&fake_state' security/selinux/selinuxfs.c \
-              || { echo "::error::sus_type backport verification failed"; exit 1; }
-          else
-            echo "-- sus_type backport already present, skipping"
-          fi
-      - name: Cover Shizuku(shell) in SELinux status fake page
-        working-directory: kernel
-        run: |
-          set -euo pipefail
-          echo "== 让 Shizuku(shell, uid 2000) 也读到伪造的 status 页 =="
-          # vendor 的 my_sel_open_handle_status 只在 uid>=10000 时换成假页
-          # （sequence=2 / policyload=1 的 stock 形态）。春秋若以 Shizuku 通道
-          # 读取 /sys/fs/selinux/status，uid=2000 会绕过假页看到真实页，
-          # 真实页的 sequence/policyload 被策略注入抬高 → "status.sequence/policyload"。
-          # 这里只额外放行 shell(2000)，不碰 uid 0/1000：init、system_server
-          # 的 libselinux 仍读真实页，避免影响系统策略变更监听。
-          F=security/selinux/selinuxfs.c
-          test -f "$F" || { echo "::error::$F not found"; exit 1; }
-          grep -q 'current_uid()\.val >= 10000 && ksu_selinux_hide_enabled' "$F" \
-            || { echo "::error::status hook anchor not found (vendor layout changed?)"; exit 1; }
-          sed -i 's/current_uid()\.val >= 10000 && ksu_selinux_hide_enabled/(current_uid().val >= 10000 || current_uid().val == 2000) \&\& ksu_selinux_hide_enabled/' "$F"
-          grep -q 'current_uid().val == 2000) && ksu_selinux_hide_enabled' "$F" \
-            || { echo "::error::shell status spoof patch failed"; exit 1; }
-          ! grep -q 'current_uid()\.val >= 10000 && ksu_selinux_hide_enabled' "$F" \
-            || { echo "::error::old status gate still present"; exit 1; }
-          echo "-- status fake page now covers app uids + shell(2000)"
-      - name: Patch SELinux status.c (policyload backfill)
-        working-directory: kernel
-        run: |
-          set -euo pipefail
-          echo "== 修复：status 页惰性分配导致真实页 policyload 永远为 0 =="
-          # 5.4 状态页在首次 open/mmap /sys/fs/selinux/status 时才分配
-          # （ss/status.c selinux_kernel_status_page 惰性 alloc）；init 加载
-          # sepolicy 触发的 selinux_status_update_policyload(seqno=1) 当时页
-          # 不存在，更新被静默丢弃，真实页从此永远 policyload=0。对 enforcing
-          # 系统这是不可能状态（policy 从未加载不可能 enforcing），mainline 注释
-          # 亦声明该值 "never zero"——检测器（春秋 status.sequence/policyload 项）
-          # 以 root 读真实页即报篡改。修复：update_policyload 无论页是否存在都
-          # 记录 seqno，惰性分配时回填；两个函数同持 status_lock，无竞态。
-          STATUS_C=security/selinux/ss/status.c
-          test -f "$STATUS_C" || { echo "::error::$STATUS_C not found"; exit 1; }
-          if grep -q 'selinux_last_policyload' "$STATUS_C"; then
-            echo "-- policyload backfill already present, skipping"
-          else
-            python3 - "$STATUS_C" <<'PYEOF'
-          import sys
-          p = sys.argv[1]
-          s = open(p).read()
-          a = '#include "services.h"\n'
-          assert s.count(a) == 1, 'include anchor'
-          s = s.replace(a, a + '\n/* latest policyload seqno, for status page lazy-allocation backfill */\nstatic int selinux_last_policyload;\n')
-          key = 'selinux_status_update_policyload'
-          lock = 'mutex_lock(&state->ss->status_lock);'
-          i = s.index(key)
-          j = s.index(lock, i)
-          end = j + len(lock)
-          s = s[:end] + '\n\tselinux_last_policyload = seqno;' + s[end:]
-          q = 'status->sequence = 0;'
-          assert s.count(q) == 1, 'sequence anchor'
-          s = s.replace(q, 'status->sequence = selinux_last_policyload * 2;')
-          z = 'status->policyload = 0;'
-          assert s.count(z) == 1, 'lazy alloc anchor'
-          s = s.replace(z, 'status->policyload = selinux_last_policyload;')
-          open(p, 'w').write(s)
-          print('policyload backfill patched')
-          PYEOF
-            grep -q 'static int selinux_last_policyload;' "$STATUS_C" \
-              && grep -q 'status->policyload = selinux_last_policyload;' "$STATUS_C" \
-              && grep -q 'status->sequence = selinux_last_policyload \* 2;' "$STATUS_C" \
-              && grep -q 'selinux_last_policyload = seqno;' "$STATUS_C" \
-              && ! grep -q 'status->policyload = 0;' "$STATUS_C" \
-              && ! grep -q 'status->sequence = 0;' "$STATUS_C" \
-              || { echo "::error::policyload backfill patch verification failed"; exit 1; }
-            echo "-- policyload backfill patched & verified"
-          fi
-      - name: Configure Kernel (full SUSFS features)
+          echo "-- driver wiring verified (symlink + Makefile + Kconfig)"
+          echo "-- NOTE: CONFIG_KSU_SUSFS intentionally stays undefined; vendor manual-hook hooks remain dormant"
+      - name: Configure Kernel (backslashxx mainline, no SUSFS)
         working-directory: kernel
         run: |
           set -euo pipefail
@@ -938,51 +537,31 @@ jobs:
                  CLANG_TRIPLE=aarch64-linux-gnu- \
                  CROSS_COMPILE=aarch64-linux-gnu- \
                  CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
-          echo "== 直接向 defconfig 追加 SUSFS 配置 =="
+          echo "== 清洗 defconfig 全角括号（上游腐烂，会静默关闭 CONFIG_MIHW）=="
           DEFCONFIG_PATH="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
           test -f "$DEFCONFIG_PATH" || { echo "::error::defconfig not found at $DEFCONFIG_PATH"; exit 1; }
-          # 上游 defconfig 首行混入全角括号（"（CONFIG_MIHW=y"），kconfig 会警告并丢弃该行，
-          # 导致小米 millet 驱动（drivers/mihw）被静默关闭，这里剥离全角括号修复
           sed -i 's/\xEF\xBC\x88//g; s/\xEF\xBC\x89//g' "$DEFCONFIG_PATH"
           grep -q '^CONFIG_MIHW=y' "$DEFCONFIG_PATH" \
             || { echo "::error::defconfig sanitize failed (MIHW line)"; exit 1; }
-          # BakaSU 自带 Kconfig 已含全套 CONFIG_KSU_SUSFS* 符号，这里向 defconfig
-          # 追加一遍确保开启；KSU_SUSFS 同时是 hooking method choice 的选中项。
-          for sym in KSU KSU_SUSFS KSU_SUSFS_SUS_PATH KSU_SUSFS_SUS_MOUNT KSU_SUSFS_SUS_KSTAT \
-                     KSU_SUSFS_SPOOF_UNAME KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
-                     KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG KSU_SUSFS_OPEN_REDIRECT \
-                     KSU_SUSFS_SUS_MAP; do
-            echo "CONFIG_${sym}=y" >> "$DEFCONFIG_PATH"
-          done
-          grep -q 'CONFIG_KSU_SUSFS_SUS_MAP=y' "$DEFCONFIG_PATH" \
-            || { echo "::error::defconfig SUSFS append failed"; exit 1; }
+          echo "== 确保 defconfig 不含任何 CONFIG_KSU_SUSFS* =="
+          # 关键：绝不定义 CONFIG_KSU_SUSFS。vendor 内核树的埋点全部在该宏下，
+          # 一旦定义就会在 LTO 链接期产生 11 个 manual-hook 符号 undefined。
+          # backslashxx 主线不需要这些埋点（自带 syscall/branch/LSM hook）。
+          ! grep -q '^CONFIG_KSU_SUSFS' "$DEFCONFIG_PATH" \
+            || { echo "::error::defconfig must not contain CONFIG_KSU_SUSFS"; exit 1; }
           echo "== 启用 pstore ramoops（异常开机取证：/sys/fs/pstore/console-ramoops-*）=="
           for sym in PSTORE PSTORE_RAM PSTORE_CONSOLE; do
             echo "CONFIG_${sym}=y" >> "$DEFCONFIG_PATH"
           done
           echo "== 生成 defconfig =="
           make O=out ARCH=arm64 "${{ env.DEFCONFIG_NAME }}"
-          echo "== 配置 KernelSU (BakaSU/SukiSU)：KSU_SUSFS hooking method + SUSFS 全功能 =="
-          # vendor 自带驱动（BakaSU）的 hooking method 是 choice 单选：
-          #   KSU_SUSFS / KSU_MANUAL_HOOK / KSU_TRACEPOINT_HOOK 三选一。
-          # 5.4 非 GKI 树走 KSU_SUSFS 这一支（依赖内核侧 SUSFS 补丁，已就位）；
-          # 它同时启用内核树 #ifdef CONFIG_KSU_SUSFS 的埋点与驱动侧 SUSFS 逻辑。
-          # 没有 backslashxx 的 KSU_LSM_SECURITY_HOOKS / TAMPER_SYSCALL_TABLE
-          # 等符号，那些 --disable 会写成无效 =n，故全部移除。
+          echo "== 配置 KernelSU 主线：保持主线默认 hook，关闭调试指纹 =="
+          # hook 方式全部保留主线 Kconfig 默认值（KSU_LSM_SECURITY_HOOKS=y，
+          # KSU_TAMPER_SYSCALL_TABLE / KSU_HACK_ARM64_BRANCH_LINK=n），不强行改写，
+          # 最大程度贴合 backslashxx 主线。SUSFS 相关符号一概不设置。
           scripts/config --file out/.config \
             --enable  KSU \
-            --enable  KSU_SUSFS \
-            --enable  KSU_SUSFS_SUS_PATH \
-            --enable  KSU_SUSFS_SUS_MOUNT \
-            --enable  KSU_SUSFS_SUS_KSTAT \
-            --enable  KSU_SUSFS_SPOOF_UNAME \
-            --disable KSU_SUSFS_ENABLE_LOG \
-            --enable  KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
-            --enable  KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
-            --enable  KSU_SUSFS_OPEN_REDIRECT \
-            --enable  KSU_SUSFS_SUS_MAP \
             --disable KSU_DEBUG \
-            --disable KSU_TOOLKIT_SUPPORT \
             --enable  KALLSYMS_ALL \
             --disable UAPI_HEADER_TEST \
             --disable HEADERS_INSTALL \
@@ -992,34 +571,24 @@ jobs:
             --set-str LOCALVERSION ""
           grep -q '^CONFIG_IKCONFIG_PROC=y' out/.config \
           && { echo "::error::/proc/config.gz exposed - any app can grep CONFIG_KSU from it"; exit 1; } || true
-
-          # /proc/version 不受 SUSFS SPOOF_UNAME 伪造，版本串带 susfs 等字样会被
-          # 春秋/Momo 类检测直接读出；强制保持空串，内核串回归原厂形态
           make O=out ARCH=arm64 olddefconfig
-          echo "== 校验 SUSFS 配置生效 =="
-          echo "-- KSU/SUSFS/依赖 当前状态 --"
-          grep -nE '^CONFIG_(KSU|KSU_SUSFS|PSTORE|THREAD_INFO_IN_TASK|OVERLAY_FS)' out/.config || true
-          echo "-- Kconfig 中的 SUSFS choice 定义 --"
-          grep -n -A3 'config KSU_SUSFS$' drivers/kernelsu/Kconfig || true
-          for sym in KSU KSU_SUSFS KSU_SUSFS_SUS_PATH KSU_SUSFS_SUS_KSTAT \
-                     KSU_SUSFS_SPOOF_UNAME KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
-                     KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG KSU_SUSFS_OPEN_REDIRECT \
-                     KSU_SUSFS_SUS_MAP PSTORE PSTORE_RAM PSTORE_CONSOLE; do
-            grep -q "^CONFIG_${sym}=y" out/.config || { echo "::error::CONFIG_${sym} not enabled"; exit 1; }
+          echo "== 校验配置 =="
+          echo "-- KSU/PSTORE/依赖 当前状态 --"
+          grep -nE '^CONFIG_(KSU|PSTORE|THREAD_INFO_IN_TASK|OVERLAY_FS)' out/.config || true
+          grep -q '^CONFIG_KSU=y' out/.config \
+            || { echo "::error::CONFIG_KSU not enabled"; exit 1; }
+          for sym in PSTORE PSTORE_RAM PSTORE_CONSOLE; do
+            grep -q "^CONFIG_${sym}=y" out/.config \
+              || { echo "::error::CONFIG_${sym} not enabled"; exit 1; }
           done
-          # hooking method 必须单选命中 KSU_SUSFS；其余两项须为 n（choice 互斥，
-          # 若出现两个 =y 说明 choice 被破坏，埋点会双重触发）
-          grep -q '^CONFIG_KSU_MANUAL_HOOK=y' out/.config \
-            && { echo "::error::KSU_MANUAL_HOOK must stay off when KSU_SUSFS is selected"; exit 1; } || true
-          grep -q '^CONFIG_KSU_TRACEPOINT_HOOK=y' out/.config \
-            && { echo "::error::KSU_TRACEPOINT_HOOK must stay off on non-GKI 5.4 tree"; exit 1; } || true
-          # SUS_MOUNT 只影响挂载隐藏，缺失不阻断构建，日志保留真实状态
-          grep -q '^CONFIG_KSU_SUSFS_SUS_MOUNT=y' out/.config \
-            || echo "::warning::CONFIG_KSU_SUSFS_SUS_MOUNT is off - mount hiding missing, see config dump above"
-          grep -q '^CONFIG_KSU_SUSFS_ENABLE_LOG=y' out/.config \
-            && { echo "::error::SUSFS logging must stay off (dmesg fingerprint)"; exit 1; } || true
+          # SUSFS 必须全程缺席，否则 vendor manual-hook 埋点复活 -> LTO undefined symbol
+          grep -q '^CONFIG_KSU_SUSFS' out/.config \
+            && { echo "::error::CONFIG_KSU_SUSFS must stay off (breaks LTO link)"; exit 1; } || true
+          grep -q '^CONFIG_KSU_DEBUG=y' out/.config \
+            && { echo "::error::KSU_DEBUG must stay off (dmesg fingerprint)"; exit 1; } || true
           grep -q '^CONFIG_LOCALVERSION_AUTO=y' out/.config \
             && { echo "::error::LOCALVERSION_AUTO must stay off (uname -r would gain -g<sha>)"; exit 1; } || true
+          echo "-- verified: KSU on, SUSFS absent, no debug fingerprints"
       - name: 修复编译警告
         working-directory: kernel
         run: |
@@ -1103,7 +672,7 @@ jobs:
           ### AnyKernel setup
           # global properties
           properties() { '
-          kernel.string=Edwin KernelSU (vendor SukiSU/BakaSU) Full SUSFS for Xiaomi 11 Ultra / Pro (star)
+          kernel.string=Edwin KernelSU (backslashxx master) for Xiaomi 11 Ultra / Pro (star)
           do.devicecheck=1
           do.modules=0
           do.systemless=1
@@ -1134,9 +703,9 @@ jobs:
           ## end boot install
           AK3
           chmod +x anykernel.sh
-          zip -r9 "../${{ env.DEVICE_CODENAME }}-KernelSU-SUSFS-Full-${TIME}.zip" ./*
+          zip -r9 "../${{ env.DEVICE_CODENAME }}-KernelSU-Backslashxx-${TIME}.zip" ./*
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: star-KernelSU-SUSFS-Full
-          path: ${{ env.DEVICE_CODENAME }}-KernelSU-SUSFS-Full-*.zip
+          name: star-KernelSU-Backslashxx
+          path: ${{ env.DEVICE_CODENAME }}-KernelSU-Backslashxx-*.zip
