@@ -1,4 +1,4 @@
-name: Build Kernel with KernelSU (backslashxx master, no SUSFS)
+name: Build Kernel with KernelSU (backslashxx master, no SUSFS)A
 
 on:
   workflow_dispatch:
