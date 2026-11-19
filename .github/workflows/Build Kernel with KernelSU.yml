@@ -306,7 +306,7 @@ jobs:
           old3 = ("\t\t\t\t\tfor (j = 0; j < tx_num; j++)\n"
                   "\t\t\t\t\t\tindex = prepare_print_data(\n"
                   "\t\t\t\t\t\t\tout_buf,\n"
-                  "\t\t\t&cmcp_info->cm_sensor_row_delta[j*rx_num+i-1],\n"
+                  "\t\t\t\t&cmcp_info->cm_sensor_row_delta[j*rx_num+i-1],\n"
                   "\t\t\t\t\t\t\tindex, 1);\n"
                   "\t\t\t\t\t\tindex = prepare_print_string(\n"
                   "\t\t\t\t\t\t\tout_buf,\n"
