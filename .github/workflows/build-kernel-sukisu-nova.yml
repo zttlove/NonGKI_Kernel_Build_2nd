@@ -1,5 +1,32 @@
 name: Build Kernel with SukiSU Nova (Full SUSFS)
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 卡第二屏排查手册 v2
+#
+# 已确认事实：selinux_hide=off + ksu_preinit=off（最保守基线）仍然卡第二屏
+#   ⇒ 与 SELinux 假状态页、preinit runner 都无关。剩下的可疑面只有两块：
+#   (a) 每次构建都无条件执行的那 10 个 vendor 补丁（cpufreq 重排 + 9 个告警修补）
+#   (b) vendor 源树本身（f4c3fdd4，注释里自己写着"尚未经开机验证"的合并 tip）
+#
+# 本版给出两条正交的排查轴 + 一条换源树的轴：
+#   patch_mode=minimal    一行 vendor 补丁都不打，只做 KSU/SUSFS 内联
+#   cpufreq_order=vendor  尊重源码顺序；当前 tip 里的顺序是 callback 优先
+#                         （vendor 10/24 的提交"修复 qcom cpufreq fast-switch
+#                         初始化时序"），而工作流原本每次强制反着改回去
+#   kernel_pin=<sha>      换一棵源树，用来验证"合并之前能不能开机"
+#
+# 推荐四轮：
+#   1) minimal + cpufreq_order=vendor      → 能开机：元凶在 (a)，进 3)
+#   2) minimal + kernel_pin=<f4c3fdd4 父>  → 还挂：元凶在 (b) 或 KSU 内联本身
+#   3) full    + cpufreq_order=vendor      → 挂：cpufreq 重排就是凶手
+#   4) full    + cpufreq_order=forced      → 对照组，复现"卡第二屏"
+#
+# 抓日志（比任何瞎猜都值钱）：长按电源强制重启后，用 TWRP 或任一能开机的
+# boot.img 起来再读上一个内核留下的 pstore：
+#   adb shell cat /sys/fs/pstore/console-ramoops-0 | tail -200
+# 本工作流已开 PSTORE_RAM/PSTORE_CONSOLE，panic 和 initcall 死锁都有机会留下栈。
+# ─────────────────────────────────────────────────────────────────────────────
+
 on:
   workflow_dispatch:
     inputs:
@@ -11,6 +38,42 @@ on:
         options:
           - "false"
           - "true"
+      selinux_hide:
+        description: "SELinux 假状态页/上下文过滤（春秋类检测对抗）。卡第二屏时先置 off 做基线"
+        required: false
+        default: "off"
+        type: choice
+        options:
+          - "off"
+          - "on"
+      ksu_preinit:
+        description: "SukiSU preinit runner（由 headers_install 触发）。只在关掉它仍卡时才需要打开"
+        required: false
+        default: "off"
+        type: choice
+        options:
+          - "off"
+          - "on"
+      patch_mode:
+        description: "minimal=只做 KSU/SUSFS，vendor 树一行不碰 / full=现有全套补丁"
+        required: false
+        default: "minimal"
+        type: choice
+        options:
+          - "minimal"
+          - "full"
+      cpufreq_order:
+        description: "仅 patch_mode=full 生效。vendor=保持源码顺序 / forced=强改回 driver 优先（旧 pin 时代做法）"
+        required: false
+        default: "vendor"
+        type: choice
+        options:
+          - "vendor"
+          - "forced"
+      kernel_pin:
+        description: "覆盖 vendor pin，留空用 env 的 f4c3fdd4。填它的父提交可验证“合并前是否可开机”"
+        required: false
+        default: ""
 
 env:
   KERNEL_REPO: zttlove/android_kernel_xiaomi_sm8350-hyperos
@@ -63,16 +126,30 @@ jobs:
       - name: Verify Kernel Commit & Clean Workspace
         working-directory: kernel
         run: |
+          PIN="${{ inputs.kernel_pin }}"
+          PIN=${PIN:-$KERNEL_COMMIT_PIN}
+          echo "target pin: $PIN"
+          if [ "$(git rev-parse HEAD)" != "$(git rev-parse "$PIN^{commit}" 2>/dev/null || echo none)" ]; then
+            echo "-- pin 不在本地 clone，按 sha 单独取一次（depth=1）"
+            git fetch --depth=1 origin "$PIN" || { echo "::error::无法获取 $PIN：该提交可能已被上游抹除"; exit 1; }
+            git checkout -q --detach FETCH_HEAD || exit 1
+          fi
           git reset --hard HEAD
           git clean -fdx
-          SHORT_SHA=$(git rev-parse --short=8 HEAD)
-          echo "Kernel: $(git log -1 --format='%h %s')"
-          if [ "$SHORT_SHA" != "$KERNEL_COMMIT_PIN" ]; then
-            echo "::error::vendor kernel source drifted: branch tip ${SHORT_SHA} != pinned ${KERNEL_COMMIT_PIN}"
-            echo "The 'dynamic' branch was moved/rewritten. Update KERNEL_COMMIT_PIN in workflow env ONLY after a build from the new tip is verified to boot."
+          CUR=$(git rev-parse --short=8 HEAD)
+          WANT=$(git rev-parse --short=8 "$PIN")
+          echo "Kernel : $(git log -1 --format='%h %s')"
+          echo "Parents: $(git log -1 --format='%p')"
+          echo "HEAD=$CUR PIN=$WANT"
+          if [ "$CUR" != "$WANT" ]; then
+            echo "::error::HEAD ($CUR) 与 pin ($WANT) 不一致"
             exit 1
           fi
+          if [ -n "$(git rev-parse --short=8 HEAD^1 2>/dev/null)" ]; then
+            echo "-- 父提交（下一轮可填进 kernel_pin 做对照）: $(git rev-parse --short=8 HEAD^1)"
+          fi
       - name: Enforce cpufreq init order (bootloop fix, unconditional)
+        if: inputs.patch_mode == 'full' && inputs.cpufreq_order == 'forced'
         working-directory: kernel
         run: |
           set -euo pipefail
@@ -121,6 +198,7 @@ jobs:
           fi
           echo "-- verified: cpufreq_register_driver (L$R) precedes register_cpu_cycle_counter_cb (L$C)"
       - name: Silence min() type-mismatch warning in tcp_output.c
+        if: inputs.patch_mode == 'full'
         working-directory: kernel
         run: |
           set -euo pipefail
@@ -136,6 +214,7 @@ jobs:
             || { echo "::error::min_t replacement failed"; exit 1; }
           echo "-- tcp_output.c min() type-mismatch silenced (min_t(u64, ...))"
       - name: Fix misleading indentation in mi_dsi_panel.c (no behavior change)
+        if: inputs.patch_mode == 'full'
         working-directory: kernel
         run: |
           set -euo pipefail
@@ -170,6 +249,7 @@ jobs:
           fi
           echo "-- verified: brace fix in place (${CNT} match)"
       - name: Fix missing brace in cam_flash_core.c add_req error check (no behavior change)
+        if: inputs.patch_mode == 'full'
         working-directory: kernel
         run: |
           set -euo pipefail
@@ -209,6 +289,7 @@ jobs:
             || { echo "::error::cam_flash brace fix verification failed"; exit 1; }
           echo "-- verified: add_req guard braces in place"
       - name: Fix ignored kstrtou32 return in bootinfo.c (no behavior change)
+        if: inputs.patch_mode == 'full'
         working-directory: kernel
         run: |
           set -euo pipefail
@@ -237,6 +318,7 @@ jobs:
           [ "$CNT" = "2" ] || { echo "::error::bootinfo.c kstrtou32 fix verification failed (count=$CNT)"; exit 1; }
           echo "-- verified: 2 return-kstrtou32 sites in place"
       - name: Fix misleading indentation in cyttsp5_device_access.c (pure reindent)
+        if: inputs.patch_mode == 'full'
         working-directory: kernel
         run: |
           set -euo pipefail
@@ -321,6 +403,7 @@ jobs:
           PYEOF
           echo "-- verified: 3 reindent replacements applied"
       - name: Fix sscanf %100s off-by-one in fts_spi (stack overflow guard)
+        if: inputs.patch_mode == 'full'
         working-directory: kernel
         run: |
           set -euo pipefail
@@ -354,6 +437,7 @@ jobs:
             || { echo "::error::%100s still present in fts_spi"; exit 1; }
           echo "-- verified: fts_spi sscanf width fixed, no %100s left"
       - name: Fix PCI_VENDOR_ID_ASIX macro redefinition in 8250_pci.c (no behavior change)
+        if: inputs.patch_mode == 'full'
         working-directory: kernel
         run: |
           set -euo pipefail
@@ -385,6 +469,7 @@ jobs:
             || { echo "::error::local 0x9710 define missing or duplicated"; exit 1; }
           echo "-- verified: #undef precedes local 0x9710 define; L70 keeps 0x125b, L2680/L5801 keep 0x9710"
       - name: Fix unused label reset_assert in dwc3-qcom.c (no behavior change)
+        if: inputs.patch_mode == 'full'
         working-directory: kernel
         run: |
           set -euo pipefail
@@ -418,6 +503,7 @@ jobs:
             || { echo "::error::reset_assert label still present"; exit 1; }
           echo "-- verified: reset_assert label removed, no goto references in file"
       - name: Fix array-parameter mismatch in qcacld parser_api.c (no behavior change)
+        if: inputs.patch_mode == 'full'
         working-directory: kernel
         run: |
           set -euo pipefail
@@ -735,8 +821,18 @@ jobs:
           }
           return 0;
           }
-          late_initcall(bakasu_fake_status_init);
           KSU_SVCCOMPAT_EOF
+          # selinux_hide=off 时不注册 late_initcall：
+          #   enabled/running 恒 false → vendor 的 my_sel_open_handle_status /
+          #   my_write_access / my_write_context / my_setprocattr 全部走 fallback
+          #   （原厂 sel_* 实现），SELinux 侧运行时行为与 stock 完全一致。
+          #   符号仍然是定义好的（link 需要），只是永不被激活，属"死代码"。
+          if [ "${{ inputs.selinux_hide }}" = "on" ]; then
+            echo 'late_initcall(bakasu_fake_status_init);' >> "$SVC"
+            echo "-- selinux_hide=on: fake status page 将在 late_initcall 激活"
+          else
+            echo "-- selinux_hide=off: 只提供符号，不激活（SELinux 行为 = 原厂）"
+          fi
           fi
           for sym in ksu_selinux_hide_enabled ksu_selinux_hide_running \
                      fake_status_initialize_key fake_status \
@@ -745,6 +841,8 @@ jobs:
           done
           echo "-- 6 vendor selinux_hide symbols defined in security/selinux/ss/services.c"
       - name: Backport sus_type/avd hiding into vendor 5.4 susfs
+        # 不做档位门控：这段代码在 selinux_hide=off 时是死代码，
+        # 但符号必须存在（驱动侧可能硬引用，缺了会 undefined symbol）。
         working-directory: kernel
         run: |
           set -euo pipefail
@@ -1075,6 +1173,7 @@ jobs:
             echo "-- sus_type backport already present, skipping"
           fi
       - name: Cover Shizuku(shell) in SELinux status fake page
+        if: inputs.patch_mode == 'full'
         working-directory: kernel
         run: |
           set -euo pipefail
@@ -1096,6 +1195,7 @@ jobs:
             || { echo "::error::old status gate still present"; exit 1; }
           echo "-- status fake page now covers app uids + shell(2000)"
       - name: Patch SELinux status.c (policyload backfill)
+        if: inputs.patch_mode == 'full'
         working-directory: kernel
         run: |
           set -euo pipefail
@@ -1273,13 +1373,19 @@ jobs:
           echo "== 预装 UAPI 头文件以启用 SukiSU preinit runner =="
           # vendor defconfig 不带 HEADERS_INSTALL，SukiSU builtin 的 preinit runner
           # 检测不到 out/usr/include 会降级为 -DKSU_NO_PREINIT。这里显式安装以启用
-          make -j$(nproc) O=out ARCH=arm64 \
-            CC="ccache clang" LD="ld.lld" AR="llvm-ar" NM="llvm-nm" \
-            headers_install INSTALL_HDR_PATH="$PWD/out/usr" \
-            || echo "::warning::headers_install failed, SukiSU preinit will stay disabled (non-fatal)"
-          test -f out/usr/include/linux/unistd.h \
-            && echo "-- preinit UAPI headers ready" \
-            || echo "::warning::usr/include/linux/unistd.h missing, preinit will be disabled"
+          if [ "${{ inputs.ksu_preinit }}" = "on" ]; then
+            make -j$(nproc) O=out ARCH=arm64 \
+              CC="ccache clang" LD="ld.lld" AR="llvm-ar" NM="llvm-nm" \
+              headers_install INSTALL_HDR_PATH="$PWD/out/usr" \
+              || echo "::warning::headers_install failed, SukiSU preinit will stay disabled (non-fatal)"
+            test -f out/usr/include/linux/unistd.h \
+              && echo "-- preinit UAPI headers ready" \
+              || echo "::warning::usr/include/linux/unistd.h missing, preinit will be disabled"
+          else
+            # 关掉时显式清空：残留的 out/usr 会让 kernel/Makefile 的 wildcard 误判为可用
+            rm -rf out/usr
+            echo "-- ksu_preinit=off: preinit runner 关闭（-DKSU_NO_PREINIT）"
+          fi
           set +e
           make -j$(nproc) O=out ARCH=arm64 \
             CC="ccache clang" LD="ld.lld" AR="llvm-ar" NM="llvm-nm" \
@@ -1298,6 +1404,16 @@ jobs:
             exit 1
           fi
           echo "=== Build finished ==="
+          # KSU_VERSION 由 kernel/Makefile 现算：30000 + <main 分支提交数> - 4001，
+          # 其中提交数靠构建时 curl api.github.com 取得。Actions 共享出口 IP 极易被
+          # 限流，一旦失败会静默回退成 13000 —— 内核能刷入，但 Nova 管理器判定
+          # "版本不匹配" / 拒绝授权。这里把算出来的值打出来并显式告警。
+          KV=$(grep -m1 -o 'SukiSU-Nova version: [0-9]*' build.log | grep -o '[0-9]*$' || true)
+          echo "KSU_VERSION=${KV:-unknown}"
+          case "${KV:-}" in
+            3[0-9][0-9][0-9]) echo "-- KSU_VERSION in Nova range (3xxxx), ok" ;;
+            *) echo "::warning::KSU_VERSION=${KV:-unknown} 不在 3xxxx 段 —— 多半是 API 限流导致回退；管理器会报版本不匹配" ;;
+          esac
           ccache -s 2>/dev/null || true
           ls -lh out/arch/arm64/boot/Image
       - name: Package AnyKernel3
