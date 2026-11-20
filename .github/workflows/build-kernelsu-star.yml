@@ -1,940 +1,133 @@
-name: Build Kernel with KernelSU (backslashxx master, no SUSFS)
-
-on:
-  workflow_dispatch:
-
-env:
-  KERNEL_REPO: zttlove/android_kernel_xiaomi_sm8350-hyperos
-  KERNEL_BRANCH: dynamic
-  # Pinned vendor source (8-char SHA).
-  # 2026-11-14: 旧 pin 36982074 被上游抹除（历史重写，仓库仅剩 dynamic 单分支），
-  # 被迫前移到 f4c3fdd4f —— 它是 "Merge branch 'Leecaarmy:dynamic' into dynamic"
-  # 的合并提交，**尚未经开机验证**；首个构建即为开机测试，若出现循环重启，
-  # 排查方向是 Leecaarmy 侧带入的改动（其 fork 的 dynamic 分支）。
-  # Build FAILS if the dynamic branch tip differs -- update ONLY after verifying a new-tip build boots.
-  KERNEL_COMMIT_PIN: "f4c3fdd4"
-  DEFCONFIG_NAME: vendor/star_defconfig
-  DEVICE_CODENAME: star
-  OUTPUT_DIR: out
-  CLANG_DIR: ${{ github.workspace }}/toolchains/clang
-  KERNEL_DIR: ${{ github.workspace }}/kernel
-  # ---------------------------------------------------------------------------
-  # KernelSU 驱动源：backslashxx/KernelSU master 主线（unity build + hook 自包含）
-  # ---------------------------------------------------------------------------
-  # 为什么这次不再有 SUSFS，也不再需要任何驱动侧源码补丁：
-  #   1. vendor 内核树的 ksu_handle_* / susfs_* 埋点全部写在
-  #      #ifdef CONFIG_KSU_SUSFS 内（exec.c 还有 #else 走纯净 __do_execve_file）。
-  #      全树只有自带驱动 KernelSU/kernel/Kconfig 定义 CONFIG_KSU_SUSFS 符号，
-  #      star_defconfig 里也没有任何 CONFIG_KSU_SUSFS*。
-  #   2. 换成 backslashxx 主线后，驱动 Kconfig 根本没有 SUSFS 符号，且本工作流
-  #      全程不定义 CONFIG_KSU_SUSFS —— 那些埋点整段不参与编译，上一版的
-  #      11 个 LTO undefined symbol 从根源上消失。
-  #   3. backslashxx 主线自带 5.4 兼容层（kernel_compat.h 中 <5.8 的
-  #      __weak strncpy_from_user_nofault fallback），不需要 sulog 替换；
-  #      sucompat 走主线自己的 syscall-table / branch-link / LSM hook，
-  #      不依赖内核树埋点，因此也不需要 static-key 转换、Kconfig 注入等补丁。
-  #   4. 身份：KSU_PACKAGE_NAME := me.weishu.kernelsu，-DKSU_VERSION=32731。
-  #      Integrate 步骤会校验；PIN 钉住 master 一次提交，每次构建源码一致。
-  #      upgrade PIN 前请重新实机验证能否开机。
-  #
-  # !! 重要前提（与第 1 条互相牵制）!!
-  #   「埋点全部不编译」同时意味着：如果 backslashxx 主线实际上依赖树内
-  #   ksu_handle_* 调用（manual hook 模式），本构建会 **编译通过、开机正常，
-  #   但 su 静默失效**。CI 只能证明能编译/能链接，不能证明有 root。
-  #   因此新增 "Audit KernelSU hook wiring" 步骤把树内调用点、其守卫宏、
-  #   驱动侧定义三者对照写进 artifact；构建后还有 System.map 探测。
-  #   实机刷入后必须验证：KernelSU 管理器显示 "Working"，且 `su -c id` 出 uid=0。
-  KSU_REPO: https://github.com/backslashxx/KernelSU.git
-  KSU_BRANCH: master
-  KSU_PIN: "ae59aa5509c39276117e15f8fedc0740e5bda7f8"
-
-jobs:
-  build-kernel:
-    runs-on: ubuntu-22.04
-    # 冷 ccache + 4 核，5.4 全树 90~150 分钟；120 分钟偏紧，留出编译重试余量
-    timeout-minutes: 180
-    steps:
-      - name: Free disk space
-        # runner 剩余空间 ~25 GB，而 clang(1.5G) + ccache(3G) + out(10~12G) 会踩线，
-        # 链接阶段 "No space left on device" 是最常见的非代码类失败。先清掉预装 SDK。
-        run: |
-          set -euo pipefail
-          echo "-- 清理前 --"; df -h / | tail -1
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-                      /usr/local/share/boost /usr/share/swift /opt/hostedtoolcache/CodeQL || true
-          echo "-- 清理后 --"; df -h / | tail -1
-
-      - name: Checkout Kernel Source
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ env.KERNEL_REPO }}
-          ref: ${{ env.KERNEL_BRANCH }}
-          path: kernel
-          # depth=1：源码变更全部由后续步骤无条件重写，不再依赖 HEAD^1 做对照 diff
-          fetch-depth: 1
-
-      - name: Verify Kernel Commit & Clean Workspace
-        working-directory: kernel
-        run: |
-          git reset --hard HEAD
-          git clean -fdx
-          SHORT_SHA=$(git rev-parse --short=8 HEAD)
-          echo "Kernel: $(git log -1 --format='%h %s')"
-          if [ "$SHORT_SHA" != "$KERNEL_COMMIT_PIN" ]; then
-            echo "::error::vendor kernel source drifted: branch tip ${SHORT_SHA} != pinned ${KERNEL_COMMIT_PIN}"
-            echo "The 'dynamic' branch was moved/rewritten. Update KERNEL_COMMIT_PIN in workflow env ONLY after a build from the new tip is verified to boot."
-            exit 1
-          fi
-      - name: Enforce cpufreq init order (bootloop fix, unconditional)
+      - name: Enforce cpufreq init order (bootloop fix, idempotent block move)
         working-directory: kernel
         run: |
           set -euo pipefail
-          echo "== 强制 qcom-cpufreq-hw.c 注册顺序：cpufreq_register_driver() 在前 =="
-          # star 实机验证结论：先注册 cycle counter 回调（Leecaarmy 合并带入的
-          # 顺序）会冷启动假死/无限重启；能开机的基线顺序是
-          # cpufreq_register_driver() 在前。此步骤不依赖 git 历史，无论
-          # HEAD 是否 merge commit 都强制为可启动顺序，并做双重校验。
+          echo "== 强制 qcom-cpufreq-hw.c：cpufreq_register_driver() 早于 register_cpu_cycle_counter_cb() =="
+          # star 实机验证结论：先注册 cycle counter 回调会冷启动假死/无限重启。
+          #
+          # 上一版是把 [for_each_possible_cpu(lock), of_platform_populate) 整段重写为
+          # 固定文本，并断言区间里 "cpufreq_register_driver" 只出现一次。该断言过严：
+          # 区间里出现两次子串（真实赋值语句 + 注释里的 cpufreq_register_driver()）
+          # 就会直接中断，实测 cb x1 / drv x2 即属此列。
+          #
+          # 现改为「块级搬移」，不重写区间、不按子串计数：
+          #   · 只识别两处真实赋值语句 rc/ret = ...，注释里的函数名不会命中；
+          #   · 把 cycle counter 语句连同紧跟的 if 错误检查块整体剪切，
+          #     插到 cpufreq_register_driver 调用块之后；
+          #   · 区间内其它代码（注释、platform_set_drvdata、重复注册…）一行不动，
+          #     不存在误删;
+          #   · 顺序已正确时 no-op（幂等，可安全重复执行）。
           python3 - <<'PYEOF'
-          import sys
-          pc = "drivers/cpufreq/qcom-cpufreq-hw.c"
-          s = open(pc).read()
-          lock_line = "for_each_possible_cpu(cpu)\n\t\tspin_lock_init(&qcom_cpufreq_counter[cpu].lock);\n"
-          i = s.find(lock_line)
-          j = s.find("\tof_platform_populate(pdev->dev.of_node")
-          if i == -1 or j == -1 or j < i:
-              sys.exit("::error::anchor lines not found in qcom-cpufreq-hw.c")
-          # 跨度断言：即将被整段替换的 [lock_line, of_platform_populate) 区间里，
-          # 两个注册调用必须各只出现一次。上游一旦在该区间插入别的语句
-          # （cleanup / platform_set_drvdata / 第二次注册），这里直接失败，
-          # 而不是把它们静默删掉。
-          span = s[i:j]
-          n_cb = span.count("register_cpu_cycle_counter_cb")
-          n_drv = span.count("cpufreq_register_driver")
-          if n_cb != 1 or n_drv != 1:
-              sys.exit(f"::error::unexpected span content (cb x{n_cb}, drv x{n_drv}) - "
-                       "review the region that would be replaced")
-          good = lock_line + """
-          \t/*
-          \t * 注册顺序必须保持 cpufreq_register_driver() 在前：
-          \t * star 实机验证该顺序是唯一可正常启动的配置；颠倒后（先注册
-          \t * cycle counter 回调）会触发冷启动假死/无限重启。
-          \t */
-          \trc = cpufreq_register_driver(&cpufreq_qcom_hw_driver);
-          \tif (rc) {
-          \t\tdev_err(&pdev->dev, "CPUFreq HW driver failed to register\\n");
-          \t\treturn rc;
-          \t}
-          \trc = register_cpu_cycle_counter_cb(&cycle_counter_cb);
-          \tif (rc) {
-          \t\tdev_err(&pdev->dev, "cycle counter cb failed to register\\n");
-          \t\treturn rc;
-          \t}
-          """
-          s = s[:i] + good + s[j:]
-          open(pc, "w").write(s)
-          R = s.find("rc = cpufreq_register_driver(&cpufreq_qcom_hw_driver);")
-          C = s.find("rc = register_cpu_cycle_counter_cb(&cycle_counter_cb);")
-          assert R != -1 and C != -1 and R < C, "order verification failed"
-          print(f"-- enforced: cpufreq_register_driver(offset {R}) precedes register_cpu_cycle_counter_cb (offset {C})")
+          import re, sys
+
+          PC = "drivers/cpufreq/qcom-cpufreq-hw.c"
+          RE_CB  = re.compile(r'^[ \t]*(?:rc|ret)[ \t]*=[ \t]*register_cpu_cycle_counter_cb'
+                              r'[ \t]*\([ \t]*&cycle_counter_cb[ \t]*\)[ \t]*;')
+          RE_DRV = re.compile(r'^[ \t]*(?:rc|ret)[ \t]*=[ \t]*cpufreq_register_driver'
+                              r'[ \t]*\([ \t]*&cpufreq_qcom_hw_driver[ \t]*\)[ \t]*;')
+          RE_ANY = re.compile(r'register_cpu_cycle_counter_cb|cpufreq_register_driver')
+          RE_IF  = re.compile(r'^[ \t]*if[ \t]*\(.*\)[ \t]*\{?[ \t]*$')
+
+          lines = open(PC, encoding="utf-8").read().splitlines(True)
+
+          def dump_window():
+              hits = [i for i, l in enumerate(lines) if RE_ANY.search(l)]
+              if not hits:
+                  print("   （文件里一个匹配行都没有）")
+                  return
+              lo, hi = max(0, hits[0] - 4), min(len(lines), hits[-1] + 5)
+              print(f"   相关区域 L{lo+1}..L{hi}:")
+              for n in range(lo, hi):
+                  mark = ">>" if RE_ANY.search(lines[n]) else "  "
+                  print(f"   {mark} {n+1:5d}| {lines[n].rstrip()}")
+
+          cb  = [i for i, l in enumerate(lines) if RE_CB.match(l)]
+          drv = [i for i, l in enumerate(lines) if RE_DRV.match(l)]
+          print(f"-- 赋值语句命中: cb={[i+1 for i in cb]} drv={[i+1 for i in drv]} "
+                f"(文件 {len(lines)} 行) --")
+          if not cb or not drv:
+              print("::error::找不到 rc/ret = ... 赋值语句（源码结构变了），以下为全部出现位置：")
+              dump_window()
+              sys.exit(1)
+          if len(drv) > 1:
+              print(f"::warning::cpufreq_register_driver 有 {len(drv)} 处赋值语句，"
+                    f"按第一处 L{drv[0]+1} 重排")
+
+          def block_span(idx):
+              """语句行 + 紧跟其后的 if(...){...} / 单语句错误检查块 -> (start, end_excl)"""
+              j = idx
+              while j < len(lines) and ";" not in lines[j]:
+                  j += 1
+              k = j + 1
+              while k < len(lines):
+                  st = lines[k].strip()
+                  if st == "" or st.startswith(("/*", "//", "*")) or st.endswith("*/"):
+                      k += 1
+                      continue
+                  break
+              if k < len(lines) and RE_IF.match(lines[k]) and " else" not in lines[k]:
+                  if "{" in lines[k]:
+                      depth = 0
+                      q = k
+                      while q < len(lines):
+                          depth += lines[q].count("{") - lines[q].count("}")
+                          if depth <= 0:
+                              return idx, q + 1
+                          q += 1
+                      return idx, j + 1
+                  q = k + 1
+                  while q < len(lines) and lines[q].strip() == "":
+                      q += 1
+                  return idx, q + 1
+              return idx, j + 1
+
+          s_cb, e_cb = block_span(cb[0])
+          s_drv, e_drv = block_span(drv[0])
+          print(f"-- cb 块 L{s_cb+1}..L{e_cb} / drv 块 L{s_drv+1}..L{e_drv} --")
+
+          if s_drv < s_cb:
+              print("-- 顺序已正确（cpufreq_register_driver 在前），no-op，不写文件")
+          else:
+              lo, hi = (s_drv, e_cb) if s_drv < e_cb else (s_cb, e_drv)
+              for n in range(lo, hi):
+                  if lines[n].lstrip().startswith("#"):
+                      print(f"::error::L{n+1} 是预处理指令（{lines[n].strip()}），"
+                            "两个注册块之间跨越条件编译，拒绝自动搬移")
+                      dump_window()
+                      sys.exit(1)
+              moved = lines[s_cb:e_cb]
+              del lines[s_cb:e_cb]
+              d2 = [i for i, l in enumerate(lines) if RE_DRV.match(l)]
+              if not d2:
+                  print("::error::搬移过程中驱动注册语句消失，已中止（文件未写回）")
+                  sys.exit(1)
+              _, d_end = block_span(d2[0])
+              lines[d_end:d_end] = moved
+              open(PC, "w", encoding="utf-8", newline="").write("".join(lines))
+              print(f"-- 已把 cb 块（原 L{s_cb+1}..L{e_cb}）搬到 drv 块之后")
+
+          out = open(PC, encoding="utf-8").read().splitlines(True)
+          p_drv = next((i for i, l in enumerate(out) if RE_DRV.match(l)), None)
+          p_cb  = next((i for i, l in enumerate(out) if RE_CB.match(l)), None)
+          if p_drv is None or p_cb is None:
+              print("::error::重排后丢失了注册语句")
+              dump_window()
+              sys.exit(1)
+          if p_drv > p_cb:
+              print(f"::error::顺序校验失败（drv L{p_drv+1} > cb L{p_cb+1}）")
+              dump_window()
+              sys.exit(1)
+          print(f"-- verified: cpufreq_register_driver L{p_drv+1} 早于 "
+                f"register_cpu_cycle_counter_cb L{p_cb+1}")
           PYEOF
-          R=$(grep -n 'cpufreq_register_driver(&cpufreq_qcom_hw_driver)' drivers/cpufreq/qcom-cpufreq-hw.c | head -1 | cut -d: -f1)
-          C=$(grep -n 'register_cpu_cycle_counter_cb(&cycle_counter_cb)' drivers/cpufreq/qcom-cpufreq-hw.c | head -1 | cut -d: -f1)
+          # 落地复核：只在「赋值语句」上取行号（正则带 & 实参，注释里的
+          # cpufreq_register_driver() 不会命中）
+          R=$(grep -nE '^[[:space:]]*(rc|ret)[[:space:]]*=[[:space:]]*cpufreq_register_driver\(&cpufreq_qcom_hw_driver\);' drivers/cpufreq/qcom-cpufreq-hw.c | head -1 | cut -d: -f1)
+          C=$(grep -nE '^[[:space:]]*(rc|ret)[[:space:]]*=[[:space:]]*register_cpu_cycle_counter_cb\(&cycle_counter_cb\);' drivers/cpufreq/qcom-cpufreq-hw.c | head -1 | cut -d: -f1)
           if [ -z "$R" ] || [ -z "$C" ] || [ "$R" -ge "$C" ]; then
-            echo "::error::cpufreq order verification failed (R=$R C=$C)"; exit 1
+            echo "::error::cpufreq order verification failed (drv=$R cb=$C)"
+            echo "---- 当前所有相关行 ----"
+            grep -nE 'register_cpu_cycle_counter_cb|cpufreq_register_driver' drivers/cpufreq/qcom-cpufreq-hw.c || true
+            exit 1
           fi
           echo "-- verified: cpufreq_register_driver (L$R) precedes register_cpu_cycle_counter_cb (L$C)"
-      - name: Silence min() type-mismatch warning in tcp_output.c
-        working-directory: kernel
-        run: |
-          set -euo pipefail
-          # net/ipv4/tcp_output.c: threshold = min(srtt_in_ns >> 1, NSEC_PER_MSEC)
-          # u64 与 long 比较，__typecheck 触发 -Wcompare-distinct-pointer-types 警告
-          # （5.4 stable 回移植上游自带，主线后续用 min_t 修复）。改为 min_t(u64,...)
-          # 与上游修复一致：结果 <= 1e6，赋回 u32 threshold 无损。
-          TF=net/ipv4/tcp_output.c
-          grep -q 'threshold = min(srtt_in_ns >> 1, NSEC_PER_MSEC);' "$TF" \
-            || { echo "::error::tcp_output.c anchor not found (source moved?)"; exit 1; }
-          sed -i 's/threshold = min(srtt_in_ns >> 1, NSEC_PER_MSEC);/threshold = min_t(u64, srtt_in_ns >> 1, NSEC_PER_MSEC);/' "$TF"
-          grep -q 'threshold = min_t(u64, srtt_in_ns >> 1, NSEC_PER_MSEC);' "$TF" \
-            || { echo "::error::min_t replacement failed"; exit 1; }
-          echo "-- tcp_output.c min() type-mismatch silenced (min_t(u64, ...))"
-      - name: Fix misleading indentation in mi_dsi_panel.c (no behavior change)
-        working-directory: kernel
-        run: |
-          set -euo pipefail
-          # techpack/display/msm/mi_disp/mi_dsi_panel.c LOCAL_HBM_OFF_TO_NORMAL_BACKLIGHT_RESTORE:
-          # else 缺大括号，后随两行缩进过深触发 -Wmisleading-indentation。编译器实际语义：
-          # else 体仅含 backlight_in_aod；dc_gain（内部自带 panel_id 守卫）与 tx_cmd_set
-          # 无条件执行——与上方姊妹 case（..._BACKLIGHT）的尾部模式一致，编译结果即作者
-          # 意图。补大括号+对齐缩进，编译产物零变化，仅消除警告。
-          python3 <<'PYEOF'
-          p = "techpack/display/msm/mi_disp/mi_dsi_panel.c"
-          s = open(p).read()
-          old = ("\t\t\telse\n"
-                 "\t\t\t\tmi_dsi_update_backlight_in_aod(panel, true);\n"
-                 "\t\t\t\tif (mi_cfg->panel_id == 0x4C3900360200)\n"
-                 "\t\t\t\t\tmi_dsi_update_lhbm_dc_gain(panel,DSI_CMD_SET_MI_LOCAL_HBM_OFF_TO_NORMAL);\n"
-                 "\t\t\t\tdsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_LOCAL_HBM_OFF_TO_NORMAL);\n")
-          new = ("\t\t\telse {\n"
-                 "\t\t\t\tmi_dsi_update_backlight_in_aod(panel, true);\n"
-                 "\t\t\t}\n"
-                 "\t\t\tif (mi_cfg->panel_id == 0x4C3900360200)\n"
-                 "\t\t\t\tmi_dsi_update_lhbm_dc_gain(panel,DSI_CMD_SET_MI_LOCAL_HBM_OFF_TO_NORMAL);\n"
-                 "\t\t\tdsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_LOCAL_HBM_OFF_TO_NORMAL);\n")
-          n = s.count(old)
-          assert n == 1, f"anchor count {n} != 1 (source moved?)"
-          open(p, "w").write(s.replace(old, new))
-          print("-- mi_dsi_panel.c: else braces added, indentation aligned (semantics unchanged)")
-          PYEOF
-          # 注意：$'...' 才是真 tab，普通 '\t' 在 grep BRE 下是字面量 't'
-          CNT=$(grep -c $'^\t\t\telse {' techpack/display/msm/mi_disp/mi_dsi_panel.c || true)
-          if [ "${CNT:-0}" -lt 1 ]; then
-            echo "::error::mi_dsi_panel.c brace fix verification failed (count=${CNT:-0})"; exit 1
-          fi
-          echo "-- verified: brace fix in place (${CNT} match)"
-      - name: Fix missing brace in cam_flash_core.c add_req error check (no behavior change)
-        working-directory: kernel
-        run: |
-          set -euo pipefail
-          # techpack/camera_star/.../cam_flash_core.c cam_flash_i2c_pkt_parser():
-          # 守卫 if (crm_cb && crm_cb->add_req) 丢失左大括号（合并腐蚀），导致
-          # if (rc) 错误检查被编译为守卫外无条件执行。可达路径上两者等价：
-          # 未调用 add_req 时 rc 恒为函数入口初值 0（NOP 路径 goto 前不碰 rc）。
-          # 补回大括号恢复 CAF 原始写法，顺带修正 "if  (rc)" 双空格，行为零变化。
-          python3 <<'PYEOF'
-          p = "techpack/camera_star/drivers/cam_sensor_module/cam_flash/cam_flash_core.c"
-          s = open(p).read()
-          old = ("\t\tif (fctrl->bridge_intf.crm_cb &&\n"
-                 "\t\t\tfctrl->bridge_intf.crm_cb->add_req)\n"
-                 "\t\t\trc = fctrl->bridge_intf.crm_cb->add_req(&add_req);\n"
-                 "\t\t\tif  (rc) {\n"
-                 "\t\t\t\tCAM_ERR(CAM_FLASH,\n"
-                 "\t\t\t\t\t\"Failed in adding request: %llu to request manager\",\n"
-                 "\t\t\t\t\tcsl_packet->header.request_id);\n"
-                 "\t\t\t\treturn rc;\n"
-                 "\t\t\t}\n")
-          new = ("\t\tif (fctrl->bridge_intf.crm_cb &&\n"
-                 "\t\t\tfctrl->bridge_intf.crm_cb->add_req) {\n"
-                 "\t\t\trc = fctrl->bridge_intf.crm_cb->add_req(&add_req);\n"
-                 "\t\t\tif (rc) {\n"
-                 "\t\t\t\tCAM_ERR(CAM_FLASH,\n"
-                 "\t\t\t\t\t\"Failed in adding request: %llu to request manager\",\n"
-                 "\t\t\t\t\tcsl_packet->header.request_id);\n"
-                 "\t\t\t\treturn rc;\n"
-                 "\t\t\t}\n"
-                 "\t\t}\n")
-          n = s.count(old)
-          assert n == 1, f"anchor count {n} != 1 (source moved?)"
-          open(p, "w").write(s.replace(old, new))
-          print("-- cam_flash_core.c: guard braces restored (CAF canonical form)")
-          PYEOF
-          grep -q 'fctrl->bridge_intf.crm_cb->add_req) {' techpack/camera_star/drivers/cam_sensor_module/cam_flash/cam_flash_core.c \
-            || { echo "::error::cam_flash brace fix verification failed"; exit 1; }
-          echo "-- verified: add_req guard braces in place"
-      - name: Fix ignored kstrtou32 return in bootinfo.c (no behavior change)
-        working-directory: kernel
-        run: |
-          set -euo pipefail
-          # techpack/bootinfo/bootinfo.c: get_powerup_reason()/get_powerdown_reason()
-          # 忽略 kstrtou32 返回值（-Wunused-result）。解析失败时全局 pu/pd_reason
-          # 本就保持 0，且调用方（powerup_reason_show 等 5 处）全部忽略本函数返回值
-          # ——改为 return kstrtou32(...) 透传，警告消除，行为零变化。
-          python3 <<'PYEOF'
-          p = "techpack/bootinfo/bootinfo.c"
-          s = open(p).read()
-          pairs = [
-              ("\tkstrtou32(buf, 16, &pu_reason);\n\treturn 0;\n",
-               "\treturn kstrtou32(buf, 16, &pu_reason);\n"),
-              ("\tkstrtou32(buf, 16, &pd_reason);\n\treturn 0;\n",
-               "\treturn kstrtou32(buf, 16, &pd_reason);\n"),
-          ]
-          for old, new in pairs:
-              n = s.count(old)
-              assert n == 1, f"anchor count {n} != 1 for {old!r} (source moved?)"
-              s = s.replace(old, new)
-          open(p, "w").write(s)
-          print("-- bootinfo.c: kstrtou32 return propagated (2 sites)")
-          PYEOF
-          # 同上：$'...' 展开为真 tab；'[ud]' 在 BRE 中作字符类匹配 u/d
-          CNT=$(grep -c $'^\treturn kstrtou32(buf, 16, &p[ud]_reason);$' techpack/bootinfo/bootinfo.c || true)
-          [ "$CNT" = "2" ] || { echo "::error::bootinfo.c kstrtou32 fix verification failed (count=$CNT)"; exit 1; }
-          echo "-- verified: 2 return-kstrtou32 sites in place"
-      - name: Fix misleading indentation in cyttsp5_device_access.c (pure reindent)
-        working-directory: kernel
-        run: |
-          set -euo pipefail
-          # drivers/input/touchscreen/cyttsp5/cyttsp5_device_access.c 三处缩进腐烂：
-          # 1) cmcp_test store: if 体仅 range_check=0，后续 cmcp_* 赋值无条件执行
-          #    （上游 Parade 原始语义；若塞进 if 内，写 CMCP_FULL 永不更新
-          #    cmcp_test_items，测试机直接坏）——按编译语义重排。
-          # 2/3) CM/Cm 打印循环: for 体仅 prepare_print_data，行尾换行
-          #    prepare_print_string("\n") 在 j 循环外每行一次（语义正确）——
-          #    续行缩进混乱（6/2/8、7/4/7 tab）误导 clang，重排为正常层级。
-          # 三处均为纯缩进调整，token 流不变（构建时以去空白等价性断言兜底）。
-          python3 <<'PYEOF'
-          import re
-          p = "drivers/input/touchscreen/cyttsp5/cyttsp5_device_access.c"
-          s = open(p).read()
-          old1 = ("\tif (test_item > 0 && test_item < 5)\n"
-                  "\t\trange_check = 0;\n"
-                  "\t\tdad->cmcp_test_items = test_item;\n"
-                  "\t\tdad->cmcp_range_check = range_check;\n"
-                  "\t\tdad->cmcp_force_calibrate = force_calibrate;\n"
-                  "\t\tparade_debug(dev, DEBUG_LEVEL_2,\n"
-                  "\t\t\t\"%s: Test item is %s; Range check is %s; Force calibrate is %s.\\n\",\n"
-                  "\t\t\t__func__,\n"
-                  "\t\t\tcmcp_test_case_array[test_item],\n"
-                  "\t\t\tcmcp_test_range_check_array[range_check],\n"
-                  "\t\t\tcmcp_test_force_cal_array[force_calibrate]);\n")
-          new1 = ("\tif (test_item > 0 && test_item < 5)\n"
-                  "\t\trange_check = 0;\n"
-                  "\tdad->cmcp_test_items = test_item;\n"
-                  "\tdad->cmcp_range_check = range_check;\n"
-                  "\tdad->cmcp_force_calibrate = force_calibrate;\n"
-                  "\tparade_debug(dev, DEBUG_LEVEL_2,\n"
-                  "\t\t\"%s: Test item is %s; Range check is %s; Force calibrate is %s.\\n\",\n"
-                  "\t\t__func__,\n"
-                  "\t\tcmcp_test_case_array[test_item],\n"
-                  "\t\tcmcp_test_range_check_array[range_check],\n"
-                  "\t\tcmcp_test_force_cal_array[force_calibrate]);\n")
-          old2 = ("\t\t\t\t\tfor (j = 1; j < tx_num; j++)\n"
-                  "\t\t\t\t\t\tindex = prepare_print_data(\n"
-                  "\t\t\t\t\t\tout_buf,\n"
-                  "\t\t\t&cmcp_info->cm_sensor_column_delta[(j-1)*rx_num+i],\n"
-                  "\t\t\t\t\t\tindex, 1);\n"
-                  "\t\t\t\t\t\tindex = prepare_print_string(\n"
-                  "\t\t\t\t\t\t\t\tout_buf,\n"
-                  "\t\t\t\t\t\t\t\t\"\\n\", index);\n")
-          new2 = ("\t\t\t\t\tfor (j = 1; j < tx_num; j++)\n"
-                  "\t\t\t\t\t\tindex = prepare_print_data(\n"
-                  "\t\t\t\t\t\t\tout_buf,\n"
-                  "\t\t\t\t\t\t\t&cmcp_info->cm_sensor_column_delta[(j-1)*rx_num+i],\n"
-                  "\t\t\t\t\t\t\tindex, 1);\n"
-                  "\t\t\t\t\tindex = prepare_print_string(\n"
-                  "\t\t\t\t\t\tout_buf,\n"
-                  "\t\t\t\t\t\t\"\\n\", index);\n")
-          old3 = ("\t\t\t\t\tfor (j = 0; j < tx_num; j++)\n"
-                  "\t\t\t\t\t\tindex = prepare_print_data(\n"
-                  "\t\t\t\t\t\t\tout_buf,\n"
-                  "\t\t\t\t&cmcp_info->cm_sensor_row_delta[j*rx_num+i-1],\n"
-                  "\t\t\t\t\t\t\tindex, 1);\n"
-                  "\t\t\t\t\t\tindex = prepare_print_string(\n"
-                  "\t\t\t\t\t\t\tout_buf,\n"
-                  "\t\t\t\t\t\t\t\"\\n\", index);\n")
-          new3 = ("\t\t\t\t\tfor (j = 0; j < tx_num; j++)\n"
-                  "\t\t\t\t\t\tindex = prepare_print_data(\n"
-                  "\t\t\t\t\t\t\tout_buf,\n"
-                  "\t\t\t\t\t\t\t&cmcp_info->cm_sensor_row_delta[j*rx_num+i-1],\n"
-                  "\t\t\t\t\t\t\tindex, 1);\n"
-                  "\t\t\t\t\tindex = prepare_print_string(\n"
-                  "\t\t\t\t\t\t\tout_buf,\n"
-                  "\t\t\t\t\t\t\t\"\\n\", index);\n")
-          orig = s
-          for name, o, n in [("cmcp block", old1, new1),
-                             ("column-delta loop", old2, new2),
-                             ("row-delta loop", old3, new3)]:
-              c = s.count(o)
-              assert c == 1, f"{name}: anchor count {c} != 1 (source moved?)"
-              s = s.replace(o, n)
-          # 纯重排证明：去空白后 token 流必须与原文件一致
-          assert re.sub(r"\s+", "", orig) == re.sub(r"\s+", "", s), \
-              "token stream changed - aborting (not a pure reindent)"
-          open(p, "w").write(s)
-          print("-- cyttsp5_device_access.c: 3 sites reindented (token stream unchanged)")
-          PYEOF
-          echo "-- verified: 3 reindent replacements applied"
-      - name: Fix sscanf %100s off-by-one in fts_spi (stack overflow guard)
-        working-directory: kernel
-        run: |
-          set -euo pipefail
-          # drivers/input/touchscreen/fts_spi/{fts_proc.c,fts.c}：
-          # 目标缓冲区均为 char path[100]，而 sscanf 格式串用 %100s ——
-          # 匹配满 100 字符时写入 100 字节 + NUL = 101 字节，越界 1 字节
-          # （clang -Wfortify-source 报的真实 off-by-one，非外观）。
-          # 修复：%100s -> %99s（保留 NUL 空间）。行为影响仅在用户输入
-          # 恰好 >= 99 字符的固件路径时截断 1 字符，正常固件名远短于此。
-          python3 <<'PYEOF'
-          fixes = {
-              "drivers/input/touchscreen/fts_spi/fts_proc.c": [
-                  ('sscanf(p, "%100s", path);', 'sscanf(p, "%99s", path);'),
-              ],
-              "drivers/input/touchscreen/fts_spi/fts.c": [
-                  ('sscanf(buf, "%100s %d %d", path, &mode[0], &mode[1]);',
-                   'sscanf(buf, "%99s %d %d", path, &mode[0], &mode[1]);'),
-              ],
-          }
-          for p, pairs in fixes.items():
-              s = open(p).read()
-              for o, n in pairs:
-                  c = s.count(o)
-                  assert c == 1, f"{p}: anchor count {c} != 1 (source moved?)"
-                  s = s.replace(o, n)
-              assert s.count("%100s") == 0, f"{p}: residual %100s remains"
-              open(p, "w").write(s)
-              print(f"-- {p}: %100s -> %99s ({len(pairs)} site)")
-          PYEOF
-          ! grep -rn '%100s' drivers/input/touchscreen/fts_spi/ \
-            || { echo "::error::%100s still present in fts_spi"; exit 1; }
-          echo "-- verified: fts_spi sscanf width fixed, no %100s left"
-      - name: Fix PCI_VENDOR_ID_ASIX macro redefinition in 8250_pci.c (no behavior change)
-        working-directory: kernel
-        run: |
-          set -euo pipefail
-          # drivers/tty/serial/8250/8250_pci.c L1877 本地 #define PCI_VENDOR_ID_ASIX 0x9710
-          # （MosChip 遗留枚举的旧板卡），与 include/linux/pci_ids.h 的真实 ASIX 0x125b
-          # 同名不同值。预处理顺序：L70（MSI 表）在本地 #define 之前 → 取 0x125b；
-          # L2680/L5801（FIFO quirk + 板卡表）在之后 → 取 0x9710。这就是现状编译语义。
-          # 在 L1877 前插 #undef 再重定义：消除 -Wmacro-redefined，每个使用点取值不变。
-          python3 <<'PYEOF'
-          import re, sys
-          p = "drivers/tty/serial/8250/8250_pci.c"
-          s = open(p).read()
-          pat = re.compile(r'^#define PCI_VENDOR_ID_ASIX[ \t]+0x9710[ \t]*$', re.M)
-          m = pat.search(s)
-          if not m:
-              sys.exit("::error::anchor '#define PCI_VENDOR_ID_ASIX ... 0x9710' not found (source moved?)")
-          prefix = s[:m.start()]
-          if prefix.rstrip('\n').endswith('#undef PCI_VENDOR_ID_ASIX'):
-              print("-- 8250_pci.c: #undef already present, skipping")
-          else:
-              s = prefix + '#undef PCI_VENDOR_ID_ASIX\n' + s[m.start():]
-              open(p, "w").write(s)
-              print("-- 8250_pci.c: inserted #undef before local 0x9710 redefine")
-          PYEOF
-          grep -n -B1 '^#define PCI_VENDOR_ID_ASIX' drivers/tty/serial/8250/8250_pci.c
-          [ "$(grep -c '^#undef PCI_VENDOR_ID_ASIX$' drivers/tty/serial/8250/8250_pci.c)" = "1" ] \
-            || { echo "::error::#undef PCI_VENDOR_ID_ASIX missing or duplicated"; exit 1; }
-          [ "$(grep -cE '^#define PCI_VENDOR_ID_ASIX[[:space:]]+0x9710' drivers/tty/serial/8250/8250_pci.c)" = "1" ] \
-            || { echo "::error::local 0x9710 define missing or duplicated"; exit 1; }
-          echo "-- verified: #undef precedes local 0x9710 define; L70 keeps 0x125b, L2680/L5801 keep 0x9710"
-      - name: Fix unused label reset_assert in dwc3-qcom.c (no behavior change)
-        working-directory: kernel
-        run: |
-          set -euo pipefail
-          # drivers/usb/dwc3/dwc3-qcom.c L732 的 reset_assert 标签在当前 defconfig 下
-          # 无任何 goto 引用（-Wunused-label）。两种成因：
-          #   a) 代码演进中删除全部 goto reset_assert，标签残留 → 删除安全
-          #   b) goto 在某个 #ifdef CONFIG_XXX 块内被当前配置排除 → 删除会在
-          #      未来启用该配置时导致 "label not found" 编译错误
-          # 脚本先扫全文（含条件编译块）确认无 goto 引用；有则报错让手动用
-          # 相同 #ifdef 包裹标签，无则删除标签行。零行为变更。
-          python3 <<'PYEOF'
-          import re, sys
-          p = "drivers/usb/dwc3/dwc3-qcom.c"
-          s = open(p).read()
-          if re.search(r'\bgoto\s+reset_assert\s*;', s):
-              sys.exit("::error::goto reset_assert exists in file (possibly under #ifdef) - "
-                       "manual review needed: wrap label with matching #ifdef or confirm "
-                       "current defconfig excludes it")
-          label_pat = re.compile(r'^reset_assert:[ \t]*\n', re.M)
-          m = label_pat.search(s)
-          if not m:
-              if "reset_assert:" not in s:
-                  print("-- dwc3-qcom.c: reset_assert label already removed, skipping")
-                  sys.exit(0)
-              sys.exit("::error::anchor '^reset_assert:' not found (source moved?)")
-          s = s[:m.start()] + s[m.end():]
-          open(p, "w").write(s)
-          print("-- dwc3-qcom.c: removed unused reset_assert label (no goto references)")
-          PYEOF
-          ! grep -q '^reset_assert:' drivers/usb/dwc3/dwc3-qcom.c \
-            || { echo "::error::reset_assert label still present"; exit 1; }
-          echo "-- verified: reset_assert label removed, no goto references in file"
-      - name: Fix array-parameter mismatch in qcacld parser_api.c (no behavior change)
-        working-directory: kernel
-        run: |
-          set -euo pipefail
-          # drivers/staging/qcacld-3.0/.../parser_api.c L6177 定义
-          # uint8_t mdie[SIR_MDIE_SIZE]，而 core/mac/src/include/parser_api.h L1056
-          # 声明 uint8_t mdie[]。C 中数组参数退化为指针，[] 与 [SIR_MDIE_SIZE]
-          # 在函数体内均为 uint8_t *，行为完全相同；Clang -Warray-parameter
-          # 只检查声明/定义边界一致性。修复：源文件定义改为 []，与头文件一致。
-          # 函数体内 mdie[0..2] / sizeof(mdie)（参数上下文恒为指针大小）不受影响。
-          python3 <<'PYEOF'
-          import sys
-          p = "drivers/staging/qcacld-3.0/core/mac/src/sys/legacy/src/utils/src/parser_api.c"
-          s = open(p).read()
-          old = "uint8_t mdie[SIR_MDIE_SIZE])"
-          new = "uint8_t mdie[])"
-          c_old, c_new = s.count(old), s.count(new)
-          if c_old == 1:
-              s = s.replace(old, new)
-              open(p, "w").write(s)
-              print("-- parser_api.c: mdie[SIR_MDIE_SIZE] -> mdie[] (matches header)")
-          elif c_new >= 1 and c_old == 0:
-              print("-- parser_api.c: already fixed, skipping")
-          else:
-              sys.exit(f"::error::mdie anchor count old={c_old} new={c_new} (source moved?)")
-          PYEOF
-          grep -q 'uint8_t mdie\[\])' drivers/staging/qcacld-3.0/core/mac/src/sys/legacy/src/utils/src/parser_api.c \
-            || { echo "::error::mdie[] fix verification failed"; exit 1; }
-          ! grep -q 'uint8_t mdie\[SIR_MDIE_SIZE\])' drivers/staging/qcacld-3.0/core/mac/src/sys/legacy/src/utils/src/parser_api.c \
-            || { echo "::error::old mdie[SIR_MDIE_SIZE] definition still present"; exit 1; }
-          echo "-- verified: mdie[] matches header declaration (array-parameter silenced)"
-      - name: Install Build Dependencies
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential bc bison flex libssl-dev libelf-dev \
-            zip unzip python3 perl git curl ccache xxd cpio kmod
-          # libtinfo5 只是老式预编译 host 工具的兼容兜底；镜像里没有它时不应拖垮整个 job
-          sudo apt-get install -y --no-install-recommends libtinfo5 \
-            || echo "::warning::libtinfo5 unavailable on this image (non-fatal, symlink below still created)"
-          sudo ln -sf /usr/lib/x86_64-linux-gnu/libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5 || true
-      - name: Cache ccache
-        uses: actions/cache@v4
-        with:
-          path: .ccache
-          # key 带 run_id（每次写入新 key）+ 稳定前缀（每次都能 restore 到最近一次）。
-          # 若 key 不含 run_id，同一 key 二次保存会因 cache 已存在而报错。
-          key: ccache-kernelsu-star-v1-${{ github.run_id }}
-          restore-keys: |
-            ccache-kernelsu-star-v1-
-      - name: Cache Clang Toolchain
-        uses: actions/cache@v4
-        id: clang-cache
-        with:
-          path: ${{ env.CLANG_DIR }}
-          key: clang-17.0.6-x86_64-ubuntu22.04
-
-      - name: Download Clang 17.0.6
-        if: steps.clang-cache.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p "${{ env.CLANG_DIR }}"
-          curl -fL --retry 3 -o /tmp/clang.tar.xz \
-            https://github.com/llvm/llvm-project/releases/download/llvmorg-17.0.6/clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-22.04.tar.xz
-          tar -xf /tmp/clang.tar.xz -C "${{ env.CLANG_DIR }}" --strip-components=1
-      - name: Verify Clang
-        run: ${{ env.CLANG_DIR }}/bin/clang --version
-
-      - name: Integrate KernelSU (backslashxx master, no SUSFS)
-        working-directory: kernel
-        run: |
-          set -euo pipefail
-          echo "== 使用 backslashxx/KernelSU master 主线驱动（无 SUSFS）=="
-          # vendor 树的 ksu_handle_*/susfs_* 埋点全部在 #ifdef CONFIG_KSU_SUSFS 内；
-          # 本工作流不定义该宏，它们整段不编译。主线靠自己的 hook 机制工作，
-          # 因此这里 zero source patch：不注入 Kconfig、不改 sucompat/sulog。
-          echo "== 删除内核树自带的 SukiSU/BakaSU 驱动，换上主线 =="
-          rm -rf KernelSU
-          git clone --filter=blob:none --no-checkout -b "${{ env.KSU_BRANCH }}" \
-            "${{ env.KSU_REPO }}" KernelSU
-          git -C KernelSU fetch --depth=1 origin "${{ env.KSU_PIN }}" \
-            || git -C KernelSU fetch origin "${{ env.KSU_PIN }}"
-          git -C KernelSU checkout --detach "${{ env.KSU_PIN }}"
-          ACTUAL_SHORT="$(git -C KernelSU rev-parse --short=8 HEAD)"
-          PIN_SHORT="${{ env.KSU_PIN }}"
-          if [ "${PIN_SHORT:0:8}" != "$ACTUAL_SHORT" ]; then
-            echo "::error::KernelSU checkout ${ACTUAL_SHORT} != pinned ${PIN_SHORT}"
-            exit 1
-          fi
-          echo "KernelSU: $(git -C KernelSU log -1 --format='%h %s')"
-          echo "== 校验主线身份（me.weishu.kernelsu / KSU_VERSION 32731，无 SUSFS）=="
-          grep -Eq '^KSU_PACKAGE_NAME[[:space:]]*:=[[:space:]]*me\.weishu\.kernelsu$' KernelSU/kernel/Makefile \
-            || { echo "::error::not backslashxx mainline (KSU_PACKAGE_NAME != me.weishu.kernelsu)"; exit 1; }
-          grep -q -- '-DKSU_VERSION=32731' KernelSU/kernel/Makefile \
-            || { echo "::error::not backslashxx mainline (KSU_VERSION != 32731)"; exit 1; }
-          ! grep -rq 'com\.sukisu\.' KernelSU/kernel \
-            || { echo "::error::SukiSU source detected - expected backslashxx mainline"; exit 1; }
-          ! grep -q 'config KSU_SUSFS' KernelSU/kernel/Kconfig \
-            || { echo "::error::driver unexpectedly carries SUSFS Kconfig - source drifted"; exit 1; }
-          echo "-- backslashxx mainline identity verified (me.weishu.kernelsu, SUSFS absent)"
-          echo "== 确认主线自带 5.4 兼容层（无需源码补丁）=="
-          grep -q 'strncpy_from_user_nofault' KernelSU/kernel/kernel_compat.h \
-            || { echo "::error::kernel_compat.h missing - 5.4 build would fail"; exit 1; }
-          test -f KernelSU/kernel/Makefile \
-            || { echo "::error::KernelSU/kernel/Makefile missing (unity-build entry)"; exit 1; }
-          echo "-- 5.4 compat layer present (kernel_compat.h weak fallback); zero source patch"
-          echo "== 接线 drivers/kernelsu（checkout 里现成的符号链接）=="
-          test -L drivers/kernelsu || { echo "::error::drivers/kernelsu symlink missing"; exit 1; }
-          LINK_TARGET="$(readlink drivers/kernelsu)"
-          echo "-- drivers/kernelsu -> $LINK_TARGET"
-          case "$LINK_TARGET" in
-            *KernelSU/kernel*) ;;
-            *) echo "::error::unexpected drivers/kernelsu target: $LINK_TARGET"; exit 1 ;;
-          esac
-          test -f drivers/kernelsu/Makefile || { echo "::error::drivers/kernelsu/Makefile missing"; exit 1; }
-          grep -q 'obj-$(CONFIG_KSU)' drivers/Makefile \
-            || { echo "::error::drivers/Makefile lacks KSU object"; exit 1; }
-          grep -q 'drivers/kernelsu/Kconfig' drivers/Kconfig \
-            || { echo "::error::drivers/Kconfig lacks kernelsu source"; exit 1; }
-          echo "-- driver wiring verified (symlink + Makefile + Kconfig)"
-          echo "-- NOTE: CONFIG_KSU_SUSFS intentionally stays undefined; vendor manual-hook hooks remain dormant"
-
-      - name: Audit KernelSU hook wiring (non-fatal diagnostic)
-        working-directory: kernel
-        # 本步骤只做取证，永不使构建失败：它决定「能编译」是否等于「有 root」。
-        # 产出 ksu-hook-audit.txt，随 build-diagnostics artifact 一起上传。
-        continue-on-error: true
-        run: |
-          set -uo pipefail
-          echo "== 审计树内 ksu_handle_* 调用点：守卫宏 vs 驱动侧定义 =="
-          mapfile -t FILES < <( grep -rl --include='*.c' -e 'ksu_handle_' \
-                                  fs kernel security mm net drivers arch 2>/dev/null \
-                                | grep -v '^drivers/kernelsu/' || true )
-          printf '%s\n' "${FILES[@]:-}" > /tmp/ksu-sites.list
-          echo "-- 命中文件数: ${#FILES[@]} --"
-          python3 - <<'PYEOF'
-          import glob, re, sys
-
-          out = open("ksu-hook-audit.txt", "w")
-          def emit(line=""):
-              print(line)
-              out.write(str(line) + "\n")
-
-          files = [l.strip() for l in open("/tmp/ksu-sites.list") if l.strip()]
-          sym  = re.compile(r'\bksu_handle_[A-Za-z0-9_]+')
-          decl = re.compile(r'^\s*(?:extern\s+)?(?:void|int|long|bool|ssize_t|size_t|'
-                            r'static\s+[\w\s\*]+)\s*\**\s*ksu_handle_')
-
-          sites = []
-          for p in files:
-              try:
-                  lines = open(p, encoding="utf-8", errors="replace").read().splitlines()
-              except OSError:
-                  continue
-              stack = []   # [(condition_text, negated_by_else)]
-              for idx, line in enumerate(lines):
-                  st = line.strip()
-                  if st.startswith("#if"):
-                      stack.append([st, False])
-                  elif st.startswith("#else") or st.startswith("#elif"):
-                      if stack:
-                          stack[-1][1] = True
-                  elif st.startswith("#endif"):
-                      if stack:
-                          stack.pop()
-                  if "ksu_handle_" not in line or decl.match(line):
-                      continue
-                  for m in sym.finditer(line):
-                      sites.append((p, idx + 1, m.group(0), [list(x) for x in stack]))
-
-          def classify(stack):
-              susfs = ksu = other = False
-              detail = []
-              for cond, neg in stack:
-                  has_susfs = "KSU_SUSFS" in cond
-                  has_ksu   = re.search(r'CONFIG_KSU\b', cond) is not None
-                  if has_susfs and not neg:
-                      susfs = True
-                  elif has_susfs and neg:
-                      ksu = True        # #else of SUSFS -> 编译于 SUSFS 关闭时
-                  elif has_ksu and not neg:
-                      ksu = True
-                  else:
-                      other = True
-                  detail.append(("#else " if neg else "") + cond)
-              if susfs:
-                  return "susfs-guarded", detail
-              if ksu:
-                  return "ksu-live", detail
-              if not stack:
-                  return "unconditional", detail
-              return "other-guard", detail
-
-          emit("== ksu_handle_* call sites in vendor tree (driver excluded) ==")
-          counters = {}
-          for p, ln, name, stack in sorted(sites, key=lambda s: (s[0], s[1])):
-              cls, detail = classify(stack)
-              counters[cls] = counters.get(cls, 0) + 1
-              emit(f"{p}:{ln}  {name}  [{cls}]  {' | '.join(detail)}")
-
-          total = len(sites)
-          live = counters.get("unconditional", 0) + counters.get("ksu-live", 0)
-          dormant = counters.get("susfs-guarded", 0)
-          emit()
-          emit(f"total sites      : {total}")
-          emit(f"live (will run)  : {live}  (unconditional={counters.get('unconditional', 0)}, ksu-live={counters.get('ksu-live', 0)})")
-          emit(f"dormant (SUSFS)  : {dormant}")
-          emit(f"other-guarded    : {counters.get('other-guard', 0)}")
-
-          # 驱动侧定义
-          defs = set()
-          for p in glob.glob("KernelSU/kernel/**/*.c", recursive=True):
-              try:
-                  txt = open(p, encoding="utf-8", errors="replace").read()
-              except OSError:
-                  continue
-              for m in re.finditer(r'\b(ksu_handle_\w+)\s*\([^;]*?\)\s*\{', txt, re.S):
-                  defs.add(m.group(1))
-          names = sorted({s[2] for s in sites})
-          missing = [n for n in names if n not in defs]
-          emit()
-          emit(f"driver defines   : {', '.join(sorted(defs)) if defs else '(none found)'}")
-          emit(f"referenced-but-undefined in driver: {', '.join(missing) if missing else '(none)'}")
-
-          emit()
-          if total == 0:
-              verdict = "no-sites"
-              emit("VERDICT: no-sites   -> 树内没有任何 ksu_handle_* 调用，驱动必须靠 kprobe/LSM 自取控制流")
-          elif live == 0:
-              verdict = "hooks-dormant"
-              emit("VERDICT: hooks-dormant -> 所有调用点都被 SUSFS 守卫关闭：本次镜像很可能能开机但 su 失效")
-          else:
-              verdict = "hooks-live"
-              emit("VERDICT: hooks-live -> 存在生效的树内调用点，驱动可被调用；仍需实机确认 su")
-          if missing:
-              emit("WARN: 上列符号若参与编译会出现 LTO undefined symbol —— 确认它们确实未被编译")
-          out.close()
-          print(f"\n报告已写入 ksu-hook-audit.txt (verdict={verdict})")
-          PYEOF
-          test -s ksu-hook-audit.txt || echo "::warning::hook audit produced no report"
-          grep -m1 '^VERDICT:' ksu-hook-audit.txt || true
-          if grep -q '^VERDICT: hooks-dormant' ksu-hook-audit.txt; then
-            echo "::warning::所有 ksu_handle_* 调用点都被 CONFIG_KSU_SUSFS 守卫 —— 驱动收不到任何调用，实机 su 很可能不工作（见 build-diagnostics artifact）"
-          fi
-          if grep -q '^VERDICT: no-sites' ksu-hook-audit.txt; then
-            echo "::warning::树内无 ksu_handle_* 调用点 —— 需确认 backslashxx 主线在本内核上走的是 kprobe/LSM 路径而非 manual hook"
-          fi
-
-      - name: Configure Kernel (backslashxx mainline, no SUSFS)
-        working-directory: kernel
-        run: |
-          set -euo pipefail
-          export ARCH=arm64
-          export PATH="${{ env.CLANG_DIR }}/bin:$PATH"
-          export LLVM=1 LLVM_IAS=1 \
-                 CLANG_TRIPLE=aarch64-linux-gnu- \
-                 CROSS_COMPILE=aarch64-linux-gnu- \
-                 CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
-          echo "== 清洗 defconfig 全角括号（上游腐烂，会静默关闭 CONFIG_MIHW）=="
-          DEFCONFIG_PATH="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
-          test -f "$DEFCONFIG_PATH" || { echo "::error::defconfig not found at $DEFCONFIG_PATH"; exit 1; }
-          sed -i 's/\xEF\xBC\x88//g; s/\xEF\xBC\x89//g' "$DEFCONFIG_PATH"
-          grep -q '^CONFIG_MIHW=y' "$DEFCONFIG_PATH" \
-            || { echo "::error::defconfig sanitize failed (MIHW line)"; exit 1; }
-          echo "== 确保 defconfig 不含任何 CONFIG_KSU_SUSFS* =="
-          # 关键：绝不定义 CONFIG_KSU_SUSFS。vendor 内核树的埋点全部在该宏下，
-          # 一旦定义就会在 LTO 链接期产生 11 个 manual-hook 符号 undefined。
-          # backslashxx 主线不需要这些埋点（自带 syscall/branch/LSM hook）。
-          ! grep -q '^CONFIG_KSU_SUSFS' "$DEFCONFIG_PATH" \
-            || { echo "::error::defconfig must not contain CONFIG_KSU_SUSFS"; exit 1; }
-          echo "== 启用 pstore ramoops（异常开机取证：/sys/fs/pstore/console-ramoops-*）=="
-          for sym in PSTORE PSTORE_RAM PSTORE_CONSOLE; do
-            echo "CONFIG_${sym}=y" >> "$DEFCONFIG_PATH"
-          done
-          echo "== 生成 defconfig =="
-          make O=out ARCH=arm64 "${{ env.DEFCONFIG_NAME }}"
-          echo "== 配置 KernelSU 主线：保持主线默认 hook，关闭调试指纹 =="
-          # hook 方式全部保留主线 Kconfig 默认值（KSU_LSM_SECURITY_HOOKS=y，
-          # KSU_TAMPER_SYSCALL_TABLE / KSU_HACK_ARM64_BRANCH_LINK=n），不强行改写，
-          # 最大程度贴合 backslashxx 主线。SUSFS 相关符号一概不设置。
-          # --disable WERROR：5.4 无该符号时是空操作；有则确保警告不升级为错误
-          # （编译告警由 KCFLAGS 的 -Wno-error 兜底，二者互为保险）。
-          scripts/config --file out/.config \
-            --enable  KSU \
-            --disable KSU_DEBUG \
-            --disable WERROR \
-            --enable  KALLSYMS_ALL \
-            --disable UAPI_HEADER_TEST \
-            --disable HEADERS_INSTALL \
-            --disable LOCALVERSION_AUTO \
-            --disable IKCONFIG \
-            --disable IKCONFIG_PROC \
-            --set-str LOCALVERSION ""
-          scripts/config --file out/.config --state KSU      || true
-          scripts/config --file out/.config --state KSU_DEBUG || true
-          grep -q '^CONFIG_IKCONFIG_PROC=y' out/.config \
-          && { echo "::error::/proc/config.gz exposed - any app can grep CONFIG_KSU from it"; exit 1; } || true
-          make O=out ARCH=arm64 olddefconfig
-          echo "== 校验配置 =="
-          echo "-- KSU/PSTORE/依赖 当前状态 --"
-          grep -nE '^CONFIG_(KSU|PSTORE|THREAD_INFO_IN_TASK|OVERLAY_FS)' out/.config || true
-          echo "-- 编译器防护相关 --"
-          for s in WERROR LTO LTO_CLANG THINLTO FRAME_WARN; do
-            scripts/config --file out/.config --state "$s" 2>/dev/null || echo "CONFIG_${s}: <absent>"
-          done
-          grep -q '^CONFIG_KSU=y' out/.config \
-            || { echo "::error::CONFIG_KSU not enabled"; exit 1; }
-          for sym in PSTORE PSTORE_RAM PSTORE_CONSOLE; do
-            grep -q "^CONFIG_${sym}=y" out/.config \
-              || { echo "::error::CONFIG_${sym} not enabled"; exit 1; }
-          done
-          # SUSFS 必须全程缺席，否则 vendor manual-hook 埋点复活 -> LTO undefined symbol
-          grep -q '^CONFIG_KSU_SUSFS' out/.config \
-            && { echo "::error::CONFIG_KSU_SUSFS must stay off (breaks LTO link)"; exit 1; } || true
-          # 若驱动 Kconfig 里根本没有 KSU_DEBUG 符号，本检查恒真（无害，但不构成证据）
-          grep -q '^CONFIG_KSU_DEBUG=y' out/.config \
-            && { echo "::error::KSU_DEBUG must stay off (dmesg fingerprint)"; exit 1; } || true
-          grep -q '^CONFIG_LOCALVERSION_AUTO=y' out/.config \
-            && { echo "::error::LOCALVERSION_AUTO must stay off (uname -r would gain -g<sha>)"; exit 1; } || true
-          grep -q '^CONFIG_WERROR=y' out/.config \
-            && { echo "::error::CONFIG_WERROR must stay off (warnings must not become errors)"; exit 1; } || true
-          echo "-- verified: KSU on, SUSFS absent, WERROR off, no debug fingerprints"
-      - name: 修复编译警告
-        working-directory: kernel
-        run: |
-          set -e
-          FOCALTECH_MAKEFILE="drivers/input/touchscreen/focaltech_touch/Makefile"
-          if [ -f "$FOCALTECH_MAKEFILE" ]; then
-            sed -i 's/^ \+/\t/' "$FOCALTECH_MAKEFILE"
-            echo "Fixed leading spaces in focaltech Makefile"
-          fi
-          for entry in \
-            "drivers/staging/qcacld-3.0:-Wno-format" \
-            "drivers/staging/qca-wifi-host-cmn:-Wno-format" \
-            "drivers/thermal:-Wno-fortify-source"; do
-            DIR="${entry%%:*}"
-            FLAG="${entry##*:}"
-            if [ -d "$DIR" ] && [ -f "$DIR/Makefile" ]; then
-              grep -q -- "$FLAG" "$DIR/Makefile" || echo "ccflags-y += $FLAG" >> "$DIR/Makefile"
-            fi
-          done
-      - name: Record applied source deltas
-        working-directory: kernel
-        # 12 个改源码步骤让「pin 住的源码」不再是构建输入；把真实 delta 留档，
-        # 同一 pin 重跑应产出同一 patch（可复现性断言）。
-        run: |
-          set -euo pipefail
-          # 驱动整棵替换会产生上万行 D/?? 噪声，只留真正被改的内核源码
-          git status --porcelain | grep -v 'KernelSU/' | tee ../kernel-status.txt || true
-          # 排除 KernelSU/（那是整棵驱动替换，diff 体积巨大且已单独 pin）
-          git diff --stat  -- . ':(exclude)KernelSU' | tee ../applied.stat
-          git diff         -- . ':(exclude)KernelSU' > ../applied.patch
-          echo "-- applied.patch 行数: $(wc -l < ../applied.patch) --"
-      - name: Build Kernel
-        working-directory: kernel
-        run: |
-          export ARCH=arm64
-          export PATH="${{ env.CLANG_DIR }}/bin:$PATH"
-          export LLVM=1 LLVM_IAS=1 \
-                 CLANG_TRIPLE=aarch64-linux-gnu- \
-                 CROSS_COMPILE=aarch64-linux-gnu- \
-                 CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
-          export CCACHE_DIR="${{ github.workspace }}/.ccache"
-          # 8G 会撑爆每仓库 10G 上限并把 clang 工具链缓存挤掉；3G 对 5.4 全树足够
-          export CCACHE_MAXSIZE=3G
-          # 去除 CI 构建指纹：/proc/version 里嵌入的构建者/主机名/时间戳会被检测用作
-          # "自编内核" 信号，固定为普通本地构建形态（对反检测同样有意义）
-          export KBUILD_BUILD_USER=builder
-          export KBUILD_BUILD_HOST=android-build
-          export KBUILD_BUILD_TIMESTAMP="Thu Jun 12 10:00:00 UTC 2025"
-          echo "-- 构建前磁盘 --"; df -h / | tail -1
-          echo "== 预装 UAPI 头文件以启用 KernelSU preinit runner =="
-          # vendor defconfig 不带 HEADERS_INSTALL，KernelSU 的 preinit runner
-          # 检测不到 out/usr/include 会降级为 -DKSU_NO_PREINIT。这里显式安装以启用
-          make -j$(nproc) O=out ARCH=arm64 \
-            CC="ccache clang" LD="ld.lld" AR="llvm-ar" NM="llvm-nm" \
-            headers_install INSTALL_HDR_PATH="$PWD/out/usr" \
-            || echo "::warning::headers_install failed, KernelSU preinit will stay disabled (non-fatal)"
-          test -f out/usr/include/linux/unistd.h \
-            && echo "-- preinit UAPI headers ready" \
-            || echo "::warning::usr/include/linux/unistd.h missing, preinit will be disabled"
-          set +e
-          # 注意：不再全局抬高 -Wframe-larger-than（131072 等于把 2K 栈告警检查关掉，
-          # 会掩盖真实栈溢出）。保留内核默认阈值，配 CONFIG_WERROR=off + -Wno-error，
-          # 告警保持为告警。
-          make -j$(nproc) O=out ARCH=arm64 \
-            CC="ccache clang" LD="ld.lld" AR="llvm-ar" NM="llvm-nm" \
-            OBJCOPY="llvm-objcopy" OBJDUMP="llvm-objdump" STRIP="llvm-strip" \
-            CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" \
-            KCFLAGS="-Wno-unknown-warning-option -Wno-error -Wno-format -Wno-incompatible-pointer-types \
-            -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-missing-prototypes \
-            -Wno-int-conversion -Wno-declaration-after-statement \
-            -Wno-unused-variable -Wno-unused-function \
-            -Wno-missing-braces -Wno-int-to-pointer-cast -Wno-address-of-packed-member \
-            -Wno-return-type -Wno-shift-negative-value -Wno-array-bounds" \
-            HOSTCFLAGS="" 2>&1 | tee build.log
-          RC=${PIPESTATUS[0]}
-          if [ "$RC" -ne 0 ]; then
-            echo "::error::Kernel build failed (rc=$RC). 首个错误（完整日志见 build-diagnostics artifact）："
-            grep -n -m 5 -E '^[^ ]*:[0-9]+:[0-9]+: error:|^[^ ]*: error:|^make.*\*\*\*.*Error' build.log || true
-            tail -n 100 build.log
-            exit 1
-          fi
-          echo "=== Build finished ==="
-          ccache -s 2>/dev/null || true
-          echo "-- 构建后磁盘 --"; df -h / | tail -1
-          ls -lh out/arch/arm64/boot/Image
-      - name: Post-build KernelSU sanity (non-fatal diagnostics)
-        working-directory: kernel
-        continue-on-error: true
-        # CI 只能证明链接成功；这里补上「驱动符号是否真的进了镜像」的取证。
-        # LTO 可能内联掉 ksu_handle_*，所以缺失只报警告、不失败。
-        run: |
-          set -uo pipefail
-          echo "== Image =="
-          ls -lh out/arch/arm64/boot/Image || echo "::warning::Image missing"
-          echo "== out/.config 关键项 =="
-          grep -E '^CONFIG_(KSU|LTO|PSTORE)' out/.config || true
-          echo "== System.map ksu 符号计数 =="
-          if [ -f out/System.map ]; then
-            grep -c 'ksu' out/System.map || true
-            grep -m 8 -E ' ksu_| kernelsu' out/System.map || echo "::warning::System.map 无 ksu 符号（LTO 内联或驱动未编译）"
-          else
-            echo "::warning::out/System.map missing"
-          fi
-          echo "== vmlinux 内嵌字符串 =="
-          if [ -f out/vmlinux ]; then
-            strings out/vmlinux 2>/dev/null | grep -m 3 -i 'kernelsu' || echo "::warning::vmlinux 无 kernelsu 字符串"
-          fi
-          echo "-- 提示：以上仅为取证。root 是否可用只能实机验证：管理器显示 Working 且 su -c id 返回 uid=0 --"
-      - name: Package AnyKernel3
-        run: |
-          set -e
-          TIME=$(TZ='Asia/Shanghai' date +%Y%m%d-%H%M)
-          IMG_PATH="${{ env.KERNEL_DIR }}/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image"
-          test -f "$IMG_PATH"
-          rm -rf AnyKernel3
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git
-          cd AnyKernel3
-          cp "$IMG_PATH" ./Image
-          gzip -9 -f ./Image
-          rm -f ./Image
-          cat > anykernel.sh <<'AK3'
-          ### AnyKernel3 Ramdisk Mod Script
-          ## osm0sis @ xda-developers
-          ### AnyKernel setup
-          # global properties
-          properties() { '
-          kernel.string=Edwin KernelSU (backslashxx master) for Xiaomi 11 Ultra / Pro (star)
-          do.devicecheck=1
-          do.modules=0
-          do.systemless=1
-          do.cleanup=1
-          do.cleanuponabort=0
-          device.name1=star
-          device.name2=mars
-          supported.versions=
-          supported.patchlevels=
-          supported.vendorpatchlevels=
-          '; } # end properties
-          ### AnyKernel install
-          # boot files attributes
-          boot_attributes() {
-          set_perm_recursive 0 0 755 644 $RAMDISK/*;
-          set_perm_recursive 0 0 750 750 $RAMDISK/init* $RAMDISK/sbin;
-          } # end attributes
-          # boot shell variables
-          BLOCK=boot;
-          IS_SLOT_DEVICE=1;
-          RAMDISK_COMPRESSION=auto;
-          PATCH_VBMETA_FLAG=auto;
-          # import functions/variables and setup patching - see for reference (DO NOT REMOVE)
-          . tools/ak3-core.sh;
-          # boot install
-          split_boot;
-          flash_boot;
-          ## end boot install
-          AK3
-          chmod +x anykernel.sh
-          zip -r9 "../${{ env.DEVICE_CODENAME }}-KernelSU-Backslashxx-${TIME}.zip" ./*
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: star-KernelSU-Backslashxx
-          path: ${{ env.DEVICE_CODENAME }}-KernelSU-Backslashxx-*.zip
-      - name: Upload diagnostics (build log / hook audit / applied patch)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-diagnostics
-          path: |
-            kernel/build.log
-            kernel/ksu-hook-audit.txt
-            applied.patch
-            applied.stat
-            kernel-status.txt
-          if-no-files-found: warn
-          retention-days: 14
