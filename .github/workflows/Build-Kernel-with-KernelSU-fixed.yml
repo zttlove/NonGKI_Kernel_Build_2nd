@@ -1,4 +1,4 @@
-name: Build Kernel with KernelSU (backslashxx master, no SUSFS)m
+name: Build Kernel with KernelSU (backslashxx master, no SUSFS)
 
 on:
   workflow_dispatch:
@@ -27,10 +27,12 @@ env:
   #   r2 补回 cpufreq 步骤写回磁盘 + 读盘复验
   #   r3 cyttsp5 7/8-tab 双形态匹配 + 9 个非关键补丁 continue-on-error
   #   r4 加版本指纹横幅（若日志里看不到 => 仓库里跑的是旧 yml）
+  #   r5 修正 name 尾部笔误；B/D 组增加“开关真实生效”三级断言；
+  #      drivers/kernelsu 主动规范化；构建后反查 kernelsu.o 的 preinit 状态
   # 若 Actions 日志开头没有 "WORKFLOW REV" 横幅，说明本次运行用的不是本文件，
   # 请把本文件完整覆盖到 .github/workflows/ 下、删除同名旧文件、再重新 dispatch。
   # ---------------------------------------------------------------------------
-  WF_REV: "r4-20261119"
+  WF_REV: "r5-20261120"
   KERNEL_REPO: zttlove/android_kernel_xiaomi_sm8350-hyperos
   KERNEL_BRANCH: dynamic
   # ---------------------------------------------------------------------------
@@ -70,6 +72,12 @@ env:
   #      93 commits on top of upstream），含 downstream preinit / lsm_hook /
   #      ksud init.rc 注入 / selinux policydb backport 等大量新代码。
   #      **换 pin 后尚未实机验证能否开机**；若卡第二屏，优先按 KSU 侧排查。
+  # 2026-11-20 r5 已逐行核对 pin ae59aa55 源码：
+  #      - ksu.c 中 #ifndef KSU_NO_PREINIT 包住 preinit.c 的 unity include，
+  #        注入点选在 #include "kernel_includes.h" 之后、首次使用之前；
+  #      - kernel/Kconfig 存在 config KSU_THRONE_TRACKER_ALWAYS_THREADED
+  #        (depends on KSU, default n)，D 组开关有效；
+  #      - kernel/Makefile 已含 -mno-outline-atomics（ARM64），无需外部 KCFLAGS。
   # 注意：preinit 开关与 UAPI headers 无关，实际由 preinit/preinit.h 的
   #      CONFIG_ARM64 && KSU_CAN_USE_JUMP_LABEL 门控；需关闭时用
   #      workflow_dispatch 输入 disable_preinit（注入 #define KSU_NO_PREINIT）。
@@ -87,7 +95,7 @@ jobs:
       # -----------------------------------------------------------------------
       # 版本指纹：日志第一屏即可确认仓库里跑的是不是这一份文件。
       # 排查用法：把失败 run 的日志开头贴出来，看有没有下面这条横幅。
-      #   - 有 WF_REV=r4        => 跑的是新版，按新版逻辑排查
+      #   - 有 WF_REV=r5        => 跑的是新版，按新版逻辑排查
       #   - 没有横幅 / 是旧 rev => 仓库里的 yml 仍是旧文件，修改没生效
       # -----------------------------------------------------------------------
       - name: Announce workflow revision
@@ -104,6 +112,7 @@ jobs:
           echo " KEY FIXES    : cpufreq write-back + re-read verification"
           echo "              : cyttsp5 7/8-tab tolerant (non-fatal on mismatch)"
           echo "              : 9 non-critical patches continue-on-error"
+          echo "              : r5 B/D controls verified effective, no silent no-op"
           echo "================================================================"
           echo "提示：若你在这条日志里看不到本横幅，说明仓库跑的是旧 yml，"
           echo "      请把本文件完整覆盖到 .github/workflows/ 并删除同名旧文件。"
@@ -257,14 +266,9 @@ jobs:
       - name: Silence min() type-mismatch warning in tcp_output.c
         working-directory: kernel
         # 纯编译警告/无行为变更补丁：anchor 若因上游 pin 变化失配，只告警不中断构建。
-        # 开机关键补丁（Enforce cpufreq init order）刻意不加此开关，必须强制成功。
         continue-on-error: true
         run: |
           set -euo pipefail
-          # net/ipv4/tcp_output.c: threshold = min(srtt_in_ns >> 1, NSEC_PER_MSEC)
-          # u64 与 long 比较，__typecheck 触发 -Wcompare-distinct-pointer-types 警告
-          # （5.4 stable 回移植上游自带，主线后续用 min_t 修复）。改为 min_t(u64,...)
-          # 与上游修复一致：结果 <= 1e6，赋回 u32 threshold 无损。
           TF=net/ipv4/tcp_output.c
           grep -q 'threshold = min(srtt_in_ns >> 1, NSEC_PER_MSEC);' "$TF" \
             || { echo "::error::tcp_output.c anchor not found (source moved?)"; exit 1; }
@@ -275,16 +279,9 @@ jobs:
 
       - name: Fix misleading indentation in mi_dsi_panel.c (no behavior change)
         working-directory: kernel
-        # 纯编译警告/无行为变更补丁：anchor 若因上游 pin 变化失配，只告警不中断构建。
-        # 开机关键补丁（Enforce cpufreq init order）刻意不加此开关，必须强制成功。
         continue-on-error: true
         run: |
           set -euo pipefail
-          # techpack/display/msm/mi_disp/mi_dsi_panel.c LOCAL_HBM_OFF_TO_NORMAL_BACKLIGHT_RESTORE:
-          # else 缺大括号，后随两行缩进过深触发 -Wmisleading-indentation。编译器实际语义：
-          # else 体仅含 backlight_in_aod；dc_gain（内部自带 panel_id 守卫）与 tx_cmd_set
-          # 无条件执行——与上方姊妹 case（..._BACKLIGHT）的尾部模式一致，编译结果即作者
-          # 意图。补大括号+对齐缩进，编译产物零变化，仅消除警告。
           python3 <<'PYEOF'
           p = "techpack/display/msm/mi_disp/mi_dsi_panel.c"
           s = open(p).read()
@@ -304,7 +301,6 @@ jobs:
           open(p, "w").write(s.replace(old, new))
           print("-- mi_dsi_panel.c: else braces added, indentation aligned (semantics unchanged)")
           PYEOF
-          # 注意：$'...' 才是真 tab，普通 '\t' 在 grep BRE 下是字面量 't'
           CNT=$(grep -c $'^\t\t\telse {' techpack/display/msm/mi_disp/mi_dsi_panel.c || true)
           if [ "${CNT:-0}" -lt 1 ]; then
             echo "::error::mi_dsi_panel.c brace fix verification failed (count=${CNT:-0})"; exit 1
@@ -313,16 +309,9 @@ jobs:
 
       - name: Fix missing brace in cam_flash_core.c add_req error check (no behavior change)
         working-directory: kernel
-        # 纯编译警告/无行为变更补丁：anchor 若因上游 pin 变化失配，只告警不中断构建。
-        # 开机关键补丁（Enforce cpufreq init order）刻意不加此开关，必须强制成功。
         continue-on-error: true
         run: |
           set -euo pipefail
-          # techpack/camera_star/.../cam_flash_core.c cam_flash_i2c_pkt_parser():
-          # 守卫 if (crm_cb && crm_cb->add_req) 丢失左大括号（合并腐蚀），导致
-          # if (rc) 错误检查被编译为守卫外无条件执行。可达路径上两者等价：
-          # 未调用 add_req 时 rc 恒为函数入口初值 0（NOP 路径 goto 前不碰 rc）。
-          # 补回大括号恢复 CAF 原始写法，顺带修正 "if  (rc)" 双空格，行为零变化。
           python3 <<'PYEOF'
           p = "techpack/camera_star/drivers/cam_sensor_module/cam_flash/cam_flash_core.c"
           s = open(p).read()
@@ -356,15 +345,9 @@ jobs:
 
       - name: Fix ignored kstrtou32 return in bootinfo.c (no behavior change)
         working-directory: kernel
-        # 纯编译警告/无行为变更补丁：anchor 若因上游 pin 变化失配，只告警不中断构建。
-        # 开机关键补丁（Enforce cpufreq init order）刻意不加此开关，必须强制成功。
         continue-on-error: true
         run: |
           set -euo pipefail
-          # techpack/bootinfo/bootinfo.c: get_powerup_reason()/get_powerdown_reason()
-          # 忽略 kstrtou32 返回值（-Wunused-result）。解析失败时全局 pu/pd_reason
-          # 本就保持 0，且调用方（powerup_reason_show 等 5 处）全部忽略本函数返回值
-          # ——改为 return kstrtou32(...) 透传，警告消除，行为零变化。
           python3 <<'PYEOF'
           p = "techpack/bootinfo/bootinfo.c"
           s = open(p).read()
@@ -381,26 +364,15 @@ jobs:
           open(p, "w").write(s)
           print("-- bootinfo.c: kstrtou32 return propagated (2 sites)")
           PYEOF
-          # 同上：$'...' 展开为真 tab；'[ud]' 在 BRE 中作字符类匹配 u/d
           CNT=$(grep -c $'^\treturn kstrtou32(buf, 16, &p[ud]_reason);$' techpack/bootinfo/bootinfo.c || true)
           [ "$CNT" = "2" ] || { echo "::error::bootinfo.c kstrtou32 fix verification failed (count=$CNT)"; exit 1; }
           echo "-- verified: 2 return-kstrtou32 sites in place"
 
       - name: Fix misleading indentation in cyttsp5_device_access.c (pure reindent)
         working-directory: kernel
-        # 纯编译警告/无行为变更补丁：anchor 若因上游 pin 变化失配，只告警不中断构建。
-        # 开机关键补丁（Enforce cpufreq init order）刻意不加此开关，必须强制成功。
         continue-on-error: true
         run: |
           set -euo pipefail
-          # drivers/input/touchscreen/cyttsp5/cyttsp5_device_access.c 三处缩进腐烂：
-          # 1) cmcp_test store: if 体仅 range_check=0，后续 cmcp_* 赋值无条件执行
-          #    （上游 Parade 原始语义；若塞进 if 内，写 CMCP_FULL 永不更新
-          #    cmcp_test_items，测试机直接坏）——按编译语义重排。
-          # 2/3) CM/Cm 打印循环: for 体仅 prepare_print_data，行尾换行
-          #    prepare_print_string("\n") 在 j 循环外每行一次（语义正确）——
-          #    续行缩进混乱（6/2/8、7/4/7 tab）误导 clang，重排为正常层级。
-          # 三处均为纯缩进调整，token 流不变（构建时以去空白等价性断言兜底）。
           python3 <<'PYEOF'
           import re, sys
           p = "drivers/input/touchscreen/cyttsp5/cyttsp5_device_access.c"
@@ -443,10 +415,6 @@ jobs:
                   "\t\t\t\t\tindex = prepare_print_string(\n"
                   "\t\t\t\t\t\tout_buf,\n"
                   "\t\t\t\t\t\t\"\\n\", index);\n")
-          # 续行缩进在不同 vendor pin 上有 8 tab / 7 tab 两种形态（2026-11-19 在
-          # f4c3fdd4 上实测为 7 tab），这里同时接受两种，命中即用；都不命中也只
-          # 告警、不中止 —— 本步骤仅消除 -Wmisleading-indentation，纯缩进零行为
-          # 变更，KCFLAGS 另有 -Wno-error / -Wno-misleading-indentation 兜底。
           base3 = ("\t\t\t\t\tfor (j = 0; j < tx_num; j++)\n"
                    "\t\t\t\t\t\tindex = prepare_print_data(\n"
                    "\t\t\t\t\t\t\tout_buf,\n"
@@ -467,7 +435,6 @@ jobs:
                   "\t\t\t\t\t\t\"\\n\", index);\n")
           orig = s
           applied = []
-          # 幂等：文件已是修复后形态则直接跳过，不重复替换
           if s.count(new1) == 1 and s.count(new2) == 1 and s.count(new3) == 1:
               print("-- cyttsp5_device_access.c: already in canonical form, skipping")
               sys.exit(0)
@@ -489,7 +456,6 @@ jobs:
                   break
           if not hit:
               print("::warning::row-delta loop: no known anchor variant matched - skipped (non-fatal)")
-          # 纯重排证明：去空白后 token 流必须与原文件一致
           assert re.sub(r"\s+", "", orig) == re.sub(r"\s+", "", s), \
               "token stream changed - aborting (not a pure reindent)"
           open(p, "w").write(s)
@@ -499,17 +465,9 @@ jobs:
 
       - name: Fix sscanf %100s off-by-one in fts_spi (stack overflow guard)
         working-directory: kernel
-        # 纯编译警告/无行为变更补丁：anchor 若因上游 pin 变化失配，只告警不中断构建。
-        # 开机关键补丁（Enforce cpufreq init order）刻意不加此开关，必须强制成功。
         continue-on-error: true
         run: |
           set -euo pipefail
-          # drivers/input/touchscreen/fts_spi/{fts_proc.c,fts.c}：
-          # 目标缓冲区均为 char path[100]，而 sscanf 格式串用 %100s ——
-          # 匹配满 100 字符时写入 100 字节 + NUL = 101 字节，越界 1 字节
-          # （clang -Wfortify-source 报的真实 off-by-one，非外观）。
-          # 修复：%100s -> %99s（保留 NUL 空间）。行为影响仅在用户输入
-          # 恰好 >= 99 字符的固件路径时截断 1 字符，正常固件名远短于此。
           python3 <<'PYEOF'
           fixes = {
               "drivers/input/touchscreen/fts_spi/fts_proc.c": [
@@ -536,16 +494,9 @@ jobs:
 
       - name: Fix PCI_VENDOR_ID_ASIX macro redefinition in 8250_pci.c (no behavior change)
         working-directory: kernel
-        # 纯编译警告/无行为变更补丁：anchor 若因上游 pin 变化失配，只告警不中断构建。
-        # 开机关键补丁（Enforce cpufreq init order）刻意不加此开关，必须强制成功。
         continue-on-error: true
         run: |
           set -euo pipefail
-          # drivers/tty/serial/8250/8250_pci.c L1877 本地 #define PCI_VENDOR_ID_ASIX 0x9710
-          # （MosChip 遗留枚举的旧板卡），与 include/linux/pci_ids.h 的真实 ASIX 0x125b
-          # 同名不同值。预处理顺序：L70（MSI 表）在本地 #define 之前 → 取 0x125b；
-          # L2680/L5801（FIFO quirk + 板卡表）在之后 → 取 0x9710。这就是现状编译语义。
-          # 在 L1877 前插 #undef 再重定义：消除 -Wmacro-redefined，每个使用点取值不变。
           python3 <<'PYEOF'
           import re, sys
           p = "drivers/tty/serial/8250/8250_pci.c"
@@ -571,26 +522,15 @@ jobs:
 
       - name: Fix unused label reset_assert in dwc3-qcom.c (no behavior change)
         working-directory: kernel
-        # 纯编译警告/无行为变更补丁：anchor 若因上游 pin 变化失配，只告警不中断构建。
-        # 开机关键补丁（Enforce cpufreq init order）刻意不加此开关，必须强制成功。
         continue-on-error: true
         run: |
           set -euo pipefail
-          # drivers/usb/dwc3/dwc3-qcom.c L732 的 reset_assert 标签在当前 defconfig 下
-          # 无任何 goto 引用（-Wunused-label）。两种成因：
-          #   a) 代码演进中删除全部 goto reset_assert，标签残留 → 删除安全
-          #   b) goto 在某个 #ifdef CONFIG_XXX 块内被当前配置排除 → 删除会在
-          #      未来启用该配置时导致 "label not found" 编译错误
-          # 脚本先扫全文（含条件编译块）确认无 goto 引用；有则报错让手动用
-          # 相同 #ifdef 包裹标签，无则删除标签行。零行为变更。
           python3 <<'PYEOF'
           import re, sys
           p = "drivers/usb/dwc3/dwc3-qcom.c"
           s = open(p).read()
           if re.search(r'\bgoto\s+reset_assert\s*;', s):
-              sys.exit("::error::goto reset_assert exists in file (possibly under #ifdef) - "
-                       "manual review needed: wrap label with matching #ifdef or confirm "
-                       "current defconfig excludes it")
+              sys.exit("::error::goto reset_assert exists in file (possibly under #ifdef) - manual review needed")
           label_pat = re.compile(r'^reset_assert:[ \t]*\n', re.M)
           m = label_pat.search(s)
           if not m:
@@ -608,17 +548,9 @@ jobs:
 
       - name: Fix array-parameter mismatch in qcacld parser_api.c (no behavior change)
         working-directory: kernel
-        # 纯编译警告/无行为变更补丁：anchor 若因上游 pin 变化失配，只告警不中断构建。
-        # 开机关键补丁（Enforce cpufreq init order）刻意不加此开关，必须强制成功。
         continue-on-error: true
         run: |
           set -euo pipefail
-          # drivers/staging/qcacld-3.0/.../parser_api.c L6177 定义
-          # uint8_t mdie[SIR_MDIE_SIZE]，而 core/mac/src/include/parser_api.h L1056
-          # 声明 uint8_t mdie[]。C 中数组参数退化为指针，[] 与 [SIR_MDIE_SIZE]
-          # 在函数体内均为 uint8_t *，行为完全相同；Clang -Warray-parameter
-          # 只检查声明/定义边界一致性。修复：源文件定义改为 []，与头文件一致。
-          # 函数体内 mdie[0..2] / sizeof(mdie)（参数上下文恒为指针大小）不受影响。
           python3 <<'PYEOF'
           import sys
           p = "drivers/staging/qcacld-3.0/core/mac/src/sys/legacy/src/utils/src/parser_api.c"
@@ -635,9 +567,9 @@ jobs:
           else:
               sys.exit(f"::error::mdie anchor count old={c_old} new={c_new} (source moved?)")
           PYEOF
-          grep -q 'uint8_t mdie\[\])' drivers/staging/qcacld-3.0/core/mac/src/sys/legacy/src/utils/src/parser_api.c \
+          grep -q 'uint8_t mdie$$$$)' drivers/staging/qcacld-3.0/core/mac/src/sys/legacy/src/utils/src/parser_api.c \
             || { echo "::error::mdie[] fix verification failed"; exit 1; }
-          ! grep -q 'uint8_t mdie\[SIR_MDIE_SIZE\])' drivers/staging/qcacld-3.0/core/mac/src/sys/legacy/src/utils/src/parser_api.c \
+          ! grep -q 'uint8_t mdie$$SIR_MDIE_SIZE$$)' drivers/staging/qcacld-3.0/core/mac/src/sys/legacy/src/utils/src/parser_api.c \
             || { echo "::error::old mdie[SIR_MDIE_SIZE] definition still present"; exit 1; }
           echo "-- verified: mdie[] matches header declaration (array-parameter silenced)"
 
@@ -684,13 +616,11 @@ jobs:
           KSU_REPO_EFF: ${{ env.KSU_REPO }}
           IN_DISABLE_PREINIT: ${{ steps.meta.outputs.disable_preinit }}
           IN_KSU_ENABLED: ${{ steps.meta.outputs.ksu_enabled }}
+          IN_THREADED_THRONE: ${{ steps.meta.outputs.threaded_throne }}
         run: |
           set -euo pipefail
           echo "== 使用 backslashxx/KernelSU master 主线驱动（无 SUSFS）=="
           echo "-- effective KSU pin: ${KSU_PIN_EFF}"
-          # vendor 树的 ksu_handle_*/susfs_* 埋点全部在 #ifdef CONFIG_KSU_SUSFS 内；
-          # 本工作流不定义该宏，它们整段不编译。主线靠自己的 hook 机制工作，
-          # 因此这里 zero source patch：不注入 Kconfig、不改 sucompat/sulog。
           echo "== 删除内核树自带的 SukiSU/BakaSU 驱动，换上主线 =="
           rm -rf KernelSU
           git clone --filter=blob:none --no-checkout -b "${KSU_BRANCH_EFF}" \
@@ -706,8 +636,6 @@ jobs:
           fi
           echo "KernelSU: $(git -C KernelSU log -1 --format='%h %s')"
           echo "== 校验主线身份（me.weishu.kernelsu / KSU_VERSION 32731，无 SUSFS）=="
-          # 先确保所有被 grep 的文件/目录真实存在：文件缺失时 grep 返回 2，
-          # 旧写法 "! grep -q ..." 会把它当成"没匹配"而假通过，这里全部改成显式判断。
           test -f KernelSU/kernel/Makefile \
             || { echo "::error::KernelSU/kernel/Makefile missing (unity-build entry)"; exit 1; }
           test -f KernelSU/kernel/Kconfig \
@@ -728,12 +656,18 @@ jobs:
           fi
           echo "-- backslashxx mainline identity verified (me.weishu.kernelsu, SUSFS absent)"
           echo "== 校验 hook 策略符号 / preinit 门控（KSU 升级漂移兜底）=="
-          # 实际生效值在 Configure 步骤对 olddefconfig 后的 .config 做断言（更可靠）
           KCFG=KernelSU/kernel/Kconfig
           grep -q 'config KSU_LSM_SECURITY_HOOKS' "$KCFG" \
             || { echo "::error::KSU_LSM_SECURITY_HOOKS Kconfig symbol missing - hook strategy changed"; exit 1; }
           grep -q 'config KSU_TAMPER_SYSCALL_TABLE' "$KCFG" \
             || { echo "::error::KSU_TAMPER_SYSCALL_TABLE Kconfig symbol missing"; exit 1; }
+          # r5 新增：D 组开关必须在当前 pin 的 Kconfig 里真实存在，否则
+          # scripts/config --enable 写入的符号会被 olddefconfig 丢弃，对照空跑。
+          if [ "${IN_THREADED_THRONE:-false}" = "true" ] && [ "$IN_KSU_ENABLED" = "true" ]; then
+            grep -q 'config KSU_THRONE_TRACKER_ALWAYS_THREADED' "$KCFG" \
+              || { echo "::error::KSU_THRONE_TRACKER_ALWAYS_THREADED Kconfig symbol missing - D-group control would be a silent no-op"; exit 1; }
+            echo "-- D-group knob exists in Kconfig (default n, depends on KSU)"
+          fi
           if [ -f KernelSU/kernel/preinit/preinit.h ]; then
             if grep -q 'KSU_CAN_USE_JUMP_LABEL' KernelSU/kernel/preinit/preinit.h; then
               echo "-- preinit gated by CONFIG_ARM64 && KSU_CAN_USE_JUMP_LABEL (NOT UAPI headers)"
@@ -747,8 +681,13 @@ jobs:
           grep -q 'strncpy_from_user_nofault' KernelSU/kernel/kernel_compat.h \
             || { echo "::error::kernel_compat.h missing - 5.4 build would fail"; exit 1; }
           echo "-- 5.4 compat layer present (kernel_compat.h weak fallback); zero source patch"
-          echo "== 接线 drivers/kernelsu（checkout 里现成的符号链接）=="
-          test -L drivers/kernelsu || { echo "::error::drivers/kernelsu symlink missing"; exit 1; }
+          echo "== 接线 drivers/kernelsu（主动规范化，不依赖 checkout 现成形态）=="
+          # r5 改动：vendor 树若该路径是真实目录（自带 BakaSU/SukiSU 驱动）、
+          # 断开的链接或缺失，一律替换成指向主线 KernelSU/kernel 的符号链接，
+          # 避免误把旧驱动编进内核（此前版本只是“验证现成链接”，不够稳）。
+          rm -rf drivers/kernelsu
+          ln -sfn ../KernelSU/kernel drivers/kernelsu
+          test -L drivers/kernelsu || { echo "::error::drivers/kernelsu symlink creation failed"; exit 1; }
           LINK_TARGET="$(readlink drivers/kernelsu)"
           echo "-- drivers/kernelsu -> $LINK_TARGET"
           case "$LINK_TARGET" in
@@ -763,12 +702,22 @@ jobs:
           echo "-- driver wiring verified (symlink + Makefile + Kconfig)"
           echo "== B 组对照：按需关闭 downstream preinit =="
           if [ "$IN_DISABLE_PREINIT" = "true" ] && [ "$IN_KSU_ENABLED" = "true" ]; then
+            # r5 新增前置断言：确认当前 pin 真正消费 KSU_NO_PREINIT。
+            # 已核对 ae59aa55：ksu.c 的 unity-build 段用
+            #   #ifndef KSU_NO_PREINIT
+            #   #include "preinit/runner/runner_xxd.h"
+            #   #include "preinit/preinit.c"
+            #   #endif
+            # preinit/preinit.h 也按该宏裁剪。若未来 pin 移除这些引用，
+            # 注入就变成空操作，对照实验会得出错误结论 —— 宁可报错。
+            grep -rq 'KSU_NO_PREINIT' KernelSU/kernel \
+              || { echo "::error::KSU_NO_PREINIT not referenced by this KSU pin - B-group control would be a silent no-op"; exit 1; }
             python3 - <<'PY'
           p = "KernelSU/kernel/ksu.c"
           s = open(p).read()
           anchor = '#include "kernel_includes.h"\n'
           assert s.count(anchor) == 1, "ksu.c anchor moved - manual review needed"
-          if "#define KSU_NO_PREINIT" not in s:
+          if not re.search(r'^#define\s+KSU_NO_PREINIT\b', s, re.M):
               s = s.replace(anchor,
                   anchor + "\n/* B-group control: disable downstream preinit runner */\n#define KSU_NO_PREINIT\n")
           open(p, "w").write(s)
@@ -776,7 +725,13 @@ jobs:
           PY
             grep -q '^#define KSU_NO_PREINIT' KernelSU/kernel/ksu.c \
               || { echo "::error::KSU_NO_PREINIT injection failed"; exit 1; }
-            echo "-- preinit runner disabled for this build"
+            # r5 新增：注入点必须早于首次使用点。当前 pin 已核对满足；
+            # 升级 PIN 后若顺序颠倒，宏对 preinit.h / unity 块都不可见。
+            INJ=$(grep -n '^#define KSU_NO_PREINIT' KernelSU/kernel/ksu.c | head -1 | cut -d: -f1)
+            USE=$(grep -n '#ifndef KSU_NO_PREINIT' KernelSU/kernel/ksu.c | head -1 | cut -d: -f1)
+            [ -n "$INJ" ] && [ -n "$USE" ] && [ "$INJ" -lt "$USE" ] \
+              || { echo "::error::KSU_NO_PREINIT injected after first use (INJ=$INJ USE=$USE)"; exit 1; }
+            echo "-- preinit runner disabled for this build (INJ=L${INJ} < USE=L${USE})"
           else
             echo "-- preinit runner left at source default"
           fi
@@ -787,6 +742,7 @@ jobs:
         env:
           KSU_ENABLED: ${{ steps.meta.outputs.ksu_enabled }}
           THREADED_THRONE: ${{ steps.meta.outputs.threaded_throne }}
+          DISABLE_PREINIT: ${{ steps.meta.outputs.disable_preinit }}
         run: |
           set -euo pipefail
           export ARCH=arm64
@@ -802,9 +758,6 @@ jobs:
           grep -q '^CONFIG_MIHW=y' "$DEFCONFIG_PATH" \
             || { echo "::error::defconfig sanitize failed (MIHW line)"; exit 1; }
           echo "== 确保 defconfig 不含任何 CONFIG_KSU_SUSFS* =="
-          # 关键：绝不定义 CONFIG_KSU_SUSFS。vendor 内核树的埋点全部在该宏下，
-          # 一旦定义就会在 LTO 链接期产生 11 个 manual-hook 符号 undefined。
-          # backslashxx 主线不需要这些埋点（自带 syscall/branch/LSM hook）。
           ! grep -q '^CONFIG_KSU_SUSFS' "$DEFCONFIG_PATH" \
             || { echo "::error::defconfig must not contain CONFIG_KSU_SUSFS"; exit 1; }
           echo "== 启用 pstore ramoops（异常开机取证：/sys/fs/pstore/console-ramoops-*）=="
@@ -814,10 +767,6 @@ jobs:
           echo "== 生成 defconfig =="
           make O=out ARCH=arm64 "${{ env.DEFCONFIG_NAME }}"
           echo "== 配置 KernelSU 主线：保持主线默认 hook，关闭调试指纹 =="
-          # hook 方式保留主线 Kconfig 默认值（KSU_LSM_SECURITY_HOOKS=y，
-          # KSU_TAMPER_SYSCALL_TABLE / KSU_HACK_ARM64_BRANCH_LINK=n），下方对
-          # olddefconfig 后的 .config 做显式断言，防止升级 PIN 后默认值静默漂移。
-          # SUSFS 相关符号一概不设置。
           if [ "$KSU_ENABLED" = "true" ]; then
             KSU_SWITCH="--enable KSU"
           else
@@ -852,6 +801,19 @@ jobs:
             if grep -qE '^CONFIG_KSU_(TAMPER_SYSCALL_TABLE|HACK_ARM64_BRANCH_LINK)=y' out/.config; then
               echo "::error::syscall-table / branch-link hook enabled - expected off for in-tree KSU=y"; exit 1
             fi
+            # r5 新增：D 组开关必须在 olddefconfig 之后仍为 y。
+            # scripts/config 写入的符号若依赖未满足会被丢弃，此时对照会退化成默认配置。
+            if [ "$THREADED_THRONE" = "true" ]; then
+              grep -q '^CONFIG_KSU_THRONE_TRACKER_ALWAYS_THREADED=y' out/.config \
+                || { echo "::error::D-group KSU_THRONE_TRACKER_ALWAYS_THREADED dropped by olddefconfig - control invalid"; exit 1; }
+              echo "-- D-group knob survived olddefconfig (=y)"
+            fi
+            # r5 新增：若 JUMP_LABEL 关闭，preinit 本来就会被 preinit.h 编译掉，
+            # B 组与默认构建等价 —— 给出显式告警，避免误判“关 preinit 无效”。
+            if [ "$DISABLE_PREINIT" = "true" ]; then
+              grep -q '^CONFIG_JUMP_LABEL=y' out/.config \
+                || echo "::warning::JUMP_LABEL is off: preinit may already be compiled out by preinit.h; B-group control may be a no-op"
+            fi
           else
             if grep -q '^CONFIG_KSU=y' out/.config; then
               echo "::error::CONFIG_KSU still enabled in A-group control build"; exit 1
@@ -862,7 +824,6 @@ jobs:
             grep -q "^CONFIG_${sym}=y" out/.config \
               || { echo "::error::CONFIG_${sym} not enabled"; exit 1; }
           done
-          # SUSFS 必须全程缺席，否则 vendor manual-hook 埋点复活 -> LTO undefined symbol
           grep -q '^CONFIG_KSU_SUSFS' out/.config \
             && { echo "::error::CONFIG_KSU_SUSFS must stay off (breaks LTO link)"; exit 1; } || true
           grep -q '^CONFIG_KSU_DEBUG=y' out/.config \
@@ -902,8 +863,6 @@ jobs:
                  CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
           export CCACHE_DIR="${{ github.workspace }}/.ccache"
           export CCACHE_MAXSIZE=8G
-          # 去除 CI 构建指纹：/proc/version 里嵌入的构建者/主机名/时间戳会被检测用作
-          # "自编内核" 信号，固定为普通本地构建形态（对反检测同样有意义）
           export KBUILD_BUILD_USER=builder
           export KBUILD_BUILD_HOST=android-build
           export KBUILD_BUILD_TIMESTAMP="Thu Jun 12 10:00:00 UTC 2025"
@@ -912,10 +871,6 @@ jobs:
           echo "-- ksu pin    : $(git -C KernelSU rev-parse --short=8 HEAD)"
           echo "-- CONFIG_KSU : $(grep -E '^CONFIG_KSU=' out/.config || echo 'CONFIG_KSU=n (unset)')"
           echo "-- variant    : ${{ steps.meta.outputs.variant }}"
-          # 说明：preinit 由 preinit/preinit.h 的 CONFIG_ARM64 && KSU_CAN_USE_JUMP_LABEL
-          # 门控，与 UAPI headers 无关；旧版 "headers_install 启用 preinit" 的假设在
-          # 当前 pin 上不成立，故移除该步骤（也避免把头文件装进 out/ 污染构建）。
-          # 需要关闭 preinit 时用 workflow_dispatch 的 disable_preinit（B 组）。
           set +e
           make -j$(nproc) O=out ARCH=arm64 \
             CC="ccache clang" LD="ld.lld" AR="llvm-ar" NM="llvm-nm" \
@@ -938,6 +893,29 @@ jobs:
           echo "=== Build finished ==="
           ccache -s 2>/dev/null || true
           ls -lh out/arch/arm64/boot/Image
+          # r5 新增：从编译产物反查 preinit 是否真的被编进去。
+          # preinit 启用时 ksu.c 会编译进 pr_info("preinit: remove preinit execve branches")；
+          # KSU_NO_PREINIT 生效时该字符串应完全消失（preinit.h 提供空 stub）。
+          # 这是 B 组对照的最后一道防线：源码断言过了但编译器却没按预期裁剪，也能抓到。
+          echo "== 对照组生效性复核（从 kernelsu.o 反查）=="
+          KSU_OBJ=$(find out -name 'kernelsu.o' -type f 2>/dev/null | head -1)
+          if [ -n "$KSU_OBJ" ]; then
+            if grep -aq 'preinit: remove preinit execve branches' "$KSU_OBJ"; then
+              echo "-- compiled preinit: ON  (${KSU_OBJ})"
+              if [ "${{ steps.meta.outputs.disable_preinit }}" = "true" ]; then
+                echo "::error::B-group control invalid: preinit code still present in ${KSU_OBJ}"
+                exit 1
+              fi
+            else
+              echo "-- compiled preinit: OFF (${KSU_OBJ})"
+              if [ "${{ steps.meta.outputs.ksu_enabled }}" = "true" ] && \
+                 [ "${{ steps.meta.outputs.disable_preinit }}" != "true" ]; then
+                echo "::warning::preinit unexpectedly absent - check KSU_CAN_USE_JUMP_LABEL gating"
+              fi
+            fi
+          else
+            echo "::warning::kernelsu.o not found - skipped compiled-state verification"
+          fi
 
       - name: Package AnyKernel3
         id: package
@@ -993,7 +971,6 @@ jobs:
           ## end boot install
           AK3
           chmod +x anykernel.sh
-          # heredoc 用引号包裹以保护 AK3 自身变量，故用占位符 + sed 注入构建身份
           sed -i "s|__KERNEL_SHA__|${KERNEL_SHA}|g; s|__KSU_SHA__|${KSU_SHA}|g; s|__KSU_CFG__|${KSU_CFG}|g; s|__VARIANT__|${VARIANT}|g" anykernel.sh
           if grep -q '__KERNEL_SHA__\|__KSU_SHA__\|__KSU_CFG__\|__VARIANT__' anykernel.sh; then
             echo "::error::placeholder substitution failed"; exit 1
