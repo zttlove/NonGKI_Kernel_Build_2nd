@@ -1,30 +1,31 @@
 name: Build Kernel with SukiSU Nova (Full SUSFS)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 卡第二屏排查手册 v2
+# 卡第二屏排查手册 v3
 #
-# 已确认事实：selinux_hide=off + ksu_preinit=off（最保守基线）仍然卡第二屏
-#   ⇒ 与 SELinux 假状态页、preinit runner 都无关。剩下的可疑面只有两块：
-#   (a) 每次构建都无条件执行的那 10 个 vendor 补丁（cpufreq 重排 + 9 个告警修补）
-#   (b) vendor 源树本身（f4c3fdd4，注释里自己写着"尚未经开机验证"的合并 tip）
+# 已确认：patch_mode=minimal（vendor 补丁全关）仍卡第二屏 ⇒ 10 个 vendor 补丁
+# 和 SELinux 假状态页、preinit 都洗清了。剩下的嫌疑只剩两块：
+#   (A) KSU/SUSFS 配置本身（Configure 步骤每次都开 SUSFS 全家桶 +
+#       HIDE_KSU_SUSFS_SYMBOLS + 关 IKCONFIG + LOCALVERSION 清空 —— 这些在
+#       "minimal" 里也一直开着，不是纯 vendor）
+#   (B) vendor 源树 f4c3fdd4 本身（未经开机验证的合并 tip）
 #
-# 本版给出两条正交的排查轴 + 一条换源树的轴：
-#   patch_mode=minimal    一行 vendor 补丁都不打，只做 KSU/SUSFS 内联
-#   cpufreq_order=vendor  尊重源码顺序；当前 tip 里的顺序是 callback 优先
-#                         （vendor 10/24 的提交"修复 qcom cpufreq fast-switch
-#                         初始化时序"），而工作流原本每次强制反着改回去
-#   kernel_pin=<sha>      换一棵源树，用来验证"合并之前能不能开机"
+# 本版四条正交轴：
+#   patch_mode=minimal     vendor 补丁一个不打
+#   ksu_mode=none          KSU/SUSFS 全关 = 纯 vendor 内核（pstore 保留用于取证）
+#   cpufreq_order=vendor   尊重源码顺序（tip 是 vendor 10/24 的时序修复）
+#   kernel_pin=<sha>       换源树
 #
-# 推荐四轮：
-#   1) minimal + cpufreq_order=vendor      → 能开机：元凶在 (a)，进 3)
-#   2) minimal + kernel_pin=<f4c3fdd4 父>  → 还挂：元凶在 (b) 或 KSU 内联本身
-#   3) full    + cpufreq_order=vendor      → 挂：cpufreq 重排就是凶手
-#   4) full    + cpufreq_order=forced      → 对照组，复现"卡第二屏"
-#
-# 抓日志（比任何瞎猜都值钱）：长按电源强制重启后，用 TWRP 或任一能开机的
-# boot.img 起来再读上一个内核留下的 pstore：
-#   adb shell cat /sys/fs/pstore/console-ramoops-0 | tail -200
-# 本工作流已开 PSTORE_RAM/PSTORE_CONSOLE，panic 和 initcall 死锁都有机会留下栈。
+# 决策表：
+#   1) minimal + ksu_mode=none 挂   ⇒ (B)：源树本身起不来，与 KSU 完全无关。
+#      下一步 kernel_pin 填父提交（构建日志 "Parents:" 行会打印）做对照；
+#      若父提交也挂 → 换回曾经开过机的旧树/旧配置，别再在这棵树上试。
+#   2) minimal + ksu_mode=none 能开机 ⇒ (A)：KSU/SUSFS 配置里有雷。
+#      依次开关定位：ksu_mode=susfs 但关掉 KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+#      （5.4 上 kallsyms 隐藏实现最可疑）→ 再关 SUS_MAP → 再关 SPOOF_*。
+#   3) 随时抓日志定案：强制重启后进 TWRP 读
+#      adb shell cat /sys/fs/pstore/console-ramoops-0 | tail -200
+#      ksu_mode=none 的对照构建同样保留 pstore，卡死也能取证。
 # ─────────────────────────────────────────────────────────────────────────────
 
 on:
@@ -62,6 +63,14 @@ on:
         options:
           - "minimal"
           - "full"
+      ksu_mode:
+        description: "susfs=带 KSU+SUSFS / none=纯 vendor 内核（验证源树本身能否开机）"
+        required: false
+        default: "susfs"
+        type: choice
+        options:
+          - "susfs"
+          - "none"
       cpufreq_order:
         description: "仅 patch_mode=full 生效。vendor=保持源码顺序 / forced=强改回 driver 优先（旧 pin 时代做法）"
         required: false
@@ -841,8 +850,9 @@ jobs:
           done
           echo "-- 6 vendor selinux_hide symbols defined in security/selinux/ss/services.c"
       - name: Backport sus_type/avd hiding into vendor 5.4 susfs
-        # 不做档位门控：这段代码在 selinux_hide=off 时是死代码，
-        # 但符号必须存在（驱动侧可能硬引用，缺了会 undefined symbol）。
+        if: inputs.ksu_mode == 'susfs'
+        # ksu_mode=none 时必须跳过：追加进 services.c 的代码引用 susfs 符号，
+        # CONFIG_KSU_SUSFS 关闭后 fs/susfs.c 不参与编译，会直接链接失败。
         working-directory: kernel
         run: |
           set -euo pipefail
@@ -1257,6 +1267,9 @@ jobs:
           echo "== 直接向 defconfig 追加 SUSFS 配置 =="
           DEFCONFIG_PATH="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
           test -f "$DEFCONFIG_PATH" || { echo "::error::defconfig not found at $DEFCONFIG_PATH"; exit 1; }
+          if [ "${{ inputs.ksu_mode }}" = "none" ]; then
+            echo "== ksu_mode=none：纯 vendor 内核，SUSFS/pstore 一概不追加 =="
+          fi
           # 上游 defconfig 首行混入全角括号（"（CONFIG_MIHW=y"），kconfig 会警告并丢弃该行，
           # 导致小米 millet 驱动（drivers/mihw）被静默关闭，这里剥离全角括号修复
           sed -i 's/\xEF\xBC\x88//g; s/\xEF\xBC\x89//g' "$DEFCONFIG_PATH"
@@ -1265,20 +1278,35 @@ jobs:
           # 注意：不追加 KSU_SUSFS_PRIORITY_UID_FILTER —— builtin Kconfig 默认 y，
           # 但本树内核侧 SUSFS v2.3.0 没有 susfs_parse_priority_app_strings() 等实现，
           # 开启会在 pkg_observer.c 产生未定义符号，必须在下面显式 disable
-          for sym in KSU_SUSFS KSU_SUSFS_SUS_PATH KSU_SUSFS_SUS_MOUNT KSU_SUSFS_SUS_KSTAT \
-                     KSU_SUSFS_SPOOF_UNAME KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
-                     KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG KSU_SUSFS_OPEN_REDIRECT \
-                     KSU_SUSFS_SUS_MAP; do
-            echo "CONFIG_${sym}=y" >> "$DEFCONFIG_PATH"
-          done
-          grep -q 'CONFIG_KSU_SUSFS_SUS_MAP=y' "$DEFCONFIG_PATH" \
-            || { echo "::error::defconfig SUSFS append failed"; exit 1; }
+          if [ "${{ inputs.ksu_mode }}" = "susfs" ]; then
+            for sym in KSU_SUSFS KSU_SUSFS_SUS_PATH KSU_SUSFS_SUS_MOUNT KSU_SUSFS_SUS_KSTAT \
+                       KSU_SUSFS_SPOOF_UNAME KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+                       KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG KSU_SUSFS_OPEN_REDIRECT \
+                       KSU_SUSFS_SUS_MAP; do
+              echo "CONFIG_${sym}=y" >> "$DEFCONFIG_PATH"
+            done
+            grep -q 'CONFIG_KSU_SUSFS_SUS_MAP=y' "$DEFCONFIG_PATH" \
+              || { echo "::error::defconfig SUSFS append failed"; exit 1; }
+          fi
+          # pstore 在两种档位下都开：none 档位也要能取证（卡死时 console-ramoops
+          # 是唯一能带回现场的通道；ramoops 本身风险极低）
           echo "== 启用 pstore ramoops（异常开机取证：/sys/fs/pstore/console-ramoops-*）=="
           for sym in PSTORE PSTORE_RAM PSTORE_CONSOLE; do
             echo "CONFIG_${sym}=y" >> "$DEFCONFIG_PATH"
           done
           echo "== 生成 defconfig =="
           make O=out ARCH=arm64 "${{ env.DEFCONFIG_NAME }}"
+          if [ "${{ inputs.ksu_mode }}" = "none" ]; then
+            echo "== ksu_mode=none：显式关闭 KSU（源树 defconfig 自带 KSU=y） =="
+            scripts/config --file out/.config --disable KSU --disable KSU_SUSFS \
+              --enable PSTORE --enable PSTORE_RAM --enable PSTORE_CONSOLE
+            make O=out ARCH=arm64 olddefconfig
+            grep -q '^CONFIG_KSU=[ym]' out/.config \
+              && { echo "::error::CONFIG_KSU still enabled in none mode"; exit 1; } \
+              || echo "-- CONFIG_KSU off，本构建=纯 vendor 内核"
+            exit 0
+          fi
+
           echo "== 配置 SukiSU-Ultra builtin：SUSFS 全功能 =="
           # builtin 的 KSU 无 KPROBES/EXT4_FS 依赖（manual-hook 形态，钩子调用点
           # 全部位于内核树 #ifdef CONFIG_KSU_SUSFS 内），KSU_SUSFS 开启即生效
