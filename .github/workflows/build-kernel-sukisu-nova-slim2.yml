@@ -1,4 +1,4 @@
-name: Build Kernel with SukiSU Nova (Slim = Ultra-equivalent body + Nova driver)kk
+name: Build Kernel with SukiSU Nova (Slim = Ultra-equivalent body + Nova driver)
 
 on:
   workflow_dispatch:
@@ -1009,7 +1009,9 @@ jobs:
           # "自编内核" 信号，固定为普通本地构建形态（对反检测同样有意义）
           export KBUILD_BUILD_USER=builder
           export KBUILD_BUILD_HOST=android-build
-          export KBUILD_BUILD_TIMESTAMP="Thu Jun 12 10:00:00 UTC 2025"
+          # 时间戳用真实构建时间：/proc/version 里的时间=构建时刻，
+          # 手机上一条 cat /proc/version 就能确认刷进去的是哪次构建
+          export KBUILD_BUILD_TIMESTAMP="$(date -u)"
 
           echo "== 预装 UAPI 头文件以启用 SukiSU preinit runner =="
           # vendor defconfig 不带 HEADERS_INSTALL，SukiSU builtin 的 preinit runner
