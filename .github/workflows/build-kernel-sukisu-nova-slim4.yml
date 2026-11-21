@@ -1,4 +1,4 @@
-name: "Build Kernel with SukiSU Nova (Slim4 - guard seqno zero)"
+name: "Build Kernel with SukiSU Nova (Slim4 - guard seqno zero)4"
 
 on:
   workflow_dispatch:
