@@ -1,4 +1,4 @@
-name: Build Kernel with SukiSU Nova (Slim = Ultra-equivalent body + Nova driver)
+name: Build Kernel with SukiSU Nova (Slim = Ultra-equivalent body + Nova driver)mm
 
 on:
   workflow_dispatch:
