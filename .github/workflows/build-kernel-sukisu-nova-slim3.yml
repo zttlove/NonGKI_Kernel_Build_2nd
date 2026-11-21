@@ -1,4 +1,4 @@
-name: "Build Kernel with SukiSU Nova (Slim3 - real page normalize)"
+name: "Build Kernel with SukiSU Nova (Slim3 - real page normalize)"ko
 
 on:
   workflow_dispatch:
