@@ -1,4 +1,4 @@
-name: "Build Kernel with SukiSU Nova (Slim11 - hide config.gz + dmesg restrict11)"
+name: "Build Kernel with SukiSU Nova (Slim11 - hide config.gz + dmesg restrict)"
 
 on:
   workflow_dispatch:
@@ -1317,20 +1317,24 @@ jobs:
             --set-str LOCALVERSION ""
             # /proc/version 不受 SUSFS SPOOF_UNAME 伪造，版本串带 susfs 等字样会被
             # 春秋/Momo 类检测直接读出；强制保持空串，内核串回归原厂形态
-            #
-            # 【slim11 反检测核心】封堵 /proc/config.gz 与 dmesg 两条无 root 指纹通道：
-            # ① 实机取证（2026-11-22 21:16）：/proc/config.gz 非 root 可读
-            #    （-r--r--r--），内容含 CONFIG_KSU=y + 全套 CONFIG_KSU_SUSFS_*——
-            #    任何 app zcat|grep KSU 即 100% 命中，这正是 kernelsu detected
-            #    在摘 hook（slim6）、reboot 门控（slim6/7/8）、kallsyms 改名
-            #    （slim9/10）全部失效后仍存在的原因：检测器直接读内核配置，
-            #    无需任何行为分析。
-            #    IKCONFIG_PROC=n → /proc/config.gz 消失；IKCONFIG=n → 配置不再
-            #    嵌入镜像（extract-ikconfig 类后处理也无料可用）。
-            # ② dmesg_restrict 实机为 0（stock 安全默认应为 1）：slim10 特意
-            #    保留的 KSU 日志原文（su->ksud! 等）在 dmesg 里对 app 可见，
-            #    dmesg|grep ksu 同样命中。SECURITY_DMESG_RESTRICT=y 把
-            #    /proc/sys/kernel/dmesg_restrict 默认值拉回 1，恢复 stock 形态。
+
+          # 【slim11 反检测核心】封堵 /proc/config.gz 与 dmesg 两条无 root 指纹通道：
+          # ① 实机取证（2026-11-22 21:16）：/proc/config.gz 非 root 可读
+          #    （-r--r--r--），内容含 CONFIG_KSU=y + 全套 CONFIG_KSU_SUSFS_*——
+          #    任何 app zcat|grep KSU 即 100% 命中，这正是 kernelsu detected
+          #    在摘 hook（slim6）、reboot 门控（slim6/7/8）、kallsyms 改名
+          #    （slim9/10）全部失效后仍存在的原因：检测器直接读内核配置，
+          #    无需任何行为分析。
+          #    IKCONFIG_PROC=n → /proc/config.gz 消失；IKCONFIG=n → 配置不再
+          #    嵌入镜像（extract-ikconfig 类后处理也无料可用）。
+          # ② dmesg_restrict 实机为 0（stock 安全默认应为 1）：slim10 特意
+          #    保留的 KSU 日志原文（su->ksud! 等）在 dmesg 里对 app 可见，
+          #    dmesg|grep ksu 同样命中。SECURITY_DMESG_RESTRICT=y 把
+          #    /proc/sys/kernel/dmesg_restrict 默认值拉回 1，恢复 stock 形态。
+          # 注意：必须是独立调用——上面 scripts/config 以 --set-str 结尾（无
+          # 续行符），且 shell 续行中间不能插注释行，否则 --disable 被当成
+          # 独立命令执行（slim11 v1 构建失败根因）。
+          scripts/config --file out/.config \
             --disable IKCONFIG \
             --disable IKCONFIG_PROC \
             --enable  SECURITY_DMESG_RESTRICT
