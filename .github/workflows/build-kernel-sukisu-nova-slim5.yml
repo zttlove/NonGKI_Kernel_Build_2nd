@@ -1,4 +1,4 @@
-name: "Build Kernel with SukiSU Nova (Slim5 - stock-shape status page)"
+name: "Build Kernel with SukiSU Nova (Slim5 - stock-shape status page5)"
 
 on:
   workflow_dispatch:
