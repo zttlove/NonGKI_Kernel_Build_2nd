@@ -1,4 +1,4 @@
-name: "Build Kernel with SukiSU Nova (Slim6 - strip stat hooks vs timing side-channel)6"
+name: "Build Kernel with SukiSU Nova (Slim6 - strip stat hooks vs timing side-channel)"
 
 on:
   workflow_dispatch:
@@ -6,11 +6,11 @@ on:
       reboot_gate:
         description: "启用 sys_reboot supercall fd 自举门控（反探测加固；出现开机循环请关掉）"
         required: false
-        default: "false"
+        default: "true"
         type: choice
         options:
-          - "false"
           - "true"
+          - "false"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # nova-slim6：slim5 基础上针对剩余的「kernelsu detected」（春秋 4.6.3）。
