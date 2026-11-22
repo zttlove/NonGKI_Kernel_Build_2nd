@@ -1,4 +1,4 @@
-name: "Build Kernel with SukiSU Nova (Slim6 - strip stat hooks vs timing side-channel)"
+name: "Build Kernel with SukiSU Nova (Slim6 - strip stat hooks vs timing side-channel)6"
 
 on:
   workflow_dispatch:
