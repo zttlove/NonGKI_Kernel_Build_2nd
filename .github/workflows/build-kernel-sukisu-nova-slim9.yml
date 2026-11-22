@@ -1,4 +1,4 @@
-name: "Build Kernel with SukiSU Nova (Slim9 - kallsyms symbol obfuscation)"
+name: "Build Kernel with SukiSU Nova (Slim9 - kallsyms symbol obfuscation)9"
 
 on:
   workflow_dispatch:
