@@ -1,4 +1,4 @@
-name: "Build Kernel with SukiSU Nova (Slim11 - hide config.gz + dmesg restrict11)"
+name: "Build Kernel with SukiSU Nova (Slim11 - hide config.gz + dmesg restrict)"
 
 on:
   workflow_dispatch:
@@ -13,6 +13,22 @@ on:
           - "false"
       obfuscate_symbols:
         description: "kallsyms 符号混淆（反探测；preinit runner 编译报错时可临时关掉恢复构建）"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      hide_config_gz:
+        description: "slim11：禁用 IKCONFIG/IKCONFIG_PROC 隐藏 /proc/config.gz（反探测；卡第二屏时可关掉定位）"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      restrict_dmesg:
+        description: "slim11：dmesg_restrict=1 限制 app 读内核日志（反探测；卡第二屏时可关掉定位）"
         required: false
         default: "true"
         type: choice
@@ -1331,13 +1347,24 @@ jobs:
           #    保留的 KSU 日志原文（su->ksud! 等）在 dmesg 里对 app 可见，
           #    dmesg|grep ksu 同样命中。SECURITY_DMESG_RESTRICT=y 把
           #    /proc/sys/kernel/dmesg_restrict 默认值拉回 1，恢复 stock 形态。
-          # 注意：必须是独立调用——上面 scripts/config 以 --set-str 结尾（无
-          # 续行符），且 shell 续行中间不能插注释行，否则 --disable 被当成
-          # 独立命令执行（slim11 v1 构建失败根因）。
-          scripts/config --file out/.config \
-            --disable IKCONFIG \
-            --disable IKCONFIG_PROC \
-            --enable  SECURITY_DMESG_RESTRICT
+          # 【slim11 v3】两项拆成独立开关（hide_config_gz / restrict_dmesg），
+          # 用于二分定位"刷入后卡第二屏"的元凶：v2 相对 slim10 唯一变量就是
+          # 这三项配置，而两者在理论上都不应影响内核早期启动（业界大量定制
+          # 内核禁用 config.gz 从无开机问题）——必须实测区分，而非猜测。
+          if [ "${{ inputs.hide_config_gz }}" = "true" ]; then
+            scripts/config --file out/.config \
+              --disable IKCONFIG \
+              --disable IKCONFIG_PROC
+            echo "-- slim11: IKCONFIG/IKCONFIG_PROC disabled (hide_config_gz=true)"
+          fi
+          if [ "${{ inputs.restrict_dmesg }}" = "true" ]; then
+            # 必须是独立调用——上面 scripts/config 以 --set-str 结尾（无续行符），
+            # 且 shell 续行中间不能插注释行，否则 --disable 被当成独立命令执行
+            # （slim11 v1 构建失败根因）。
+            scripts/config --file out/.config \
+              --enable SECURITY_DMESG_RESTRICT
+            echo "-- slim11: SECURITY_DMESG_RESTRICT enabled (restrict_dmesg=true)"
+          fi
 
           make O=out ARCH=arm64 olddefconfig
 
@@ -1348,13 +1375,17 @@ jobs:
                      KSU_SUSFS_SUS_MAP PSTORE PSTORE_RAM PSTORE_CONSOLE; do
             grep -q "^CONFIG_${sym}=y" out/.config || { echo "::error::CONFIG_${sym} not enabled"; exit 1; }
           done
-          # 【slim11 断言】两条无 root 指纹通道必须确认关闭
-          grep -q '^CONFIG_IKCONFIG_PROC=y' out/.config \
-            && { echo "::error::CONFIG_IKCONFIG_PROC still on — /proc/config.gz would leak CONFIG_KSU=y"; exit 1; } || true
-          grep -q '^CONFIG_IKCONFIG=y' out/.config \
-            && { echo "::error::CONFIG_IKCONFIG still on — embedded config extractable"; exit 1; } || true
-          ! grep -q '^CONFIG_SECURITY_DMESG_RESTRICT=y' out/.config \
-            && { echo "::error::dmesg_restrict default not enabled — ksu logs readable by apps"; exit 1; } || true
+          # 【slim11 断言】两条无 root 指纹通道必须确认关闭（按开关条件化）
+          if [ "${{ inputs.hide_config_gz }}" = "true" ]; then
+            grep -q '^CONFIG_IKCONFIG_PROC=y' out/.config \
+              && { echo "::error::CONFIG_IKCONFIG_PROC still on — /proc/config.gz would leak CONFIG_KSU=y"; exit 1; } || true
+            grep -q '^CONFIG_IKCONFIG=y' out/.config \
+              && { echo "::error::CONFIG_IKCONFIG still on — embedded config extractable"; exit 1; } || true
+          fi
+          if [ "${{ inputs.restrict_dmesg }}" = "true" ]; then
+            ! grep -q '^CONFIG_SECURITY_DMESG_RESTRICT=y' out/.config \
+              && { echo "::error::dmesg_restrict default not enabled — ksu logs readable by apps"; exit 1; } || true
+          fi
           echo "-- slim11: /proc/config.gz removed, dmesg restricted to CAP_SYSLOG"
           grep -q '^CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER=y' out/.config \
             && { echo "::error::CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER must stay off (vendor 5.4 susfs lacks kernel-side support)"; exit 1; } || true
