@@ -1,4 +1,4 @@
-name: "Build Kernel with SukiSU Nova (Slim7 - restore su hooks, keep reboot gate)"
+name: "Build Kernel with SukiSU Nova (Slim7 - restore su hooks, keep reboot gate7)"
 
 on:
   workflow_dispatch:
