@@ -1,4 +1,4 @@
-name: "Build Kernel with SukiSU Nova (Slim10 - symbol obfuscation, string literals preserved)10"
+name: "Build Kernel with SukiSU Nova (Slim10 - symbol obfuscation, string literals preserved)"
 
 on:
   workflow_dispatch:
@@ -1055,6 +1055,9 @@ jobs:
           import re, os, sys
           pat_ksu = re.compile(r'ksu_')
           pat_susfs = re.compile(r'susfs_')
+          inc_pat = re.compile(r'(#\s*include\s*")([^"]+)(")')
+          def _fix_inc(m):
+              return m.group(1) + pat_susfs.sub('rsy_', pat_ksu.sub('rsx_', m.group(2))) + m.group(3)
 
           def tokenize(s):
               """C 状态机：把字符串字面量/字符字面量/注释整段保护为占位符"""
@@ -1118,7 +1121,11 @@ jobs:
               s2 = pat_susfs.sub('rsy_', s2)
               for idx, l in enumerate(lits):
                   s2 = s2.replace('\x00%d\x00' % idx, l)
-              return s2
+              # 【slim10 v2 关键修正】#include "..." 的路径是引号字面量，
+              # 上面被保护原样保留；但源文件本身会被重命名（ksu_main.c ->
+              # rsx_main.c 等），不改 include 路径会 fatal error: file not
+              # found（slim10 v1 构建失败根因）。对引号 include 单独再改。
+              return inc_pat.sub(_fix_inc, s2)
 
           def strip_code(s):
               """剥离字面量与注释，剩余纯代码供残留检查"""
@@ -1209,6 +1216,24 @@ jobs:
                   s = open(p, encoding='utf-8', errors='surrogateescape').read()
                   if pat_ksu.search(s) or pat_susfs.search(s):
                       sys.exit(f'::error::identifier remains in {p}')
+          # 【slim10 v2 断言】所有引号 include 的相对路径必须指向真实存在的
+          # 文件（防止 include 路径与重命名文件脱节 → fatal error: not found）
+          for dirpath, _, files in os.walk('.'):
+              for fn in files:
+                  if not is_csrc(fn):
+                      continue
+                  p = os.path.join(dirpath, fn)
+                  s = open(p, encoding='utf-8', errors='surrogateescape').read()
+                  for m in inc_pat.finditer(s):
+                      rel = m.group(2)
+                      cand = os.path.join(dirpath, rel)
+                      if os.path.exists(cand):
+                          continue
+                      # 其余 include（-I 路径下的）无法静态判定，跳过；但若
+                      # 路径含 ksu_/susfs_ 而相对位置不存在，几乎必然断链
+                      if 'ksu_' in rel or 'susfs_' in rel:
+                          sys.exit(f'::error::include target missing: {p} -> "{rel}"')
+
           if find_res := os.popen('find . -name "*ksu_*" -o -name "*susfs_*"').read().strip():
               print(find_res[:500])
               sys.exit('::error::ksu_/susfs_ file names remain')
