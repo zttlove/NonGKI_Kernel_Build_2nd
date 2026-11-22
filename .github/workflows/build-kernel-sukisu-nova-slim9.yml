@@ -1,10 +1,18 @@
-name: "Build Kernel with SukiSU Nova (Slim9 - kallsyms symbol obfuscation9)"
+name: "Build Kernel with SukiSU Nova (Slim9 - kallsyms symbol obfuscation)"
 
 on:
   workflow_dispatch:
     inputs:
       reboot_gate:
         description: "启用 sys_reboot supercall fd 自举门控（反探测加固；出现开机循环请关掉）"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      obfuscate_symbols:
+        description: "kallsyms 符号混淆（反探测；preinit runner 编译报错时可临时关掉恢复构建）"
         required: false
         default: "true"
         type: choice
@@ -1021,6 +1029,7 @@ jobs:
 
       - name: Obfuscate KSU/SUSFS kernel symbols (kallsyms anti-probe, slim9)
         working-directory: kernel
+        if: inputs.obfuscate_symbols == 'true'
         run: |
           set -euo pipefail
           echo "== kallsyms 反探测：全树改名 ksu_/susfs_ 标识符 =="
@@ -1217,6 +1226,31 @@ jobs:
           test -f out/usr/include/linux/unistd.h \
             && echo "-- preinit UAPI headers ready" \
             || echo "::warning::usr/include/linux/unistd.h missing, preinit will be disabled"
+
+          echo "== slim9 自检：用与驱动 Makefile 完全相同的参数预编译 obfuscated runner.c =="
+          # 复刻 quiet_cmd_ksu_runner 的 CC 调用（KSU_RUNNER_CFLAGS）。若符号改名
+          # 破坏了 runner 独立编译链（与内核构建体系隔离的 freestanding 编译），
+          # 这里会提前失败并打印完整错误——make 里只会吞成一行 "Syntax error"。
+          RUNNER_SELFTEST_CFLAGS="--target=aarch64-linux-gnu -std=gnu11 -Os -Wall \
+            -nostdinc -isystem $(clang -print-file-name=include) \
+            -Idrivers/kernelsu/preinit/runner/nolibc -I$PWD/out/usr/include \
+            -Idrivers/kernelsu/include \
+            -ffreestanding -fno-stack-protector -fno-pic -fno-pie \
+            -fno-asynchronous-unwind-tables -fno-unwind-tables \
+            -ffunction-sections -fdata-sections"
+          if clang $RUNNER_SELFTEST_CFLAGS \
+              -c -o /tmp/runner_selftest.o drivers/kernelsu/preinit/runner/runner.c \
+              2>/tmp/runner_selftest.log; then
+            ld.lld -static -nostdlib -e _start --gc-sections -s \
+              -o /tmp/runner_selftest.elf /tmp/runner_selftest.o \
+              && echo "-- runner.c compiles & links OK after obfuscation" \
+              || { echo "::error::obfuscated runner link failed"; ld.lld -v; exit 1; }
+          else
+            echo "::error::obfuscated runner.c failed to compile — full error follows"
+            cat /tmp/runner_selftest.log
+            echo "::hint::可在工作流输入里把 obfuscate_symbols 切为 false 恢复构建"
+            exit 1
+          fi
 
           set +e
           make -j$(nproc) O=out ARCH=arm64 \
