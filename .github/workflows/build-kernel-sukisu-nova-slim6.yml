@@ -1,4 +1,4 @@
-name: "Build Kernel with SukiSU Nova (Slim6 - strip stat hooks vs timing side-channel6)"
+name: "Build Kernel with SukiSU Nova (Slim6 - strip stat hooks vs timing side-channel)"
 
 on:
   workflow_dispatch:
@@ -517,21 +517,22 @@ jobs:
           b = block + "\t\tksu_handle_stat(&dfd, &fname, &flags);\n"
           assert s.count(b) == 1, 'stat.c hook block anchor not unique: %d' % s.count(b)
           s = s.replace(b, '')
-          assert 'ksu_handle_stat' not in s, 'stat.c still references ksu_handle_stat'
+          # extern 声明可留在文件中（无副作用），只断言调用行已移除
+          assert '\t\tksu_handle_stat(' not in s, 'stat.c still calls ksu_handle_stat'
           open(stat_c, 'w').write(s)
 
           s = open(open_c).read()
           b = block + "\t\tksu_handle_faccessat(&dfd, &fname, &mode, NULL);\n"
           assert s.count(b) == 1, 'open.c hook block anchor not unique: %d' % s.count(b)
           s = s.replace(b, '')
-          assert 'ksu_handle_faccessat' not in s, 'open.c still references ksu_handle_faccessat'
+          assert '\t\tksu_handle_faccessat(' not in s, 'open.c still calls ksu_handle_faccessat'
           open(open_c, 'w').write(s)
           print('stat/faccessat KSU hook blocks stripped')
           PYEOF
           grep -q 'fname = getname_flags(filename, lookup_flags, NULL);' "$STAT_C" \
             && grep -q 'filename_lookup(dfd, fname, lookup_flags, &path, NULL);' "$STAT_C" \
-            && ! grep -q 'ksu_handle_stat' "$STAT_C" \
-            && ! grep -q 'ksu_handle_faccessat' "$OPEN_C" \
+            && ! grep -q 'ksu_handle_stat(&dfd' "$STAT_C" \
+            && ! grep -q 'ksu_handle_faccessat(&dfd' "$OPEN_C" \
             && grep -q 'ksu_handle_vfs_fstat' "$STAT_C" \
             && grep -q 'ksu_handle_execveat' fs/exec.c \
             || { echo "::error::strip verification failed"; exit 1; }
