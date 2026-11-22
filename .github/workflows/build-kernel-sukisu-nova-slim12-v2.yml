@@ -1385,7 +1385,7 @@ jobs:
           #   - 文件继续存在（slim11 教训：MIUI boot 阶段依赖它，删了卡第二屏）
           python3 - <<'PYEOF'
           import re, sys
-          mk = open('Makefile').read()
+          mk = open('kernel/Makefile').read()  # 树根相对路径：checkout path:kernel，working-directory:kernel=树根；vendor 的 IKCONFIG 规则在树根下的 kernel/ 子目录
           # 形态一（vendor 5.4）：config_data 由 $(call filechk,cat) 从 .config 复制，
           # 再 gzip 成 config_data.gz。替换其 recipe 行（tab 行，# 在引号内安全）。
           # 注意不能替换 "filechk_cat = cat $<" 赋值行——make 变量赋值行中
@@ -1412,9 +1412,9 @@ jobs:
               i = mk.find('config_data')
               ctx = mk[max(0, i-200):i+300] if i != -1 else '(not found at all)'
               sys.exit('::error::neither vendor nor mainline IKCONFIG rule found in kernel/Makefile; context: ' + repr(ctx))
-          open('Makefile', 'w').write(mk)
+          open('kernel/Makefile', 'w').write(mk)
           PYEOF
-          grep -n -A1 'config_data\.gz: \|config_data: ' Makefile
+          grep -n -A1 'config_data\.gz: \|config_data: ' kernel/Makefile
           echo "-- slim12: sanitize patch applied (build will regenerate config_data via FORCE)"
 
       - name: 修复编译警告
