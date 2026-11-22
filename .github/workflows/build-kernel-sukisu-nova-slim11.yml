@@ -1,4 +1,4 @@
-name: "Build Kernel with SukiSU Nova (Slim11 - hide config.gz + dmesg restrict)"
+name: "Build Kernel with SukiSU Nova (Slim11 - hide config.gz + dmesg restrict11)"
 
 on:
   workflow_dispatch:
