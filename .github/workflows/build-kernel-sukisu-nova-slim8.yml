@@ -1,4 +1,4 @@
-name: "Build Kernel with SukiSU Nova (Slim8 - reboot probe instrumentation)"
+name: "Build Kernel with SukiSU Nova (Slim8 - reboot probe instrumentation)8"
 
 on:
   workflow_dispatch:
