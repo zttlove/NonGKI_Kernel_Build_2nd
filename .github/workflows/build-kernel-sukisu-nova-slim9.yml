@@ -1,4 +1,4 @@
-name: "Build Kernel with SukiSU Nova (Slim9 - kallsyms symbol obfuscation)9"
+name: "Build Kernel with SukiSU Nova (Slim9 - kallsyms symbol obfuscation)"
 
 on:
   workflow_dispatch:
@@ -1041,28 +1041,47 @@ jobs:
           import re, os, sys
           pat_ksu = re.compile(r'\bksu_')
           pat_susfs = re.compile(r'\bsusfs_')
+          is_text = lambda fn: (fn.endswith(('.c', '.h', '.S'))
+                                or fn == 'Makefile' or fn.startswith('Makefile.')
+                                or fn == 'Kbuild' or fn.endswith('.mak'))
           n_f = n_k = n_s = 0
+          renames = []
           for dirpath, _, files in os.walk('.'):
               for fn in files:
-                  if not fn.endswith(('.c', '.h')):
-                      continue
                   p = os.path.join(dirpath, fn)
+                  if not is_text(fn):
+                      continue
                   s = open(p, encoding='utf-8', errors='surrogateescape').read()
                   s, a = pat_ksu.subn('rsx_', s)
                   s, b = pat_susfs.subn('rsy_', s)
                   if a or b:
                       open(p, 'w', encoding='utf-8', errors='surrogateescape').write(s)
                       n_f += 1; n_k += a; n_s += b
-          print(f'files modified: {n_f}, ksu_->rsx_: {n_k}, susfs_->rsy_: {n_s}')
+                  # 源文件名本身含 ksu_/susfs_ 的（如 ksu_main.c、
+                  # extension/susfs_extension.h、include/linux/susfs_def.h）
+                  # 同步重命名——include 指令与 Makefile 的 obj 引用已随内容
+                  # 替换指向新名，文件名不改会导致 fatal error: file not found。
+                  if fn.endswith(('.c', '.h')) and ('ksu_' in fn or 'susfs_' in fn):
+                      new_fn = pat_susfs.sub('rsy_', pat_ksu.sub('rsx_', fn))
+                      renames.append((p, os.path.join(dirpath, new_fn)))
+          for old, new in renames:
+              os.rename(old, new)
+          print(f'text files modified: {n_f}, ksu_->rsx_: {n_k}, susfs_->rsy_: {n_s}, files renamed: {len(renames)}')
+          for old, new in renames:
+              print('  renamed:', os.path.relpath(old, '.'), '->', os.path.relpath(new, '.'))
           if n_k < 1000 or n_s < 50:
               sys.exit('::error::rename count suspiciously low — driver layout changed?')
           PYEOF
-          if grep -rPn --include="*.c" --include="*.h" '\bksu_' . | head -5 | grep -q '.'; then
-            grep -rPn --include="*.c" --include="*.h" '\bksu_' . | head -5
+          if find . -name "*ksu_*" -o -name "*susfs_*" | grep -q '.'; then
+            find . -name "*ksu_*" -o -name "*susfs_*" | head -5
+            echo "::error::ksu_/susfs_ file names remain"; exit 1
+          fi
+          if grep -rPn --include="*.c" --include="*.h" --include="Makefile" --include="Kbuild" '\bksu_' . | head -5 | grep -q '.'; then
+            grep -rPn --include="*.c" --include="*.h" --include="Makefile" --include="Kbuild" '\bksu_' . | head -5
             echo "::error::ksu_ identifiers remain in tree"; exit 1
           fi
-          if grep -rPn --include="*.c" --include="*.h" '\bsusfs_' . | head -5 | grep -q '.'; then
-            grep -rPn --include="*.c" --include="*.h" '\bsusfs_' . | head -5
+          if grep -rPn --include="*.c" --include="*.h" --include="Makefile" --include="Kbuild" '\bsusfs_' . | head -5 | grep -q '.'; then
+            grep -rPn --include="*.c" --include="*.h" --include="Makefile" --include="Kbuild" '\bsusfs_' . | head -5
             echo "::error::susfs_ identifiers remain in tree"; exit 1
           fi
           echo "-- kernel symbols obfuscated: /proc/kallsyms no longer lists ksu_*/susfs_*"
