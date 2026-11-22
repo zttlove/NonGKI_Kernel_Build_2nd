@@ -1,4 +1,4 @@
-name: "Build Kernel with SukiSU Nova (Slim10 - symbol obfuscation, string literals preserved)"
+name: "Build Kernel with SukiSU Nova (Slim10 - symbol obfuscation, string literals preserved)10"
 
 on:
   workflow_dispatch:
