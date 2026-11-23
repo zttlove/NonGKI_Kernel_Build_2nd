@@ -1216,12 +1216,22 @@ jobs:
                               or fn == 'Kbuild' or fn.endswith('.mak'))
           n_f = n_k = n_s = 0
           renames = []
+          n_scanned = 0
           for dirpath, _, files in os.walk('.'):
               for fn in files:
                   p = os.path.join(dirpath, fn)
                   if not (is_csrc(fn) or is_mk(fn)):
                       continue
+                  n_scanned += 1
+                  if n_scanned % 2000 == 0:
+                      print(f'  [1/5 rename] scanned {n_scanned} source files...', flush=True)
                   s = open(p, encoding='utf-8', errors='surrogateescape').read()
+                  # 快速预筛：内容与文件名都无 ksu_/susfs_ 的文件直接跳过。
+                  # 无标识符 → 状态机处理后 a=b=0、不写盘、不进改名队列，行为等价；
+                  # 逐字符状态机只花在少数候选文件上，全树扫描提速 10 倍以上。
+                  if ('ksu_' not in s and 'susfs_' not in s
+                          and not (is_csrc(fn) and ('ksu_' in fn or 'susfs_' in fn))):
+                      continue
                   if is_csrc(fn):
                       # C 状态机保护字面量/注释 → 只替换代码区标识符
                       s2 = protect_and_replace(s)
@@ -1246,13 +1256,21 @@ jobs:
           if n_k < 1000 or n_s < 50:
               sys.exit('::error::rename count suspiciously low — driver layout changed?')
 
-          # 残留检查：.c/.h/.S 须剥离字面量与注释后无标识符残留（字面量豁免）
+          # 残留检查：.c/.h/.S 须剥离字面量与注释后无标识符残留（字面量豁免）。
+          # 预筛：原文无 ksu_/susfs_ 的文件必然无代码区残留，跳过昂贵的状态机。
+          n_scanned = 0; n_cand = 0
           for dirpath, _, files in os.walk('.'):
               for fn in files:
                   if not is_csrc(fn):
                       continue
                   p = os.path.join(dirpath, fn)
                   s = open(p, encoding='utf-8', errors='surrogateescape').read()
+                  n_scanned += 1
+                  if n_scanned % 2000 == 0:
+                      print(f'  [2/5 residual] scanned {n_scanned} files, {n_cand} candidates...', flush=True)
+                  if 'ksu_' not in s and 'susfs_' not in s:
+                      continue
+                  n_cand += 1
                   rest = strip_code(s)
                   m = pat_ksu.search(rest) or pat_susfs.search(rest)
                   if m:
@@ -1260,22 +1278,32 @@ jobs:
                       line = rest.split('\n')[line_no - 1]
                       sys.exit(f'::error::identifier remains at {p}:{line_no}: {line.strip()[:120]}')
           # Makefile/Kbuild 维持全量替换 → 直接 grep 检查
+          n_scanned = 0
           for dirpath, _, files in os.walk('.'):
               for fn in files:
                   if not is_mk(fn):
                       continue
                   p = os.path.join(dirpath, fn)
                   s = open(p, encoding='utf-8', errors='surrogateescape').read()
+                  n_scanned += 1
+                  if n_scanned % 2000 == 0:
+                      print(f'  [3/5 mk-check] scanned {n_scanned} Makefile/Kbuild...', flush=True)
                   if pat_ksu.search(s) or pat_susfs.search(s):
                       sys.exit(f'::error::identifier remains in {p}')
           # 【slim10 v2 断言】所有引号 include 的相对路径必须指向真实存在的
           # 文件（防止 include 路径与重命名文件脱节 → fatal error: not found）
+          n_scanned = 0
           for dirpath, _, files in os.walk('.'):
               for fn in files:
                   if not is_csrc(fn):
                       continue
                   p = os.path.join(dirpath, fn)
                   s = open(p, encoding='utf-8', errors='surrogateescape').read()
+                  n_scanned += 1
+                  if n_scanned % 2000 == 0:
+                      print(f'  [4/5 include-check] scanned {n_scanned} files...', flush=True)
+                  if '#include' not in s:
+                      continue
                   for m in inc_pat.finditer(s):
                       rel = m.group(2)
                       cand = os.path.join(dirpath, rel)
