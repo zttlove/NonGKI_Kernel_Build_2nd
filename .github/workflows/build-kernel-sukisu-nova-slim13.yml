@@ -1547,7 +1547,7 @@ jobs:
             -Wno-int-conversion -Wno-declaration-after-statement \
             -Wframe-larger-than=131072 -Wno-unused-variable -Wno-unused-function \
             -Wno-missing-braces -Wno-int-to-pointer-cast -Wno-address-of-packed-member \
-            -Wno-return-type -Wno-shift-negative-value -Wno-array-bounds" \
+            -Wno-return-type -Wno-shift-negative-value -Wno-array-bounds" -Wno-unused-result\
             HOSTCFLAGS="" 2>&1 | tee build.log
 
           if [ ${PIPESTATUS[0]} -ne 0 ]; then
