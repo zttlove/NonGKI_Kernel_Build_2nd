@@ -419,6 +419,32 @@ jobs:
             echo "  -- $NEW_CASES susfs command cases wrapped in #ifdef guards"
           fi
 
+          echo "== susfs 函数版本差护栏 #2：throne_tracker.c 刷新调用 =="
+          # main BakaSU 的 do_track_throne 末尾在 CONFIG_KSU_SUSFS_* 门控下调用
+          # susfs_parse_sus_path_app_strings() / susfs_parse_priority_app_strings()
+          # （susfs 1.5.x 新函数，刷新 uid 位图过滤器）。门控只看 Kconfig 特性
+          # 开关，不看 susfs 版本——vendor 开了 CONFIG 但旧 susfs 无实现 →
+          # 声明可见（编译过）但符号缺失（链接期 undefined symbol，CI 实测
+          # throne_tracker.c:372）。这是函数不是宏，无法用 #ifdef 守卫 →
+          # 对策：检测 vendor 内核树（排除 BakaSU_src）的 .c 文件是否实现该
+          # 函数，有则保留（未来 vendor 升 susfs 后功能自动恢复），无则把
+          # 调用行改写为 no-op 注释（仅丢一次过滤器刷新，等价旧 susfs 无此
+          # 能力时的行为）。只查 .c（.h 原型不算实现）。
+          TT="BakaSU_src/kernel/manager/throne_tracker.c"
+          test -f "$TT" || { echo "::error::throne_tracker.c not found in pinned driver"; exit 1; }
+          for fn in susfs_parse_sus_path_app_strings susfs_parse_priority_app_strings; do
+            if grep -qF "${fn}();" "$TT"; then
+              if grep -rl --include='*.c' "$fn" fs security 2>/dev/null | grep -q .; then
+                echo "  -- $fn implemented in vendor susfs, kept"
+              else
+                sed -i "s/${fn}();/\/* bakasu-modern: vendor susfs lacks ${fn} - refresh skipped (older susfs) *\//" "$TT"
+                ! grep -qF "${fn}();" "$TT" \
+                  || { echo "::error::throne_tracker susfs call patch failed: $fn (anchor layout changed?)"; exit 1; }
+                echo "  -- $fn absent in vendor susfs -> call patched to no-op"
+              fi
+            fi
+          done
+
           echo "== 钩子签名核对：vendor 树调用的 ksu_handle_* 必须由驱动提供 =="
           # vendor 树在 #ifdef CONFIG_KSU_SUSFS 内直接调用这些钩子（BakaSU 形态）。
           # auto-hook 上游演进可能改名——逐个核对定义存在，缺一个即失败并报名。
