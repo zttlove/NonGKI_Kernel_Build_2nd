@@ -1365,7 +1365,7 @@ jobs:
           AK3
 
           chmod +x anykernel.sh
-          ZF="../${{ env.DEVICE_CODENAME }}-BakaSU-autohook-SUSFS-Full-${TIME}.zip"
+          ZF="../${{ env.DEVICE_CODENAME }}-BakaSU-autohook-BISECT-SUSFS-Full-${TIME}.zip"
           zip -r9 "$ZF" ./*
 
           echo "== AK3 包结构自检（TWRP 兼容性）=="
@@ -1379,7 +1379,7 @@ jobs:
           echo "-- AK3 structure OK: update-binary + Image.gz present, no .git"
           echo "== TWRP 刷机须知 =="
           echo "  Actions Artifacts 下载的是外层传输包装 zip；必须先解压出内层"
-          echo "  ${DEVICE_CODENAME}-BakaSU-autohook-SUSFS-Full-*.zip 再进 TWRP 刷入。"
+          echo "  ${DEVICE_CODENAME}-BakaSU-autohook-BISECT-SUSFS-Full-*.zip 再进 TWRP 刷入。"
           echo "  直接把外层 artifact zip 推进 TWRP 会报 'Updater process ended with ERROR: 1'"
 
       - name: Upload Artifact
