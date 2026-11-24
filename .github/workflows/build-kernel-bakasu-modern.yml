@@ -189,6 +189,160 @@ jobs:
           grep -q 'CONFIG_KSU_SUSFS' fs/stat.c || { echo "::error::fs/stat.c lacks KSU_SUSFS hooks"; exit 1; }
           echo "-- kernel-side SUSFS hooks verified (no kernel patching needed)"
 
+          echo "== vendor 5.4 BakaSU-form 钩子适配（stat/faccessat filename 签名 + post_execveat 胶水）=="
+          # vendor 树（BakaSU 形态 fs/{exec,open,stat}.c）与 auto-hook 5.4 路径的差异：
+          #   1) fs/exec.c: extern int ksu_handle_post_execveat_sucompat(
+          #        int *fd, struct filename **filename_ptr, void *argv, void *envp,
+          #        int *flags, int *retval);
+          #      auto-hook 无此符号（旧 sync-up 的后置钩子被上游移除）。其原始职责
+          #      ——exec ksud 失败后回退 sh——已由 auto-hook pre-hook 的
+          #      kern_path(KSUD_PATH) 检查在 exec 前完成；no-op 胶水只需保持
+          #      vendor 的 filename->refcnt++/putname 配对平衡、retval 原样透传。
+          #   2) fs/stat.c: extern int ksu_handle_stat(int *dfd, struct filename **filename, int *flags)
+          #      auto-hook <6.1 定义 const char __user ** 变体——同名不同签：
+          #      链接可过，但运行时把 struct filename *（内核指针）当 user 指针
+          #      copy，su 伪装静默失效。改为 SUSFS 下恒用 filename 变体（6.1+
+          #      分支的实现只用 filename->name，5.4 完全可用）。
+          #   3) fs/open.c: extern int ksu_handle_faccessat(int *dfd, struct filename **filename,
+          #        int *mode, int *flags)——同 2，整函数重写为 filename 变体。
+          #   已核实无须处理的跨界符号：ksu_is_init_rc_hook_enabled 静态键与
+          #   ksu_handle_vfs_fstat（ksud_integration.c，SUSFS 分支，签名一致）、
+          #   __ksu_is_allow_uid_for_current（allowlist.c，新旧 API 俱在）、
+          #   ksu_su_compat_enabled（KSU_COMPAT_USE_STATIC_KEY ≥4.3 自动定义，
+          #   DEFINE_STATIC_KEY_TRUE 与 vendor extern 类型一致）、
+          #   ksu_handle_execveat/execveat_sucompat（filename 指针签名一致）。
+          SUC="BakaSU_src/kernel/feature/sucompat.c"
+          test -f "$SUC" || { echo "::error::sucompat.c not found in pinned driver"; exit 1; }
+
+          # A) ksu_handle_stat：SUSFS 下恒用 filename 变体
+          #    注意：上游文件里本来就"存在" filename 变体（6.1+ 分支），文本级
+          #    grep 无法判断预处理后哪个分支生效——必须以"旧版本守卫是否存在"
+          #    为判据做无条件重写（幂等）。
+          OLD_GUARD='#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0) && defined(CONFIG_KSU_SUSFS)'
+          if grep -qF "$OLD_GUARD" "$SUC"; then
+            [ "$(grep -cF "$OLD_GUARD" "$SUC")" = "1" ] \
+              || { echo "::error::stat version guard not unique in sucompat.c - manual review needed"; exit 1; }
+            sed -i 's/#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0) \&\& defined(CONFIG_KSU_SUSFS)/#if defined(CONFIG_KSU_SUSFS)/' "$SUC"
+            grep -qF 'int ksu_handle_stat(int *dfd, struct filename **filename, int *flags)' "$SUC" \
+              || { echo "::error::ksu_handle_stat guard rewrite failed"; exit 1; }
+            ! grep -qF "$OLD_GUARD" "$SUC" \
+              || { echo "::error::stale stat version guard remains"; exit 1; }
+            echo "  -- ksu_handle_stat now filename variant (5.4 included)"
+          elif grep -qF 'int ksu_handle_stat(int *dfd, struct filename **filename, int *flags)' "$SUC" \
+               && ! grep -qF 'const char __user **filename_user' "$SUC"; then
+            echo "  -- ksu_handle_stat already filename variant (guard previously rewritten)"
+          else
+            echo "::error::ksu_handle_stat neither filename variant nor expected guard found - upstream layout changed"; exit 1
+          fi
+
+          # B) ksu_handle_faccessat：重写为 filename 变体
+          if grep -qF 'int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode, int *flags)' "$SUC"; then
+            echo "  -- ksu_handle_faccessat already filename variant"
+          else
+            python3 - "$SUC" <<'PYFAC'
+          import sys
+          p = sys.argv[1]
+          s = open(p).read()
+          old_sig = "int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode, int *__unused_flags)"
+          i = s.find(old_sig)
+          if i == -1:
+              sys.exit("::error::faccessat user-ptr signature not found (upstream changed?)")
+          body_start = s.index("{", i)
+          depth = 0
+          j = body_start
+          while True:
+              if s[j] == "{":
+                  depth += 1
+              elif s[j] == "}":
+                  depth -= 1
+                  if depth == 0:
+                      break
+              j += 1
+          new_fn = "\n".join([
+              'int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode, int *flags)',
+              '{',
+              '    if (ksu_is_current_proc_unprivillege()) {',
+              '        return 0;',
+              '    }',
+              '#ifdef KSU_COMPAT_USE_STATIC_KEY',
+              '    if (!static_branch_unlikely(&ksu_su_compat_enabled)) {',
+              '        return 0;',
+              '    }',
+              '#else',
+              '    if (!ksu_su_compat_enabled) {',
+              '        return 0;',
+              '    }',
+              '#endif',
+              '    if (!ksu_is_allow_uid_for_current(ksu_get_uid_t(current_uid()))) {',
+              '        return 0;',
+              '    }',
+              '    if (!filename || IS_ERR(*filename) || !(*filename)->name) {',
+              '        return 0;',
+              '    }',
+              '    if (unlikely(!memcmp((*filename)->name, su_path, sizeof(su_path)))) {',
+              '        pr_info("faccessat su->sh!\\n");',
+              '        memcpy((void *)(*filename)->name, sh_path, sizeof(sh_path));',
+              '    }',
+              '    return 0;',
+              '}',
+          ])
+          s = s[:i] + new_fn + s[j+1:]
+          open(p, "w").write(s)
+          print("faccessat rewritten to filename variant")
+          PYFAC
+            grep -qF 'int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode, int *flags)' "$SUC" \
+              || { echo "::error::faccessat rewrite failed"; exit 1; }
+            ! grep -qF '__unused_flags' "$SUC" \
+              || { echo "::error::stale user-ptr faccessat body remains"; exit 1; }
+          fi
+
+          # C) 重写后 user 态路径 helper 可能失去全部引用（tracepoint 块不编译），
+          #    标记 __maybe_unused 防未用告警升级
+          sed -i 's/^static char __user \*sh_user_path(void)/__maybe_unused static char __user *sh_user_path(void)/' "$SUC"
+          sed -i 's/^static char __user \*ksud_user_path(void)/__maybe_unused static char __user *ksud_user_path(void)/' "$SUC"
+
+          # D) ksu_handle_post_execveat_sucompat 胶水（no-op，语义见块首注释）
+          if ! grep -qF 'int ksu_handle_post_execveat_sucompat' "$SUC"; then
+            cat >> "$SUC" <<'KSU_POSTEOF'
+
+          /* vendor glue (zttlove 5.4 BakaSU-form fs/exec.c): do_execveat_common
+           * calls this after __do_execve_file for "su sessions" (pre-hook
+           * returned 0). auto-hook's pre-hook already falls back su->ksud (or
+           * sh) BEFORE exec via kern_path(KSUD_PATH), so nothing is left to
+           * redo here. Returning without touching anything keeps the vendor's
+           * filename->refcnt++/putname pairing balanced and the exec retval
+           * untouched (the caller ignores this return value). */
+          int ksu_handle_post_execveat_sucompat(int *fd, struct filename **filename_ptr,
+          				      void *argv, void *envp, int *flags,
+          				      int *retval)
+          {
+          	(void)fd;
+          	(void)filename_ptr;
+          	(void)argv;
+          	(void)envp;
+          	(void)flags;
+          	return retval ? *retval : 0;
+          }
+          KSU_POSTEOF
+          fi
+          grep -qF 'int ksu_handle_post_execveat_sucompat' "$SUC" \
+            || { echo "::error::post_execveat glue missing"; exit 1; }
+
+          # E) vendor 期望签名/跨界符号终验
+          grep -qF 'int ksu_handle_stat(int *dfd, struct filename **filename, int *flags)' "$SUC" \
+            || { echo "::error::ksu_handle_stat signature mismatch vs vendor"; exit 1; }
+          grep -qF 'int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode, int *flags)' "$SUC" \
+            || { echo "::error::ksu_handle_faccessat signature mismatch vs vendor"; exit 1; }
+          grep -rqF 'DEFINE_STATIC_KEY_TRUE(ksu_is_init_rc_hook_enabled)' BakaSU_src/kernel \
+            || { echo "::error::ksu_is_init_rc_hook_enabled static key missing (vendor fs/stat.c externs it)"; exit 1; }
+          grep -rqF 'void ksu_handle_vfs_fstat(int fd, loff_t *kstat_size_ptr)' BakaSU_src/kernel \
+            || { echo "::error::ksu_handle_vfs_fstat missing/mismatched (vendor fs/stat.c externs it)"; exit 1; }
+          grep -rqF '__ksu_is_allow_uid_for_current' BakaSU_src/kernel \
+            || { echo "::error::__ksu_is_allow_uid_for_current missing (vendor externs it)"; exit 1; }
+          grep -rqF 'int ksu_handle_execveat(int *fd, struct filename **filename_ptr' BakaSU_src/kernel \
+            || { echo "::error::ksu_handle_execveat signature mismatch vs vendor"; exit 1; }
+          echo "-- vendor 5.4 hook signatures aligned (stat/faccessat filename form, post_execveat glued)"
+
           echo "== 钩子签名核对：vendor 树调用的 ksu_handle_* 必须由驱动提供 =="
           # vendor 树在 #ifdef CONFIG_KSU_SUSFS 内直接调用这些钩子（BakaSU 形态）。
           # auto-hook 上游演进可能改名——逐个核对定义存在，缺一个即失败并报名。
