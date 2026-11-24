@@ -381,6 +381,29 @@ jobs:
               case "$sym" in
                 fake_status_initialize_key)
                   printf '\n/* bakasu-modern: vendor extern, driver does not define; no-op semantics */\n#include <linux/jump_label.h>\nDEFINE_STATIC_KEY_FALSE(fake_status_initialize_key);\n' >> "$SVC" ;;
+                fake_status)
+                  # 诊断式接线：driver 端 fake_status 的定义形态决定处理方式。
+                  #   - 存在"非 static 非 extern"的全局定义（如前面 de-macro 已生效）
+                  #     → 已提供，跳过补桩（防重复符号）。
+                  #   - 仅 __maybe_static/static 定义（预处理后 TU-local）或缺失
+                  #     → services.c 落 feature-off 全局 NULL。链接安全（driver 的
+                  #     static 副本 TU-local 不冲突）；且 initialize_fake_status
+                  #     补桩函数引用 fake_status，此全局是其编译硬依赖（循环顺序
+                  #     fake_status 先于 initialize_fake_status，满足）。
+                  #   注意：判定 driver "已提供"的 grep（上方）对 __maybe_static
+                  #   无词边界保护（__maybe_ 后紧跟 static struct page * 会被误判
+                  #   为 static 定义）——故本分支不得假设 static 副本可当作全局用。
+                  GDEF="$(grep -rnE 'struct page \*fake_status( *=|;)' BakaSU_src/kernel 2>/dev/null \
+                    | grep -vE '__maybe_?static[[:space:]]+struct|(^|[[:space:]])static[[:space:]]+struct|extern[[:space:]]+struct' \
+                    | head -1 || true)"
+                  if [ -n "$GDEF" ]; then
+                    echo "  -- $sym: global definition present in driver: $GDEF"
+                  else
+                    printf '\n/* bakasu-modern: vendor extern; driver defines fake_status only TU-local (or absent) - feature-off semantics, no fake status page */\n#include <linux/mm.h>\nstruct page *fake_status = NULL;\n' >> "$SVC"
+                    grep -q 'struct page \*fake_status = NULL;' "$SVC" \
+                      || { echo "::error::fake_status stub append failed"; exit 1; }
+                    echo "  -- $sym: feature-off stub appended to services.c"
+                  fi ;;
                 initialize_fake_status)
                   printf '\n/* bakasu-modern: driver lacked initialize_fake_status; stock 5.4 shape {seq=0, policyload=0} */\n#include <linux/mm.h>\nvoid initialize_fake_status(void)\n{\nstruct selinux_kernel_status *fake;\nstruct page *new_page;\n\nif (fake_status)\nreturn;\nif (!selinux_state.ss || !selinux_state.ss->status_page)\nreturn;\nnew_page = alloc_page(GFP_KERNEL | __GFP_ZERO);\nif (!new_page)\nreturn;\nfake = page_address(new_page);\nfake->version = 1;\nfake->sequence = 0;\nfake->enforcing = 1;\nfake->policyload = 0;\nfake->deny_unknown = 1;\nfake_status = new_page;\n}\nlate_initcall(initialize_fake_status);\n' >> "$SVC" ;;
                 *)
