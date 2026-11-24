@@ -296,8 +296,19 @@ jobs:
             || { echo "::error::sucompat.h stat declaration mismatch (old sig layout changed?)"; exit 1; }
           grep -qF 'int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode, int *flags);' "$SUCH" \
             || { echo "::error::sucompat.h faccessat declaration mismatch (old sig layout changed?)"; exit 1; }
-          ! grep -qF 'const char __user **filename_user' "$SUCH" \
-            || { echo "::error::sucompat.h still declares user-ptr variant"; exit 1; }
+          # 旧 user-ptr 声明清零仅针对 stat/faccessat（本步重写对象）。头文件里
+          # 其他钩子（如 ksu_handle_execveat_sucompat）可能合法保留 user-ptr
+          # 形态（其 .c 定义同形态，<6.1 分支）——残留不构成本步目标，打印留证；
+          # 定义↔声明一致性由编译器把关，vendor 调用一致性由 E 块终验把关。
+          STALE="$(grep -nE 'ksu_handle_(stat|faccessat)\([^;]*const char __user' "$SUCH" || true)"
+          if [ -n "$STALE" ]; then
+            echo "::error::sucompat.h stat/faccessat still declare user-ptr variant: $STALE"
+            exit 1
+          fi
+          LEFT="$(grep -nF 'const char __user **filename_user' "$SUCH" || true)"
+          if [ -n "$LEFT" ]; then
+            echo "  -- note: other user-ptr decls remain in sucompat.h (not stat/faccessat, legit): $LEFT"
+          fi
           echo "  -- sucompat.h declarations synced to filename variant"
 
           # D) ksu_handle_post_execveat_sucompat 胶水（no-op，语义见块首注释）
