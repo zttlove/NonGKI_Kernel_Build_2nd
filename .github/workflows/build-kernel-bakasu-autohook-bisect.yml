@@ -1,4 +1,4 @@
-name: "Build Kernel BakaSU autohook-bisect (bootloop bisect #1: driver line main->auto-hook, backport kept)"
+name: "Build Kernel BakaSU autohook-bisect v2 (bisect #1: driver main->auto-hook; +ReSukiSU auto_hook fix)"
 
 on:
   workflow_dispatch:
@@ -379,6 +379,27 @@ jobs:
           grep -rqF 'int ksu_handle_execveat(int *fd, struct filename **filename_ptr' BakaSU_src/kernel \
             || { echo "::error::ksu_handle_execveat signature mismatch vs vendor"; exit 1; }
           echo "-- vendor 5.4 hook signatures aligned (stat/faccessat filename form, post_execveat glued)"
+
+          # F) ReSukiSU auto-hook 线兼容修复（autohook-bisect v2，CI 实测链接失败后追加）
+          #    auto_hook_detect.mk 以 grep fs/stat.c 是否含 "ksu_handle_newfstat_ret" /
+          #    "ksu_handle_fstat64_ret" 判定：找不到 -> 定义 KSU_HOOK_AUTO_NEWFSTAT_HOOK /
+          #    KSU_HOOK_AUTO_FSTAT64_HOOK -> auto_hook.c 编译 inline hook 调用点。
+          #    zttlove vendor 树为 BakaSU main 形态，fs/stat.c 无这两个标记 ->
+          #    宏被定义 -> 而 ReSukiSU 线驱动在 arm64+SUSFS inline 组合下未提供
+          #    这两个 handler 的定义 -> 链接失败（auto_hook.c:509/588 实测）。
+          #    且 arm64 asm-generic 系统调用表本就没有 newfstat/fstat64 调用，
+          #    这两个 hook 在本平台纯冗余 -> 禁掉零功能损失。
+          #    修复 = 向 fs/stat.c 追加哑标记注释行（不改任何代码行为，幂等），
+          #    使 detect.mk 的 grep 命中 -> 两个 AUTO_* 宏不定义 -> 调用点不编译。
+          if ! grep -q 'ksu_handle_newfstat_ret' fs/stat.c; then
+            printf '\n/* bakasu-bisect: dummy markers - arm64 has no newfstat/fstat64 syscalls; disable redundant ReSukiSU auto hooks */\n/* ksu_handle_newfstat_ret ksu_handle_fstat64_ret */\n' >> fs/stat.c
+            echo "  -- dummy markers appended to fs/stat.c (KSU_HOOK_AUTO_NEWFSTAT_HOOK / FSTAT64_HOOK disabled)"
+          else
+            echo "  -- fs/stat.c already has newfstat_ret marker, skip"
+          fi
+          grep -q 'ksu_handle_newfstat_ret' fs/stat.c \
+            && grep -q 'ksu_handle_fstat64_ret' fs/stat.c \
+            || { echo "::error::dummy marker append failed"; exit 1; }
 
       - name: BakaSU driver-side patches (audit, selinux_hide, string hiding, statx)
         working-directory: kernel
