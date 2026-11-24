@@ -399,7 +399,12 @@ jobs:
           for sym in ksu_selinux_hide_enabled ksu_selinux_hide_running \
                      fake_status_initialize_key fake_status \
                      ksu_selinux_status_lock initialize_fake_status; do
-            if grep -rqE "(^|[^_a-zA-Z])${sym}(;| |=|\()" BakaSU_src/kernel 2>/dev/null \
+            # 宏定义形态（DEFINE_STATIC_KEY_TRUE/FALSE(sym)）产生全局链接符号，
+            # 但文本后随 ')' 不被 sym(;| |=|\( 捕获——CI 实测
+            # fake_status_initialize_key 被误判缺失 → services.c 追加同名列 →
+            # 链接期 duplicate symbol。故补宏形态识别。
+            if { grep -rqE "(^|[^_a-zA-Z])${sym}(;| |=|\()" BakaSU_src/kernel 2>/dev/null \
+                 || grep -rqE "DEFINE_STATIC_KEY_(TRUE|FALSE)\(${sym}\)" BakaSU_src/kernel 2>/dev/null; } \
                && ! grep -rqE "static (bool|struct page \*|struct mutex \*|struct static_key_false) ${sym}" BakaSU_src/kernel 2>/dev/null; then
               echo "  -- $sym: provided by driver"
             elif grep -q "\b${sym}\b" "$SVC" && grep -qE "(bool|struct page \*|struct mutex \*|DEFINE_STATIC_KEY_FALSE\(${sym}|void ${sym})" "$SVC"; then
@@ -1188,7 +1193,22 @@ jobs:
           AK3
 
           chmod +x anykernel.sh
-          zip -r9 "../${{ env.DEVICE_CODENAME }}-BakaSU-autohook-SUSFS-Full-${TIME}.zip" ./*
+          ZF="../${{ env.DEVICE_CODENAME }}-BakaSU-autohook-SUSFS-Full-${TIME}.zip"
+          zip -r9 "$ZF" ./*
+
+          echo "== AK3 包结构自检（TWRP 兼容性）=="
+          unzip -l "$ZF" | grep -q 'META-INF/com/google/android/update-binary' \
+            || { echo "::error::AK3 zip missing update-binary - TWRP flash would fail"; exit 1; }
+          unzip -l "$ZF" | grep -qE '[[:space:]]Image\.gz$' \
+            || { echo "::error::AK3 zip missing Image.gz - TWRP flash would fail"; exit 1; }
+          unzip -l "$ZF" | grep -qE '[[:space:]]\.git/' \
+            && { echo "::error::AK3 zip contains .git - breaks ak3 parsing on some TWRP forks"; exit 1; } \
+            || true
+          echo "-- AK3 structure OK: update-binary + Image.gz present, no .git"
+          echo "== TWRP 刷机须知 =="
+          echo "  Actions Artifacts 下载的是外层传输包装 zip；必须先解压出内层"
+          echo "  ${DEVICE_CODENAME}-BakaSU-autohook-SUSFS-Full-*.zip 再进 TWRP 刷入。"
+          echo "  直接把外层 artifact zip 推进 TWRP 会报 'Updater process ended with ERROR: 1'"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
