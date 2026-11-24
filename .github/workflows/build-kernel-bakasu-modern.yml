@@ -1,32 +1,5 @@
 name: "Build Kernel with BakaSU auto-hook (modern repro: vendor f4c3fdd4 + boot fixes + BakaSU HEAD pinned)"
 
-# ═════════════════════════════════════════════════════════════════════════════
-# 实验目的（单变量 A/B）：驱动线 BakaSU auto-hook vs SukiSU-Nova builtin
-#
-# 背景：Trae 会话取证（2026-11-24）证实 11-13 前的 stable 时代用的是
-#   build-kernel-bakasu.yml（Baka-SU/BakaSU sync-up 分支），用户记忆中
-#   "kernelsu detected 曾通过" 的版本即此线。该线相对 Nova builtin 的机制差异：
-#   1) 自带 hook manager（syscall_event_bridge/syscall_hook_manager）→
-#      旧 workflow 已内置 statx 时序对齐钩子（newfstatat:statx 比值趋近 1）；
-#      Nova builtin 无此基础设施——slim 线的时序通道可能一直是活的。
-#   2) 自带完整 selinux_hide（fake_status/fake_state/sus_type 集成）。
-#   3) stat/faccessat hook 的 uid 门控已上游内置（slim13 等价物）。
-#   4) 自带 ksu 字符串卫生：LSM 标签 ksu→ksm、input handler ksu→vkeymon、
-#      kthread detect_apatch_conflict→cfg_monitor。
-#   sync-up 分支已改名/演化为 auto-hook（本文件钉 HEAD）。
-#
-# 与旧版的差异（仅为让 f4c3fdd4 树能开机，非探测面变化）：
-#   A) vendor pin f4c3fdd4（旧树 36982074 已被上游抹除，不可复现）；
-#   B) cpufreq 注册顺序回退（Leecaarmy 合并带入的 bootloop，slim 线已实证修复）；
-#   C) AnyKernel do.devicecheck 1→0（TWRP fork 不上报 star，v5 实证）；
-#   D) pstore ramoops（卡死取证；slim 线实证开机安全）。
-#
-# 刻意保留（对齐旧版探测面，勿加）：slim10 kallsyms 改名、slim7/8 reboot gate、
-#   slim12 IKCONFIG 保留策略（旧版直接关 IKCONFIG 且 stable 时代可开机——
-#   slim11 的"卡第二屏"结论疑似误判，此处沿用旧版行为；若真卡第二屏再改回
-#   slim12 sanitize）、slim14 avc_spoof（Nova 专属代码）。
-# ═════════════════════════════════════════════════════════════════════════════
-
 on:
   workflow_dispatch:
     inputs:
