@@ -495,7 +495,9 @@ jobs:
                   # （宏空展开 → 全局 static key）；但其 #else 非 SUSFS 死代码分支
                   # 有字面 static 声明，会触发上方 grep-2 误判为"驱动未提供"——
                   # 在补桩前先识别自配置形态，命中则跳过（防重复符号）。
-                  if grep -qF '__maybe_static DEFINE_STATIC_KEY_FALSE(fake_status_initialize_key)' BakaSU_src/kernel 2>/dev/null \
+                  # 注意 grep 必须 -r：目标是目录，无 -r 的 grep 对目录恒失败
+                  # （CI 实测：识别静默失效 → 误补桩 → 链接期 duplicate symbol）。
+                  if grep -rqE '__maybe_static[[:space:]]+DEFINE_STATIC_KEY_(FALSE|TRUE)\(fake_status_initialize_key\)' BakaSU_src/kernel 2>/dev/null \
                      && grep -qE '^#define __maybe_static[[:space:]]*$' "$SHIDE" 2>/dev/null; then
                     echo "  -- $sym: provided by driver (main-form self-configured __maybe_static)"
                   else
@@ -505,26 +507,36 @@ jobs:
                   fi ;;
                 fake_status)
                   # 诊断式接线：driver 端 fake_status 的定义形态决定处理方式。
-                  #   - 存在"非 static 非 extern"的全局定义（如前面 de-macro 已生效）
-                  #     → 已提供，跳过补桩（防重复符号）。
-                  #   - 仅 __maybe_static/static 定义（预处理后 TU-local）或缺失
-                  #     → services.c 落 feature-off 全局 NULL。链接安全（driver 的
-                  #     static 副本 TU-local 不冲突）；且 initialize_fake_status
-                  #     补桩函数引用 fake_status，此全局是其编译硬依赖（循环顺序
-                  #     fake_status 先于 initialize_fake_status，满足）。
-                  #   注意：判定 driver "已提供"的 grep（上方）对 __maybe_static
-                  #   无词边界保护（__maybe_ 后紧跟 static struct page * 会被误判
-                  #   为 static 定义）——故本分支不得假设 static 副本可当作全局用。
-                  GDEF="$(grep -rnE 'struct page \*fake_status( *=|;)' BakaSU_src/kernel 2>/dev/null \
-                    | grep -vE '__maybe_?static[[:space:]]+struct|(^|[[:space:]])static[[:space:]]+struct|extern[[:space:]]+struct' \
-                    | head -1 || true)"
-                  if [ -n "$GDEF" ]; then
-                    echo "  -- $sym: global definition present in driver: $GDEF"
+                  #   - main 形态（#define __maybe_static 空展开；SUSFS 生效前提
+                  #     已由 selinux_hide 块的前置校验保证）→ 驱动的
+                  #     __maybe_static 定义即全局已提供，跳过补桩（防重复符号）。
+                  #   - 存在"非 static 非 extern"的裸全局定义（auto-hook 去宏已
+                  #     生效）→ 已提供，跳过补桩。
+                  #   - 仅 TU-local（static）定义或缺失 → services.c 落 feature-off
+                  #     全局 NULL。链接安全（driver 的 static 副本不冲突）；且
+                  #     initialize_fake_status 补桩函数引用 fake_status，此全局是
+                  #     其编译硬依赖（循环顺序 fake_status 先于它，满足）。
+                  #   注：循环顶部 grep-2 已有词边界（__maybe_static 前缀不再误判），
+                  #   但驱动 #else 非 SUSFS 死代码分支的字面 static 声明仍会让顶部
+                  #   误判"未提供"而进入本分支——故本分支需自行识别真实形态。
+                  #   CI 实测（main 形态）：GDEF 过滤器把 __maybe_static 定义行按
+                  #   auto-hook 语义（宏未定义=static）排除 → 误判 TU-local →
+                  #   误补桩 → 链接期 duplicate symbol: fake_status。
+                  if grep -qE '^#define __maybe_static[[:space:]]*$' "$SHIDE" 2>/dev/null \
+                     && grep -rqE 'struct page \*fake_status([[:space:]]*=|;)' BakaSU_src/kernel 2>/dev/null; then
+                    echo "  -- $sym: provided by driver (main-form self-configured __maybe_static global)"
                   else
-                    printf '\n/* bakasu-modern: vendor extern; driver defines fake_status only TU-local (or absent) - feature-off semantics, no fake status page */\n#include <linux/mm.h>\nstruct page *fake_status = NULL;\n' >> "$SVC"
-                    grep -q 'struct page \*fake_status = NULL;' "$SVC" \
-                      || { echo "::error::fake_status stub append failed"; exit 1; }
-                    echo "  -- $sym: feature-off stub appended to services.c"
+                    GDEF="$(grep -rnE 'struct page \*fake_status( *=|;)' BakaSU_src/kernel 2>/dev/null \
+                      | grep -vE '__maybe_?static[[:space:]]+struct|(^|[[:space:]])static[[:space:]]+struct|extern[[:space:]]+struct' \
+                      | head -1 || true)"
+                    if [ -n "$GDEF" ]; then
+                      echo "  -- $sym: global definition present in driver: $GDEF"
+                    else
+                      printf '\n/* bakasu-modern: vendor extern; driver defines fake_status only TU-local (or absent) - feature-off semantics, no fake status page */\n#include <linux/mm.h>\nstruct page *fake_status = NULL;\n' >> "$SVC"
+                      grep -q 'struct page \*fake_status = NULL;' "$SVC" \
+                        || { echo "::error::fake_status stub append failed"; exit 1; }
+                      echo "  -- $sym: feature-off stub appended to services.c"
+                    fi
                   fi ;;
                 initialize_fake_status)
                   printf '\n/* bakasu-modern: driver lacked initialize_fake_status; stock 5.4 shape {seq=0, policyload=0} */\n#include <linux/mm.h>\nvoid initialize_fake_status(void)\n{\nstruct selinux_kernel_status *fake;\nstruct page *new_page;\n\nif (fake_status)\nreturn;\nif (!selinux_state.ss || !selinux_state.ss->status_page)\nreturn;\nnew_page = alloc_page(GFP_KERNEL | __GFP_ZERO);\nif (!new_page)\nreturn;\nfake = page_address(new_page);\nfake->version = 1;\nfake->sequence = 0;\nfake->enforcing = 1;\nfake->policyload = 0;\nfake->deny_unknown = 1;\nfake_status = new_page;\n}\nlate_initcall(initialize_fake_status);\n' >> "$SVC" ;;
