@@ -376,6 +376,49 @@ jobs:
         run: |
           set -euo pipefail
 
+          echo "== susfs 命令兼容护栏（vendor susfs 版本差自适应）=="
+          # main BakaSU 的 dispatch.c 会引用 vendor 树 SUSFS 版本可能还没有的
+          # 新命令宏（CI 实测：CMD_SUSFS_SET_SUS_PATH_UID_FILTER 未定义——
+          # susfs 1.5.x 新增，vendor 树 susfs_def.h 缺失 → "use of undeclared
+          # identifier"）。对策：把每个 case CMD_SUSFS_*: {...} 块统一用
+          # #ifdef <该命令宏> 包裹——vendor susfs 头文件提供该命令则原样编译，
+          # 未提供则自动剔除该 case（ksu_handle_susfs_cmd 落到兜底 return 0，
+          # 语义等价于"命令不支持"）。对 HIDE_SUS_MNTS_FOR_NON_SU_PROCS、
+          # ADD_SUS_MAP 等潜在版本差命令一次性免疫。幂等：已包裹（行首
+          # #ifdef CMD_SUSFS_ 紧邻 case）的块不会二次包裹——以是否存在
+          # "case CMD_SUSFS_" 行未被 #ifdef 前缀保护为判据，本 awk 对每个
+          # case 行独立插桩，重复运行会产生双 #ifdef，故先检测是否已处理过。
+          DISPATCH="BakaSU_src/kernel/supercall/dispatch.c"
+          test -f "$DISPATCH" || { echo "::error::dispatch.c not found in pinned driver"; exit 1; }
+          CASES="$(grep -c 'case CMD_SUSFS_' "$DISPATCH" || true)"
+          GUARDS="$(grep -c '#ifdef CMD_SUSFS_' "$DISPATCH" || true)"
+          if [ "$GUARDS" -ge "$CASES" ] && [ "$CASES" -gt 0 ]; then
+            echo "  -- dispatch.c already guarded ($GUARDS guards >= $CASES cases), skip"
+          else
+            awk '
+              /case CMD_SUSFS_[A-Z_0-9]+: *\{/ && !inblock {
+                line=$0
+                sub(/^.*case /, "", line)
+                sub(/:.*/, "", line)
+                print "#ifdef " line
+                print $0
+                inblock=1
+                next
+              }
+              inblock {
+                print $0
+                if ($0 ~ /^[ \t]*\}[ \t]*$/) { print "#endif"; inblock=0 }
+                next
+              }
+              { print }
+            ' "$DISPATCH" > "$DISPATCH.tmp" && mv "$DISPATCH.tmp" "$DISPATCH"
+            NEW_CASES="$(grep -c 'case CMD_SUSFS_' "$DISPATCH" || true)"
+            NEW_GUARDS="$(grep -c '#ifdef CMD_SUSFS_' "$DISPATCH" || true)"
+            [ "$NEW_GUARDS" -eq "$NEW_CASES" ] \
+              || { echo "::error::susfs guard wrap mismatch: $NEW_GUARDS guards vs $NEW_CASES cases (case body layout changed?)"; exit 1; }
+            echo "  -- $NEW_CASES susfs command cases wrapped in #ifdef guards"
+          fi
+
           echo "== 钩子签名核对：vendor 树调用的 ksu_handle_* 必须由驱动提供 =="
           # vendor 树在 #ifdef CONFIG_KSU_SUSFS 内直接调用这些钩子（BakaSU 形态）。
           # auto-hook 上游演进可能改名——逐个核对定义存在，缺一个即失败并报名。
