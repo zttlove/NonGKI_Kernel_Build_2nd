@@ -401,6 +401,42 @@ jobs:
             && grep -q 'ksu_handle_fstat64_ret' fs/stat.c \
             || { echo "::error::dummy marker append failed"; exit 1; }
 
+          # G) manual-hook 诊断模式的变体守卫修复（CI 实测编译失败后追加）：
+          #    SUSFS=n 时，ksu_handle_stat 的 filename 变体被 adapt 步骤 A 改写的
+          #    "#if defined(CONFIG_KSU_SUSFS)" 守卫裁掉，#else 的 user-ptr 旧变体
+          #    与 sucompat.h 的 filename 声明冲突（CI 实测 conflicting types）。
+          #    将该守卫翻转为无条件——filename 变体实现只用 filename->name 与
+          #    su_path 做内核内存比对，不依赖任何 susfs API，SUSFS=n 下安全。
+          #    同时把 ksu_handle_execveat_sucompat 的 #ifdef CONFIG_KSU_SUSFS
+          #    守卫翻转为 #if 1（函数体仅转发 ksu_handle_execveat，无 susfs
+          #    依赖；vendor BakaSU 形态 exec.c 的手动调用点可能引用它）。
+          #    注意：本文件中带 "|| defined(CONFIG_KSU_MANUAL_HOOK)" 的复合守卫
+          #    与 "#ifdef CONFIG_KSU_SUSFS" 的 include/umounted 块不受影响。
+          if grep -q '^#if defined(CONFIG_KSU_SUSFS)$' "$SUC"; then
+            sed -i 's|^#if defined(CONFIG_KSU_SUSFS)$|#if 1 /* manual-diag: filename variant unconditional (no susfs API use) */|' "$SUC"
+            echo "  -- ksu_handle_stat variant guard flipped to unconditional"
+          else
+            echo "  ::warning::stat variant guard not found (upstream layout changed?)"
+          fi
+          python3 - "$SUC" <<'PYG2'
+          import sys
+          p = sys.argv[1]
+          lines = open(p).read().split('\n')
+          flipped = 0
+          for idx, line in enumerate(lines):
+              if line.strip() == '#ifdef CONFIG_KSU_SUSFS':
+                  for k in range(idx + 1, min(idx + 4, len(lines))):
+                      b = lines[k].strip()
+                      if not b:
+                          continue
+                      if b.startswith('int ksu_handle_execveat_sucompat('):
+                          lines[idx] = '#if 1 /* manual-diag: keep execveat_sucompat (no susfs API use) */'
+                          flipped += 1
+                      break
+          open(p, 'w').write('\n'.join(lines))
+          print(f'  -- execveat_sucompat guard flipped: {flipped}')
+          PYG2
+
       - name: BakaSU driver-side patches (audit, selinux_hide, string hiding, statx)
         working-directory: kernel
         run: |
