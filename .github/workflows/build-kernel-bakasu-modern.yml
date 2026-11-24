@@ -283,6 +283,23 @@ jobs:
           sed -i 's/^static char __user \*sh_user_path(void)/__maybe_unused static char __user *sh_user_path(void)/' "$SUC"
           sed -i 's/^static char __user \*ksud_user_path(void)/__maybe_unused static char __user *ksud_user_path(void)/' "$SUC"
 
+          # C2) sucompat.h 声明同步：A/B 只重写了 .c 里的定义，头文件里
+          #     stat/faccessat 仍声明为 const char __user **filename_user 旧
+          #     签名 → 编译报 conflicting types（CI 实测 sucompat.c:339/367 vs
+          #     sucompat.h:17/21）。头文件同步重写为 filename 变体；幂等——
+          #     旧签名不存在时 sed 无锚点匹配、无操作。
+          SUCH="BakaSU_src/kernel/feature/sucompat.h"
+          test -f "$SUCH" || { echo "::error::sucompat.h not found in pinned driver"; exit 1; }
+          sed -i -E 's@int ksu_handle_stat\([^;]*const char __user \*\*filename_user[^;]*;@int ksu_handle_stat(int *dfd, struct filename **filename, int *flags);@' "$SUCH"
+          sed -i -E 's@int ksu_handle_faccessat\([^;]*const char __user \*\*filename_user[^;]*;@int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode, int *flags);@' "$SUCH"
+          grep -qF 'int ksu_handle_stat(int *dfd, struct filename **filename, int *flags);' "$SUCH" \
+            || { echo "::error::sucompat.h stat declaration mismatch (old sig layout changed?)"; exit 1; }
+          grep -qF 'int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode, int *flags);' "$SUCH" \
+            || { echo "::error::sucompat.h faccessat declaration mismatch (old sig layout changed?)"; exit 1; }
+          ! grep -qF 'const char __user **filename_user' "$SUCH" \
+            || { echo "::error::sucompat.h still declares user-ptr variant"; exit 1; }
+          echo "  -- sucompat.h declarations synced to filename variant"
+
           # D) ksu_handle_post_execveat_sucompat 胶水（no-op，语义见块首注释）
           if ! grep -qF 'int ksu_handle_post_execveat_sucompat' "$SUC"; then
             cat >> "$SUC" <<'KSU_POSTEOF'
