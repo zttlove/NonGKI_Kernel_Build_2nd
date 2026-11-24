@@ -133,7 +133,7 @@ jobs:
       - name: Verify Clang
         run: ${{ env.CLANG_DIR }}/bin/clang --version
 
-      - name: Integrate BakaSU (auto-hook, full SUSFS)
+      - name: Integrate BakaSU (auto-hook, pull & pin)
         working-directory: kernel
         run: |
           set -euo pipefail
@@ -188,6 +188,15 @@ jobs:
           grep -q 'CONFIG_KSU_SUSFS' fs/open.c || { echo "::error::fs/open.c lacks KSU_SUSFS hooks"; exit 1; }
           grep -q 'CONFIG_KSU_SUSFS' fs/stat.c || { echo "::error::fs/stat.c lacks KSU_SUSFS hooks"; exit 1; }
           echo "-- kernel-side SUSFS hooks verified (no kernel patching needed)"
+
+      - name: Adapt BakaSU auto-hook to vendor 5.4 signatures (stat/faccessat + post_execveat)
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          # 【GitHub Actions 21KB 表达式上限修复】原单步 run 脚本含表达式占位符
+          # ($ 双大括号) 插值时整块被解析为一个表达式，硬上限 21000 字符——加完
+          # vendor 5.4 适配块后已超限（报错 Line:138 Col:14）。按逻辑段拆为三步；
+          # 本步与下一步均为纯字面量脚本（无表达式占位符），不受该限制。
 
           echo "== vendor 5.4 BakaSU-form 钩子适配（stat/faccessat filename 签名 + post_execveat 胶水）=="
           # vendor 树（BakaSU 形态 fs/{exec,open,stat}.c）与 auto-hook 5.4 路径的差异：
@@ -342,6 +351,11 @@ jobs:
           grep -rqF 'int ksu_handle_execveat(int *fd, struct filename **filename_ptr' BakaSU_src/kernel \
             || { echo "::error::ksu_handle_execveat signature mismatch vs vendor"; exit 1; }
           echo "-- vendor 5.4 hook signatures aligned (stat/faccessat filename form, post_execveat glued)"
+
+      - name: BakaSU driver-side patches (audit, selinux_hide, string hiding, statx)
+        working-directory: kernel
+        run: |
+          set -euo pipefail
 
           echo "== 钩子签名核对：vendor 树调用的 ksu_handle_* 必须由驱动提供 =="
           # vendor 树在 #ifdef CONFIG_KSU_SUSFS 内直接调用这些钩子（BakaSU 形态）。
