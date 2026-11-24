@@ -1,8 +1,12 @@
-name: "Build Kernel with BakaSU auto-hook (modern repro: vendor f4c3fdd4 + boot fixes + BakaSU HEAD pinned)"
+name: "Build Kernel with BakaSU main (modern repro: vendor f4c3fdd4 + boot fixes + BakaSU main pinned)"
 
 on:
   workflow_dispatch:
     inputs:
+      bakasu_branch:
+        description: "覆盖 BakaSU 分支（默认 main；实验回退可填 auto-hook，须同步填对应 bakasu_pin）"
+        required: false
+        default: ""
       bakasu_pin:
         description: "覆盖 BakaSU pin（短/全 SHA 均可）。⚠️ 留空！GitHub UI 会记住上次填写值，误带短值会构建失败"
         required: false
@@ -18,11 +22,16 @@ env:
   OUTPUT_DIR: out
   CLANG_DIR: ${{ github.workspace }}/toolchains/clang
   KERNEL_DIR: ${{ github.workspace }}/kernel
-  # BakaSU 驱动：auto-hook 分支（旧 sync-up 的后继；2026-11-24 经 GitHub API 核实）
+  # BakaSU 驱动：main 分支（活跃开发线，v4.2.0-rc3+，2026-11-23 仍有提交）。
+  # 2026-11-24 迁移：原 auto-hook 分支已冻结在 v4.1.0（末次提交 2026-08-07）。
+  # main 的钩子方式由 Kbuild 三选一：TRACEPOINT（仅 GKI2.0）/ MANUAL / SUSFS-inline
+  # （5.4 vendor 走此路）；stat/faccessat filename 变体与 ksu_handle_post_execveat_
+  # sucompat 已在 SUSFS 分支原生提供，selinux_hide 经 __maybe_static 宏自配置。
   BAKASU_REPO: https://github.com/Baka-SU/BakaSU.git
-  BAKASU_BRANCH: auto-hook
-  # 2026-11-24 API 核实的分支 HEAD；分支前移即构建失败，防止上游漂移破坏锚点补丁
-  BAKASU_PIN: 9d159b417210fdca88b4dbf4381fc1c618c102ba
+  BAKASU_BRANCH: main
+  # 2026-11-24 API 核实的 main 分支 HEAD（含 #672 sid 回归修复）；分支前移即构建失败，
+  # 防止上游漂移破坏锚点补丁。版本码 = 30000 + git rev-list --count HEAD + 700
+  BAKASU_PIN: 57b2db6076f439cfd489f14576444e8f0f2f0a25
 
 jobs:
   build-kernel:
@@ -106,7 +115,7 @@ jobs:
       - name: Verify Clang
         run: ${{ env.CLANG_DIR }}/bin/clang --version
 
-      - name: Integrate BakaSU (auto-hook, pull & pin)
+      - name: Integrate BakaSU (pull & pin)
         working-directory: kernel
         run: |
           set -euo pipefail
@@ -120,11 +129,13 @@ jobs:
           echo "== 清理内核树 =="
           make mrproper >/dev/null 2>&1 || true
 
-          echo "== 拉取 BakaSU (auto-hook) 并接管 drivers/kernelsu =="
+          echo "== 拉取 BakaSU 并接管 drivers/kernelsu =="
           rm -rf BakaSU_src KernelSU drivers/kernelsu drivers/KernelSU
-          git clone --no-checkout -b "${{ env.BAKASU_BRANCH }}" "${{ env.BAKASU_REPO }}" BakaSU_src
-          git -C BakaSU_src fetch --depth=1 origin "${{ env.BAKASU_PIN }}" \
-            || git -C BakaSU_src fetch origin "${{ env.BAKASU_PIN }}" \
+          git clone --no-checkout -b "${{ inputs.bakasu_branch || env.BAKASU_BRANCH }}" "${{ env.BAKASU_REPO }}" BakaSU_src
+          # 注意不可用 --depth=1：Kbuild 用 git rev-list --count HEAD 计算驱动版本码，
+          # shallow 历史会算出错误版本号（Kbuild 会在构建期自动 fetch --unshallow 兜底，
+          # 但直接全量克隆更稳）
+          git -C BakaSU_src fetch origin "${{ env.BAKASU_PIN }}" \
             || { echo "::error::cannot fetch BakaSU pin ${{ env.BAKASU_PIN }}"; exit 1; }
           # 【修复 2026-11-24 首跑】旧校验在当前目录（非 BakaSU 仓库）解析 pin，
           # 解析失败回退 echo 原值——若 dispatch 表单的 bakasu_pin 输入框带了
@@ -144,7 +155,7 @@ jobs:
             echo "::error::BakaSU checkout HEAD=$ACTUAL_SHA (len=${#ACTUAL_SHA}) != resolved pin=$RESOLVED_PIN (len=${#RESOLVED_PIN})"
             exit 1
           fi
-          echo "BakaSU auto-hook: $(git -C BakaSU_src log -1 --format='%h %s')"
+          echo "BakaSU driver: $(git -C BakaSU_src log -1 --format='%h %s')"
           test -f BakaSU_src/kernel/Kbuild || { echo "::error::kernel/Kbuild missing — in-tree layout changed"; exit 1; }
           test -f BakaSU_src/kernel/Kconfig || { echo "::error::kernel/Kconfig missing"; exit 1; }
 
@@ -210,16 +221,17 @@ jobs:
             ! grep -qF "$OLD_GUARD" "$SUC" \
               || { echo "::error::stale stat version guard remains"; exit 1; }
             echo "  -- ksu_handle_stat now filename variant (5.4 included)"
-          elif grep -qF 'int ksu_handle_stat(int *dfd, struct filename **filename, int *flags)' "$SUC" \
-               && ! grep -qF 'const char __user **filename_user' "$SUC"; then
-            echo "  -- ksu_handle_stat already filename variant (guard previously rewritten)"
+          elif grep -qF 'int ksu_handle_stat(int *dfd, struct filename **filename, int *flags)' "$SUC"; then
+            echo "  -- ksu_handle_stat already filename variant (native, e.g. BakaSU main #ifdef CONFIG_KSU_SUSFS branch)"
           else
             echo "::error::ksu_handle_stat neither filename variant nor expected guard found - upstream layout changed"; exit 1
           fi
 
           # B) ksu_handle_faccessat：重写为 filename 变体
-          if grep -qF 'int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode, int *flags)' "$SUC"; then
-            echo "  -- ksu_handle_faccessat already filename variant"
+          #    main 分支 SUSFS 变体第 4 参名为 __unused_flags（auto-hook 重写版为
+          #    flags）——ABI 一致（均为 int*），正则两者皆认
+          if grep -qE 'int ksu_handle_faccessat\(int \*dfd, struct filename \*\*filename, int \*mode, int \*(__unused_)?flags\)' "$SUC"; then
+            echo "  -- ksu_handle_faccessat already filename variant (native or previously rewritten)"
           else
             python3 - "$SUC" <<'PYFAC'
           import sys
@@ -283,27 +295,33 @@ jobs:
           sed -i 's/^static char __user \*sh_user_path(void)/__maybe_unused static char __user *sh_user_path(void)/' "$SUC"
           sed -i 's/^static char __user \*ksud_user_path(void)/__maybe_unused static char __user *ksud_user_path(void)/' "$SUC"
 
-          # C2) sucompat.h 声明同步：A/B 只重写了 .c 里的定义，头文件里
-          #     stat/faccessat 仍声明为 const char __user **filename_user 旧
-          #     签名 → 编译报 conflicting types（CI 实测 sucompat.c:339/367 vs
-          #     sucompat.h:17/21）。头文件同步重写为 filename 变体；幂等——
-          #     旧签名不存在时 sed 无锚点匹配、无操作。
+          # C2) sucompat.h 声明同步（仅 auto-hook 形态需要）：A/B 只重写了 .c 里的
+          #     定义，头文件里 stat/faccessat 仍声明为 const char __user **
+          #     filename_user 旧签名 → 编译报 conflicting types。main 分支头文件
+          #     已在 #ifdef CONFIG_KSU_SUSFS 内声明 filename 变体（#else 为非
+          #     SUSFS 死代码，合法保留 user-ptr 形态）→ 检测到即整体跳过重写，
+          #     避免误改 #else 死代码。
           SUCH="BakaSU_src/kernel/feature/sucompat.h"
           test -f "$SUCH" || { echo "::error::sucompat.h not found in pinned driver"; exit 1; }
-          sed -i -E 's@int ksu_handle_stat\([^;]*const char __user \*\*filename_user[^;]*;@int ksu_handle_stat(int *dfd, struct filename **filename, int *flags);@' "$SUCH"
-          sed -i -E 's@int ksu_handle_faccessat\([^;]*const char __user \*\*filename_user[^;]*;@int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode, int *flags);@' "$SUCH"
-          grep -qF 'int ksu_handle_stat(int *dfd, struct filename **filename, int *flags);' "$SUCH" \
-            || { echo "::error::sucompat.h stat declaration mismatch (old sig layout changed?)"; exit 1; }
-          grep -qF 'int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode, int *flags);' "$SUCH" \
-            || { echo "::error::sucompat.h faccessat declaration mismatch (old sig layout changed?)"; exit 1; }
-          # 旧 user-ptr 声明清零仅针对 stat/faccessat（本步重写对象）。头文件里
-          # 其他钩子（如 ksu_handle_execveat_sucompat）可能合法保留 user-ptr
-          # 形态（其 .c 定义同形态，<6.1 分支）——残留不构成本步目标，打印留证；
-          # 定义↔声明一致性由编译器把关，vendor 调用一致性由 E 块终验把关。
-          STALE="$(grep -nE 'ksu_handle_(stat|faccessat)\([^;]*const char __user' "$SUCH" || true)"
-          if [ -n "$STALE" ]; then
-            echo "::error::sucompat.h stat/faccessat still declare user-ptr variant: $STALE"
-            exit 1
+          if grep -qF 'int ksu_handle_stat(int *dfd, struct filename **filename, int *flags);' "$SUCH" \
+             && grep -qF 'int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode' "$SUCH"; then
+            echo "  -- sucompat.h already declares SUSFS filename variants (main form); skip rewrite"
+          else
+            sed -i -E 's@int ksu_handle_stat\([^;]*const char __user \*\*filename_user[^;]*;@int ksu_handle_stat(int *dfd, struct filename **filename, int *flags);@' "$SUCH"
+            sed -i -E 's@int ksu_handle_faccessat\([^;]*const char __user \*\*filename_user[^;]*;@int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode, int *flags);@' "$SUCH"
+            grep -qF 'int ksu_handle_stat(int *dfd, struct filename **filename, int *flags);' "$SUCH" \
+              || { echo "::error::sucompat.h stat declaration mismatch (old sig layout changed?)"; exit 1; }
+            grep -qF 'int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode, int *flags);' "$SUCH" \
+              || { echo "::error::sucompat.h faccessat declaration mismatch (old sig layout changed?)"; exit 1; }
+            # 旧 user-ptr 声明清零仅针对 stat/faccessat（本步重写对象）。头文件里
+            # 其他钩子（如 ksu_handle_execveat_sucompat）可能合法保留 user-ptr
+            # 形态——残留不构成本步目标，打印留证；定义↔声明一致性由编译器把关，
+            # vendor 调用一致性由 E 块终验把关。
+            STALE="$(grep -nE 'ksu_handle_(stat|faccessat)\([^;]*const char __user' "$SUCH" || true)"
+            if [ -n "$STALE" ]; then
+              echo "::error::sucompat.h stat/faccessat still declare user-ptr variant: $STALE"
+              exit 1
+            fi
           fi
           LEFT="$(grep -nF 'const char __user **filename_user' "$SUCH" || true)"
           if [ -n "$LEFT" ]; then
@@ -341,7 +359,7 @@ jobs:
           # E) vendor 期望签名/跨界符号终验
           grep -qF 'int ksu_handle_stat(int *dfd, struct filename **filename, int *flags)' "$SUC" \
             || { echo "::error::ksu_handle_stat signature mismatch vs vendor"; exit 1; }
-          grep -qF 'int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode, int *flags)' "$SUC" \
+          grep -qE 'int ksu_handle_faccessat\(int \*dfd, struct filename \*\*filename, int \*mode, int \*(__unused_)?flags\)' "$SUC" \
             || { echo "::error::ksu_handle_faccessat signature mismatch vs vendor"; exit 1; }
           grep -rqF 'DEFINE_STATIC_KEY_TRUE(ksu_is_init_rc_hook_enabled)' BakaSU_src/kernel \
             || { echo "::error::ksu_is_init_rc_hook_enabled static key missing (vendor fs/stat.c externs it)"; exit 1; }
@@ -375,23 +393,39 @@ jobs:
           echo "-- all vendor-called ksu_handle_* hooks provided"
 
           echo "== selinux_hide 符号接线（vendor BakaSU 预置钩子所需）=="
-          # vendor security/selinux/{selinuxfs.c,hooks.c} 以 extern 引用 BakaSU 的
-          # selinux_hide 符号。auto-hook HEAD 的 selinux_hide.c 提供大部分定义，
-          # 但 __maybe_static 宏在部分内核配置下展开为 static → 链接失败。
-          # 统一对策：把这 4 个 __maybe_static 定义强制为普通定义（非 static 严格
-          # 超集，驱动内部使用不受影响）；static 锁去掉 static（旧 workflow 同款）。
-          SHIDE="BakaSU_src/kernel/feature/selinux_hide.c"
-          test -f "$SHIDE" || { echo "::error::selinux_hide.c not found in pinned driver"; exit 1; }
-          sed -i 's/__maybe_static struct selinux_state fake_state;/struct selinux_state fake_state;/' "$SHIDE"
-          sed -i 's/__maybe_static bool ksu_selinux_hide_enabled __read_mostly = false;/bool ksu_selinux_hide_enabled __read_mostly = false;/' "$SHIDE"
-          sed -i 's/__maybe_static bool ksu_selinux_hide_running __read_mostly = false;/bool ksu_selinux_hide_running __read_mostly = false;/' "$SHIDE"
-          sed -i 's/__maybe_static struct page \*fake_status = NULL;/struct page *fake_status = NULL;/' "$SHIDE"
-          sed -i 's/^static struct mutex \*ksu_selinux_status_lock = NULL;/struct mutex *ksu_selinux_status_lock = NULL;/' "$SHIDE"
-          ! grep -q '__maybe_static struct selinux_state fake_state;' "$SHIDE" \
-            || { echo "::error::fake_state __maybe_static removal failed"; exit 1; }
-          grep -q '^struct mutex \*ksu_selinux_status_lock' "$SHIDE" \
-            || { echo "::error::selinux_hide.c lock static-removal failed"; exit 1; }
-          echo "-- __maybe_static de-macroed; status lock now shared"
+          # 双形态：
+          #   main：kernel/feature/selinux_hide/selinux_hide.c，文件内自定义
+          #     __maybe_static 宏——KSU_COMPAT_HAS_SUSFS_FEATURE_SELINUX_HIDE
+          #     定义时展开为空（全部符号全局），否则 static。该宏由 susfs_compat.mk
+          #     依据 vendor hooks.c 是否含 ksu_selinux_hide_running 决定。仅状态锁
+          #     显式 static → 去 static 供 vendor 共享。
+          #   auto-hook：feature/selinux_hide.c，__maybe_static 是未定义宏 → 编译
+          #     报错 → 手动去宏（旧 workflow 同款）。
+          SHIDE="BakaSU_src/kernel/feature/selinux_hide/selinux_hide.c"
+          if [ ! -f "$SHIDE" ]; then
+            SHIDE="BakaSU_src/kernel/feature/selinux_hide.c"
+          fi
+          test -f "$SHIDE" || { echo "::error::selinux_hide.c not found in pinned driver (neither dir nor flat layout)"; exit 1; }
+          if grep -qE '^#define __maybe_static[[:space:]]*$' "$SHIDE"; then
+            # main 形态。前置校验：宏空展开依赖 susfs_compat.mk 的判定条件
+            grep -q 'ksu_selinux_hide_running' security/selinux/hooks.c \
+              || { echo "::error::vendor security/selinux/hooks.c lacks ksu_selinux_hide_running — susfs_compat.mk won't define KSU_COMPAT_HAS_SUSFS_FEATURE_SELINUX_HIDE, driver selinux_hide symbols stay static and vendor externs would break"; exit 1; }
+            sed -i 's/^static struct mutex \*ksu_selinux_status_lock = NULL;/struct mutex *ksu_selinux_status_lock = NULL;/' "$SHIDE"
+            grep -q '^struct mutex \*ksu_selinux_status_lock' "$SHIDE" \
+              || { echo "::error::selinux_hide.c lock static-removal failed (main form)"; exit 1; }
+            echo "-- main-form selinux_hide: __maybe_static self-configured (SUSFS=global); status lock de-staticed"
+          else
+            sed -i 's/__maybe_static struct selinux_state fake_state;/struct selinux_state fake_state;/' "$SHIDE"
+            sed -i 's/__maybe_static bool ksu_selinux_hide_enabled __read_mostly = false;/bool ksu_selinux_hide_enabled __read_mostly = false;/' "$SHIDE"
+            sed -i 's/__maybe_static bool ksu_selinux_hide_running __read_mostly = false;/bool ksu_selinux_hide_running __read_mostly = false;/' "$SHIDE"
+            sed -i 's/__maybe_static struct page \*fake_status = NULL;/struct page *fake_status = NULL;/' "$SHIDE"
+            sed -i 's/^static struct mutex \*ksu_selinux_status_lock = NULL;/struct mutex *ksu_selinux_status_lock = NULL;/' "$SHIDE"
+            ! grep -q '__maybe_static struct selinux_state fake_state;' "$SHIDE" \
+              || { echo "::error::fake_state __maybe_static removal failed"; exit 1; }
+            grep -q '^struct mutex \*ksu_selinux_status_lock' "$SHIDE" \
+              || { echo "::error::selinux_hide.c lock static-removal failed"; exit 1; }
+            echo "-- auto-hook-form selinux_hide: __maybe_static de-macroed; status lock now shared"
+          fi
 
           echo "== 逐符号核对外部可见性，缺什么补什么（特性关闭语义）=="
           SVC="security/selinux/ss/services.c"
@@ -399,13 +433,14 @@ jobs:
           for sym in ksu_selinux_hide_enabled ksu_selinux_hide_running \
                      fake_status_initialize_key fake_status \
                      ksu_selinux_status_lock initialize_fake_status; do
-            # 宏定义形态（DEFINE_STATIC_KEY_TRUE/FALSE(sym)）产生全局链接符号，
-            # 但文本后随 ')' 不被 sym(;| |=|\( 捕获——CI 实测
-            # fake_status_initialize_key 被误判缺失 → services.c 追加同名列 →
-            # 链接期 duplicate symbol。故补宏形态识别。
+            # 判定"驱动已提供"要点：
+            #   a) 宏定义形态（DEFINE_STATIC_KEY_TRUE/FALSE(sym)）文本后随 ')'，
+            #      不被 sym(;| |=|\( 捕获 → 补宏形态识别；
+            #   b) static 判定加词边界：__maybe_static 前缀（main 形态，SUSFS 下
+            #      展开为空 → 全局）不得被误判为 static 定义。
             if { grep -rqE "(^|[^_a-zA-Z])${sym}(;| |=|\()" BakaSU_src/kernel 2>/dev/null \
                  || grep -rqE "DEFINE_STATIC_KEY_(TRUE|FALSE)\(${sym}\)" BakaSU_src/kernel 2>/dev/null; } \
-               && ! grep -rqE "static (bool|struct page \*|struct mutex \*|struct static_key_false) ${sym}" BakaSU_src/kernel 2>/dev/null; then
+               && ! grep -rqE "(^|[^_a-zA-Z])static (bool|struct page \*|struct mutex \*|struct static_key_false) ${sym}" BakaSU_src/kernel 2>/dev/null; then
               echo "  -- $sym: provided by driver"
             elif grep -q "\b${sym}\b" "$SVC" && grep -qE "(bool|struct page \*|struct mutex \*|DEFINE_STATIC_KEY_FALSE\(${sym}|void ${sym})" "$SVC"; then
               echo "  -- $sym: already in services.c"
@@ -413,7 +448,18 @@ jobs:
               echo "  -- $sym: MISSING -> appending feature-off stub to services.c"
               case "$sym" in
                 fake_status_initialize_key)
-                  printf '\n/* bakasu-modern: vendor extern, driver does not define; no-op semantics */\n#include <linux/jump_label.h>\nDEFINE_STATIC_KEY_FALSE(fake_status_initialize_key);\n' >> "$SVC" ;;
+                  # main 形态：SUSFS 分支为 __maybe_static DEFINE_STATIC_KEY_FALSE(...)
+                  # （宏空展开 → 全局 static key）；但其 #else 非 SUSFS 死代码分支
+                  # 有字面 static 声明，会触发上方 grep-2 误判为"驱动未提供"——
+                  # 在补桩前先识别自配置形态，命中则跳过（防重复符号）。
+                  if grep -qF '__maybe_static DEFINE_STATIC_KEY_FALSE(fake_status_initialize_key)' BakaSU_src/kernel 2>/dev/null \
+                     && grep -qE '^#define __maybe_static[[:space:]]*$' "$SHIDE" 2>/dev/null; then
+                    echo "  -- $sym: provided by driver (main-form self-configured __maybe_static)"
+                  else
+                    printf '\n/* bakasu-modern: vendor extern, driver does not define; no-op semantics */\n#include <linux/jump_label.h>\nDEFINE_STATIC_KEY_FALSE(fake_status_initialize_key);\n' >> "$SVC"
+                    grep -q 'DEFINE_STATIC_KEY_FALSE(fake_status_initialize_key)' "$SVC" \
+                      || { echo "::error::fake_status_initialize_key stub append failed"; exit 1; }
+                  fi ;;
                 fake_status)
                   # 诊断式接线：driver 端 fake_status 的定义形态决定处理方式。
                   #   - 存在"非 static 非 extern"的全局定义（如前面 de-macro 已生效）
@@ -515,7 +561,12 @@ jobs:
           BRIDGE="BakaSU_src/kernel/hook/syscall_event_bridge.c"
           BRIDGE_H="BakaSU_src/kernel/hook/syscall_event_bridge.h"
           HOOKMGR="BakaSU_src/kernel/hook/syscall_hook_manager.c"
-          if [ -f "$BRIDGE" ] && [ -f "$BRIDGE_H" ] && [ -f "$HOOKMGR" ]; then
+          if grep -q 'TP hooks are incompatible with Non-GKI' BakaSU_src/kernel/Kbuild; then
+            # main 分支形态：Kbuild 明文限制 TRACEPOINT/hook-manager 仅 GKI 2.0，
+            # 5.4 SUSFS-inline 路径不编译 hook manager/bridge → 补丁将成为死代码
+            echo "  ::warning::driver 为 main 分支形态：hook manager/bridge 仅 GKI 2.0 编译，5.4 SUSFS inline 模式不含它们"
+            echo "  ::warning::-> statx 时序对齐在本构建不可用，时序侧信道与 Nova 线同等暴露"
+          elif [ -f "$BRIDGE" ] && [ -f "$BRIDGE_H" ] && [ -f "$HOOKMGR" ]; then
             if ! grep -q 'ksu_hook_statx' "$BRIDGE"; then
               cat >> "$BRIDGE" <<'EOF'
 
