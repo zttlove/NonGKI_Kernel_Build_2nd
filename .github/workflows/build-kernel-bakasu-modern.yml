@@ -31,7 +31,7 @@ on:
   workflow_dispatch:
     inputs:
       bakasu_pin:
-        description: "覆盖 BakaSU auto-hook pin，留空用 env 的 9d159b41"
+        description: "覆盖 BakaSU pin（短/全 SHA 均可）。⚠️ 留空！GitHub UI 会记住上次填写值，误带短值会构建失败"
         required: false
         default: ""
 
@@ -153,11 +153,22 @@ jobs:
           git -C BakaSU_src fetch --depth=1 origin "${{ env.BAKASU_PIN }}" \
             || git -C BakaSU_src fetch origin "${{ env.BAKASU_PIN }}" \
             || { echo "::error::cannot fetch BakaSU pin ${{ env.BAKASU_PIN }}"; exit 1; }
-          git -C BakaSU_src checkout --detach "${{ env.BAKASU_PIN }}"
-          ACTUAL_SHA="$(git -C BakaSU_src rev-parse HEAD)"
+          # 【修复 2026-11-24 首跑】旧校验在当前目录（非 BakaSU 仓库）解析 pin，
+          # 解析失败回退 echo 原值——若 dispatch 表单的 bakasu_pin 输入框带了
+          # 短 SHA / 尾随空白（GitHub UI 会记住上次运行填的值），比较必失败且
+          # 报错两边截断显示一样、极难定位。现改为：全部在 BakaSU_src 内解析，
+          # 短/全 SHA 归一化为规范 40 位，报错打印全值+长度。
           PIN_SHA="${{ inputs.bakasu_pin || env.BAKASU_PIN }}"
-          if [ "$ACTUAL_SHA" != "$(git rev-parse "${PIN_SHA}^{commit}" 2>/dev/null || echo "$PIN_SHA")" ]; then
-            echo "::error::BakaSU checkout ${ACTUAL_SHA:0:12} != pinned ${PIN_SHA:0:12}"
+          git -C BakaSU_src checkout --detach "$PIN_SHA" \
+            || { echo "::error::cannot checkout BakaSU pin '$PIN_SHA' (len=${#PIN_SHA}) — input bakasu_pin 应留空以使用 env pin"; exit 1; }
+          ACTUAL_SHA="$(git -C BakaSU_src rev-parse HEAD)"
+          RESOLVED_PIN="$(git -C BakaSU_src rev-parse --verify --quiet "${PIN_SHA}^{commit}" || true)"
+          if [ -z "$RESOLVED_PIN" ]; then
+            echo "::error::BakaSU pin unresolvable inside BakaSU_src: '$PIN_SHA' (len=${#PIN_SHA}) — 检查 dispatch 输入 bakasu_pin 是否被 UI 带入了旧值"
+            exit 1
+          fi
+          if [ "$ACTUAL_SHA" != "$RESOLVED_PIN" ]; then
+            echo "::error::BakaSU checkout HEAD=$ACTUAL_SHA (len=${#ACTUAL_SHA}) != resolved pin=$RESOLVED_PIN (len=${#RESOLVED_PIN})"
             exit 1
           fi
           echo "BakaSU auto-hook: $(git -C BakaSU_src log -1 --format='%h %s')"
@@ -920,7 +931,10 @@ jobs:
 
           echo "=== Build finished ==="
           echo "KSU identity: $(grep -m1 -oE 'KSU_PACKAGE_NAME[^ ]* [^ ]*' drivers/kernelsu/Makefile 2>/dev/null || echo 'see manager apk')"
-          grep -c ' rsx_\|rsy_' /proc/kallsyms 2>/dev/null || true
+          # bakasu 复现版刻意不做 slim10 改名（保持驱动线单变量）——此处改为
+          # 统计 ksu_/susfs_ 符号残留，作为 kallsyms 泄漏面基线参考（预期 >0）
+          echo "kallsyms ksu_/susfs_ symbol count (baseline, expected >0 for this line):"
+          grep -cE ' [a-zA-Z0-9_]*(ksu_|susfs_)' /proc/kallsyms 2>/dev/null || echo "0 (kallsyms not readable on runner; check on device)"
           ccache -s 2>/dev/null || true
           ls -lh out/arch/arm64/boot/Image
 
