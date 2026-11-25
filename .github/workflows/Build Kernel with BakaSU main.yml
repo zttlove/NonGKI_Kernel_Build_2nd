@@ -1,4 +1,4 @@
-name: "Build Kernel with BakaSU main (vendor f4c3fdd4 + BakaSU main pinned + IKCONFIG A/B: kept=slim12 sanitize fix / disabled=hang-repro bisect)"
+name: "Build Kernel with BakaSU main (vendor f4c3fdd4 + BakaSU main pinned + IKCONFIG A/B: kept=slim12 sanitize fix / disabled=hang-repro bisect)88"
 
 on:
   workflow_dispatch:
