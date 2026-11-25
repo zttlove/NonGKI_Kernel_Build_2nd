@@ -1,0 +1,1562 @@
+name: "Build Kernel with BakaSU main (vendor f4c3fdd4 + BakaSU main pinned + IKCONFIG A/B: kept=slim12 sanitize fix / disabled=hang-repro bisect)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      bakasu_branch:
+        description: "覆盖 BakaSU 分支（默认 main；实验回退可填 auto-hook，须同步填对应 bakasu_pin）"
+        required: false
+        default: ""
+      bakasu_pin:
+        description: "覆盖 BakaSU pin（短/全 SHA 均可）。⚠️ 留空！GitHub UI 会记住上次填写值，误带短值会构建失败"
+        required: false
+        default: ""
+      ikconfig_mode:
+        description: "IKCONFIG 二分对照：kept=修复版(默认,保开机+净化)；disabled=对照版(复现卡第二屏假设,其余完全一致)。⚠️ 留空即 kept！"
+        required: false
+        default: "kept"
+        type: choice
+        options:
+          - "kept"
+          - "disabled"
+
+env:
+  KERNEL_REPO: zttlove/android_kernel_xiaomi_sm8350-hyperos
+  KERNEL_BRANCH: dynamic
+  # 与 slim14 线相同的 vendor pin（唯一已验证可开机的树 tip，需 cpufreq 回退）
+  KERNEL_COMMIT_PIN: "f4c3fdd4"
+  DEFCONFIG_NAME: vendor/star_defconfig
+  DEVICE_CODENAME: star
+  OUTPUT_DIR: out
+  CLANG_DIR: ${{ github.workspace }}/toolchains/clang
+  KERNEL_DIR: ${{ github.workspace }}/kernel
+  # BakaSU 驱动：main 分支（活跃开发线，v4.2.0-rc3+，2026-11-23 仍有提交）。
+  # 2026-11-24 迁移：原 auto-hook 分支已冻结在 v4.1.0（末次提交 2026-08-07）。
+  # main 的钩子方式由 Kbuild 三选一：TRACEPOINT（仅 GKI2.0）/ MANUAL / SUSFS-inline
+  # （5.4 vendor 走此路）；stat/faccessat filename 变体与 ksu_handle_post_execveat_
+  # sucompat 已在 SUSFS 分支原生提供，selinux_hide 经 __maybe_static 宏自配置。
+  BAKASU_REPO: https://github.com/Baka-SU/BakaSU.git
+  BAKASU_BRANCH: main
+  # 2026-11-24 API 核实的 main 分支 HEAD（含 #672 sid 回归修复）；分支前移即构建失败，
+  # 防止上游漂移破坏锚点补丁。版本码 = 30000 + git rev-list --count HEAD + 700
+  BAKASU_PIN: 57b2db6076f439cfd489f14576444e8f0f2f0a25
+
+jobs:
+  build-kernel:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.KERNEL_REPO }}
+          ref: ${{ env.KERNEL_BRANCH }}
+          path: kernel
+          fetch-depth: 2
+
+      - name: Verify Kernel Commit & Clean Workspace
+        working-directory: kernel
+        run: |
+          git reset --hard HEAD
+          git clean -fdx
+          SHORT_SHA=$(git rev-parse --short=8 HEAD)
+          echo "Kernel: $(git log -1 --format='%h %s')"
+          if [ "$SHORT_SHA" != "$KERNEL_COMMIT_PIN" ]; then
+            echo "::error::vendor kernel source drifted: branch tip ${SHORT_SHA} != pinned ${KERNEL_COMMIT_PIN}"
+            exit 1
+          fi
+
+      - name: Revert merge-brought cpufreq init-order change (bootloop fix)
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          echo "== 回退合并带入的 qcom-cpufreq-hw.c 初始化时序改动 =="
+          # 与 slim14 线完全一致：f4c3fdd4 相对旧可开机基线的唯一内核内容差异，
+          # 实机无限重启根因。回退后才可开机验证。
+          PC=drivers/cpufreq/qcom-cpufreq-hw.c
+          test -f "$PC" || { echo "::error::$PC not found"; exit 1; }
+          if [ "$(git log -1 --format=%P HEAD | wc -w)" -eq 2 ]; then
+            git diff HEAD^1 HEAD -- "$PC" | git apply -R --whitespace=nowarn
+            R=$(grep -n 'cpufreq_register_driver(&cpufreq_qcom_hw_driver)' "$PC" | head -1 | cut -d: -f1)
+            C=$(grep -n 'register_cpu_cycle_counter_cb(&cycle_counter_cb)' "$PC" | head -1 | cut -d: -f1)
+            if [ -n "$R" ] && [ -n "$C" ] && [ "$R" -lt "$C" ]; then
+              echo "-- reverted: cpufreq_register_driver (L$R) now precedes register_cpu_cycle_counter_cb (L$C)"
+            else
+              echo "::error::cpufreq revert verification failed (R=$R C=$C)"; exit 1
+            fi
+          else
+            echo "-- HEAD is not a merge commit, nothing to revert"
+          fi
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bc bison flex libssl-dev libelf-dev \
+            zip unzip python3 perl git curl ccache xxd cpio kmod \
+            libtinfo5
+          sudo ln -sf /usr/lib/x86_64-linux-gnu/libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5 || true
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-bakasu-modern-star-${{ github.run_id }}
+          restore-keys: |
+            ccache-bakasu-modern-star-
+
+      - name: Cache Clang Toolchain
+        uses: actions/cache@v4
+        id: clang-cache
+        with:
+          path: ${{ env.CLANG_DIR }}
+          key: clang-17.0.6-x86_64-ubuntu22.04
+
+      - name: Download Clang 17.0.6
+        if: steps.clang-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "${{ env.CLANG_DIR }}"
+          curl -fL --retry 3 -o /tmp/clang.tar.xz \
+            https://github.com/llvm/llvm-project/releases/download/llvmorg-17.0.6/clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-22.04.tar.xz
+          tar -xf /tmp/clang.tar.xz -C "${{ env.CLANG_DIR }}" --strip-components=1
+
+      - name: Verify Clang
+        run: ${{ env.CLANG_DIR }}/bin/clang --version
+
+      - name: Integrate BakaSU (pull & pin)
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          export ARCH=arm64
+          export PATH="${{ env.CLANG_DIR }}/bin:$PATH"
+          export LLVM=1 LLVM_IAS=1 \
+                 CLANG_TRIPLE=aarch64-linux-gnu- \
+                 CROSS_COMPILE=aarch64-linux-gnu- \
+                 CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+
+          echo "== 清理内核树 =="
+          make mrproper >/dev/null 2>&1 || true
+
+          echo "== 拉取 BakaSU 并接管 drivers/kernelsu =="
+          rm -rf BakaSU_src KernelSU drivers/kernelsu drivers/KernelSU
+          git clone --no-checkout -b "${{ inputs.bakasu_branch || env.BAKASU_BRANCH }}" "${{ env.BAKASU_REPO }}" BakaSU_src
+          # 注意不可用 --depth=1：Kbuild 用 git rev-list --count HEAD 计算驱动版本码，
+          # shallow 历史会算出错误版本号（Kbuild 会在构建期自动 fetch --unshallow 兜底，
+          # 但直接全量克隆更稳）
+          git -C BakaSU_src fetch origin "${{ env.BAKASU_PIN }}" \
+            || { echo "::error::cannot fetch BakaSU pin ${{ env.BAKASU_PIN }}"; exit 1; }
+          # 【修复 2026-11-24 首跑】旧校验在当前目录（非 BakaSU 仓库）解析 pin，
+          # 解析失败回退 echo 原值——若 dispatch 表单的 bakasu_pin 输入框带了
+          # 短 SHA / 尾随空白（GitHub UI 会记住上次运行填的值），比较必失败且
+          # 报错两边截断显示一样、极难定位。现改为：全部在 BakaSU_src 内解析，
+          # 短/全 SHA 归一化为规范 40 位，报错打印全值+长度。
+          PIN_SHA="${{ inputs.bakasu_pin || env.BAKASU_PIN }}"
+          git -C BakaSU_src checkout --detach "$PIN_SHA" \
+            || { echo "::error::cannot checkout BakaSU pin '$PIN_SHA' (len=${#PIN_SHA}) — input bakasu_pin 应留空以使用 env pin"; exit 1; }
+          ACTUAL_SHA="$(git -C BakaSU_src rev-parse HEAD)"
+          RESOLVED_PIN="$(git -C BakaSU_src rev-parse --verify --quiet "${PIN_SHA}^{commit}" || true)"
+          if [ -z "$RESOLVED_PIN" ]; then
+            echo "::error::BakaSU pin unresolvable inside BakaSU_src: '$PIN_SHA' (len=${#PIN_SHA}) — 检查 dispatch 输入 bakasu_pin 是否被 UI 带入了旧值"
+            exit 1
+          fi
+          if [ "$ACTUAL_SHA" != "$RESOLVED_PIN" ]; then
+            echo "::error::BakaSU checkout HEAD=$ACTUAL_SHA (len=${#ACTUAL_SHA}) != resolved pin=$RESOLVED_PIN (len=${#RESOLVED_PIN})"
+            exit 1
+          fi
+          echo "BakaSU driver: $(git -C BakaSU_src log -1 --format='%h %s')"
+          test -f BakaSU_src/kernel/Kbuild || { echo "::error::kernel/Kbuild missing — in-tree layout changed"; exit 1; }
+          test -f BakaSU_src/kernel/Kconfig || { echo "::error::kernel/Kconfig missing"; exit 1; }
+
+          ln -sfn ../BakaSU_src/kernel drivers/kernelsu
+          grep -q 'kernelsu' drivers/Makefile || \
+            printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> drivers/Makefile
+          grep -q 'drivers/kernelsu/Kconfig' drivers/Kconfig || \
+            sed -i '/^endmenu/i\source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+
+          echo "== 确认内核侧 SUSFS 完整性 =="
+          test -f fs/susfs.c || { echo "::error::fs/susfs.c missing - kernel branch lacks SUSFS"; exit 1; }
+          test -f include/linux/susfs_def.h || { echo "::error::include/linux/susfs_def.h missing"; exit 1; }
+          grep -q 'CONFIG_KSU_SUSFS' fs/exec.c || { echo "::error::fs/exec.c lacks KSU_SUSFS hooks"; exit 1; }
+          grep -q 'CONFIG_KSU_SUSFS' fs/open.c || { echo "::error::fs/open.c lacks KSU_SUSFS hooks"; exit 1; }
+          grep -q 'CONFIG_KSU_SUSFS' fs/stat.c || { echo "::error::fs/stat.c lacks KSU_SUSFS hooks"; exit 1; }
+          echo "-- kernel-side SUSFS hooks verified (no kernel patching needed)"
+
+      - name: Adapt BakaSU auto-hook to vendor 5.4 signatures (stat/faccessat + post_execveat)
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          # 【GitHub Actions 21KB 表达式上限修复】原单步 run 脚本含表达式占位符
+          # ($ 双大括号) 插值时整块被解析为一个表达式，硬上限 21000 字符——加完
+          # vendor 5.4 适配块后已超限（报错 Line:138 Col:14）。按逻辑段拆为三步；
+          # 本步与下一步均为纯字面量脚本（无表达式占位符），不受该限制。
+
+          echo "== vendor 5.4 BakaSU-form 钩子适配（stat/faccessat filename 签名 + post_execveat 胶水）=="
+          # vendor 树（BakaSU 形态 fs/{exec,open,stat}.c）与 auto-hook 5.4 路径的差异：
+          #   1) fs/exec.c: extern int ksu_handle_post_execveat_sucompat(
+          #        int *fd, struct filename **filename_ptr, void *argv, void *envp,
+          #        int *flags, int *retval);
+          #      auto-hook 无此符号（旧 sync-up 的后置钩子被上游移除）。其原始职责
+          #      ——exec ksud 失败后回退 sh——已由 auto-hook pre-hook 的
+          #      kern_path(KSUD_PATH) 检查在 exec 前完成；no-op 胶水只需保持
+          #      vendor 的 filename->refcnt++/putname 配对平衡、retval 原样透传。
+          #   2) fs/stat.c: extern int ksu_handle_stat(int *dfd, struct filename **filename, int *flags)
+          #      auto-hook <6.1 定义 const char __user ** 变体——同名不同签：
+          #      链接可过，但运行时把 struct filename *（内核指针）当 user 指针
+          #      copy，su 伪装静默失效。改为 SUSFS 下恒用 filename 变体（6.1+
+          #      分支的实现只用 filename->name，5.4 完全可用）。
+          #   3) fs/open.c: extern int ksu_handle_faccessat(int *dfd, struct filename **filename,
+          #        int *mode, int *flags)——同 2，整函数重写为 filename 变体。
+          #   已核实无须处理的跨界符号：ksu_is_init_rc_hook_enabled 静态键与
+          #   ksu_handle_vfs_fstat（ksud_integration.c，SUSFS 分支，签名一致）、
+          #   __ksu_is_allow_uid_for_current（allowlist.c，新旧 API 俱在）、
+          #   ksu_su_compat_enabled（KSU_COMPAT_USE_STATIC_KEY ≥4.3 自动定义，
+          #   DEFINE_STATIC_KEY_TRUE 与 vendor extern 类型一致）、
+          #   ksu_handle_execveat/execveat_sucompat（filename 指针签名一致）。
+          SUC="BakaSU_src/kernel/feature/sucompat.c"
+          test -f "$SUC" || { echo "::error::sucompat.c not found in pinned driver"; exit 1; }
+
+          # A) ksu_handle_stat：SUSFS 下恒用 filename 变体
+          #    注意：上游文件里本来就"存在" filename 变体（6.1+ 分支），文本级
+          #    grep 无法判断预处理后哪个分支生效——必须以"旧版本守卫是否存在"
+          #    为判据做无条件重写（幂等）。
+          OLD_GUARD='#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0) && defined(CONFIG_KSU_SUSFS)'
+          if grep -qF "$OLD_GUARD" "$SUC"; then
+            [ "$(grep -cF "$OLD_GUARD" "$SUC")" = "1" ] \
+              || { echo "::error::stat version guard not unique in sucompat.c - manual review needed"; exit 1; }
+            sed -i 's/#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0) \&\& defined(CONFIG_KSU_SUSFS)/#if defined(CONFIG_KSU_SUSFS)/' "$SUC"
+            grep -qF 'int ksu_handle_stat(int *dfd, struct filename **filename, int *flags)' "$SUC" \
+              || { echo "::error::ksu_handle_stat guard rewrite failed"; exit 1; }
+            ! grep -qF "$OLD_GUARD" "$SUC" \
+              || { echo "::error::stale stat version guard remains"; exit 1; }
+            echo "  -- ksu_handle_stat now filename variant (5.4 included)"
+          elif grep -qF 'int ksu_handle_stat(int *dfd, struct filename **filename, int *flags)' "$SUC"; then
+            echo "  -- ksu_handle_stat already filename variant (native, e.g. BakaSU main #ifdef CONFIG_KSU_SUSFS branch)"
+          else
+            echo "::error::ksu_handle_stat neither filename variant nor expected guard found - upstream layout changed"; exit 1
+          fi
+
+          # B) ksu_handle_faccessat：重写为 filename 变体
+          #    main 分支 SUSFS 变体第 4 参名为 __unused_flags（auto-hook 重写版为
+          #    flags）——ABI 一致（均为 int*），正则两者皆认
+          if grep -qE 'int ksu_handle_faccessat\(int \*dfd, struct filename \*\*filename, int \*mode, int \*(__unused_)?flags\)' "$SUC"; then
+            echo "  -- ksu_handle_faccessat already filename variant (native or previously rewritten)"
+          else
+            python3 - "$SUC" <<'PYFAC'
+          import sys
+          p = sys.argv[1]
+          s = open(p).read()
+          old_sig = "int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode, int *__unused_flags)"
+          i = s.find(old_sig)
+          if i == -1:
+              sys.exit("::error::faccessat user-ptr signature not found (upstream changed?)")
+          body_start = s.index("{", i)
+          depth = 0
+          j = body_start
+          while True:
+              if s[j] == "{":
+                  depth += 1
+              elif s[j] == "}":
+                  depth -= 1
+                  if depth == 0:
+                      break
+              j += 1
+          new_fn = "\n".join([
+              'int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode, int *flags)',
+              '{',
+              '    if (ksu_is_current_proc_unprivillege()) {',
+              '        return 0;',
+              '    }',
+              '#ifdef KSU_COMPAT_USE_STATIC_KEY',
+              '    if (!static_branch_unlikely(&ksu_su_compat_enabled)) {',
+              '        return 0;',
+              '    }',
+              '#else',
+              '    if (!ksu_su_compat_enabled) {',
+              '        return 0;',
+              '    }',
+              '#endif',
+              '    if (!ksu_is_allow_uid_for_current(ksu_get_uid_t(current_uid()))) {',
+              '        return 0;',
+              '    }',
+              '    if (!filename || IS_ERR(*filename) || !(*filename)->name) {',
+              '        return 0;',
+              '    }',
+              '    if (unlikely(!memcmp((*filename)->name, su_path, sizeof(su_path)))) {',
+              '        pr_info("faccessat su->sh!\\n");',
+              '        memcpy((void *)(*filename)->name, sh_path, sizeof(sh_path));',
+              '    }',
+              '    return 0;',
+              '}',
+          ])
+          s = s[:i] + new_fn + s[j+1:]
+          open(p, "w").write(s)
+          print("faccessat rewritten to filename variant")
+          PYFAC
+            grep -qF 'int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode, int *flags)' "$SUC" \
+              || { echo "::error::faccessat rewrite failed"; exit 1; }
+            ! grep -qF '__unused_flags' "$SUC" \
+              || { echo "::error::stale user-ptr faccessat body remains"; exit 1; }
+          fi
+
+          # C) 重写后 user 态路径 helper 可能失去全部引用（tracepoint 块不编译），
+          #    标记 __maybe_unused 防未用告警升级
+          sed -i 's/^static char __user \*sh_user_path(void)/__maybe_unused static char __user *sh_user_path(void)/' "$SUC"
+          sed -i 's/^static char __user \*ksud_user_path(void)/__maybe_unused static char __user *ksud_user_path(void)/' "$SUC"
+
+          # C2) sucompat.h 声明同步（仅 auto-hook 形态需要）：A/B 只重写了 .c 里的
+          #     定义，头文件里 stat/faccessat 仍声明为 const char __user **
+          #     filename_user 旧签名 → 编译报 conflicting types。main 分支头文件
+          #     已在 #ifdef CONFIG_KSU_SUSFS 内声明 filename 变体（#else 为非
+          #     SUSFS 死代码，合法保留 user-ptr 形态）→ 检测到即整体跳过重写，
+          #     避免误改 #else 死代码。
+          SUCH="BakaSU_src/kernel/feature/sucompat.h"
+          test -f "$SUCH" || { echo "::error::sucompat.h not found in pinned driver"; exit 1; }
+          if grep -qF 'int ksu_handle_stat(int *dfd, struct filename **filename, int *flags);' "$SUCH" \
+             && grep -qF 'int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode' "$SUCH"; then
+            echo "  -- sucompat.h already declares SUSFS filename variants (main form); skip rewrite"
+          else
+            sed -i -E 's@int ksu_handle_stat\([^;]*const char __user \*\*filename_user[^;]*;@int ksu_handle_stat(int *dfd, struct filename **filename, int *flags);@' "$SUCH"
+            sed -i -E 's@int ksu_handle_faccessat\([^;]*const char __user \*\*filename_user[^;]*;@int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode, int *flags);@' "$SUCH"
+            grep -qF 'int ksu_handle_stat(int *dfd, struct filename **filename, int *flags);' "$SUCH" \
+              || { echo "::error::sucompat.h stat declaration mismatch (old sig layout changed?)"; exit 1; }
+            grep -qF 'int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode, int *flags);' "$SUCH" \
+              || { echo "::error::sucompat.h faccessat declaration mismatch (old sig layout changed?)"; exit 1; }
+            # 旧 user-ptr 声明清零仅针对 stat/faccessat（本步重写对象）。头文件里
+            # 其他钩子（如 ksu_handle_execveat_sucompat）可能合法保留 user-ptr
+            # 形态——残留不构成本步目标，打印留证；定义↔声明一致性由编译器把关，
+            # vendor 调用一致性由 E 块终验把关。
+            STALE="$(grep -nE 'ksu_handle_(stat|faccessat)\([^;]*const char __user' "$SUCH" || true)"
+            if [ -n "$STALE" ]; then
+              echo "::error::sucompat.h stat/faccessat still declare user-ptr variant: $STALE"
+              exit 1
+            fi
+          fi
+          LEFT="$(grep -nF 'const char __user **filename_user' "$SUCH" || true)"
+          if [ -n "$LEFT" ]; then
+            echo "  -- note: other user-ptr decls remain in sucompat.h (not stat/faccessat, legit): $LEFT"
+          fi
+          echo "  -- sucompat.h declarations synced to filename variant"
+
+          # D) ksu_handle_post_execveat_sucompat 胶水（no-op，语义见块首注释）
+          if ! grep -qF 'int ksu_handle_post_execveat_sucompat' "$SUC"; then
+            cat >> "$SUC" <<'KSU_POSTEOF'
+
+          /* vendor glue (zttlove 5.4 BakaSU-form fs/exec.c): do_execveat_common
+           * calls this after __do_execve_file for "su sessions" (pre-hook
+           * returned 0). auto-hook's pre-hook already falls back su->ksud (or
+           * sh) BEFORE exec via kern_path(KSUD_PATH), so nothing is left to
+           * redo here. Returning without touching anything keeps the vendor's
+           * filename->refcnt++/putname pairing balanced and the exec retval
+           * untouched (the caller ignores this return value). */
+          int ksu_handle_post_execveat_sucompat(int *fd, struct filename **filename_ptr,
+          				      void *argv, void *envp, int *flags,
+          				      int *retval)
+          {
+          	(void)fd;
+          	(void)filename_ptr;
+          	(void)argv;
+          	(void)envp;
+          	(void)flags;
+          	return retval ? *retval : 0;
+          }
+          KSU_POSTEOF
+          fi
+          grep -qF 'int ksu_handle_post_execveat_sucompat' "$SUC" \
+            || { echo "::error::post_execveat glue missing"; exit 1; }
+
+          # E) vendor 期望签名/跨界符号终验
+          grep -qF 'int ksu_handle_stat(int *dfd, struct filename **filename, int *flags)' "$SUC" \
+            || { echo "::error::ksu_handle_stat signature mismatch vs vendor"; exit 1; }
+          grep -qE 'int ksu_handle_faccessat\(int \*dfd, struct filename \*\*filename, int \*mode, int \*(__unused_)?flags\)' "$SUC" \
+            || { echo "::error::ksu_handle_faccessat signature mismatch vs vendor"; exit 1; }
+          grep -rqF 'DEFINE_STATIC_KEY_TRUE(ksu_is_init_rc_hook_enabled)' BakaSU_src/kernel \
+            || { echo "::error::ksu_is_init_rc_hook_enabled static key missing (vendor fs/stat.c externs it)"; exit 1; }
+          grep -rqF 'void ksu_handle_vfs_fstat(int fd, loff_t *kstat_size_ptr)' BakaSU_src/kernel \
+            || { echo "::error::ksu_handle_vfs_fstat missing/mismatched (vendor fs/stat.c externs it)"; exit 1; }
+          grep -rqF '__ksu_is_allow_uid_for_current' BakaSU_src/kernel \
+            || { echo "::error::__ksu_is_allow_uid_for_current missing (vendor externs it)"; exit 1; }
+          grep -rqF 'int ksu_handle_execveat(int *fd, struct filename **filename_ptr' BakaSU_src/kernel \
+            || { echo "::error::ksu_handle_execveat signature mismatch vs vendor"; exit 1; }
+          echo "-- vendor 5.4 hook signatures aligned (stat/faccessat filename form, post_execveat glued)"
+
+      - name: BakaSU driver-side patches (audit, selinux_hide, string hiding, statx)
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+
+          echo "== susfs 命令兼容护栏（vendor susfs 版本差自适应）=="
+          # main BakaSU 的 dispatch.c 会引用 vendor 树 SUSFS 版本可能还没有的
+          # 新命令宏（CI 实测：CMD_SUSFS_SET_SUS_PATH_UID_FILTER 未定义——
+          # susfs 1.5.x 新增，vendor 树 susfs_def.h 缺失 → "use of undeclared
+          # identifier"）。对策：把每个 case CMD_SUSFS_*: {...} 块统一用
+          # #ifdef <该命令宏> 包裹——vendor susfs 头文件提供该命令则原样编译，
+          # 未提供则自动剔除该 case（ksu_handle_susfs_cmd 落到兜底 return 0，
+          # 语义等价于"命令不支持"）。对 HIDE_SUS_MNTS_FOR_NON_SU_PROCS、
+          # ADD_SUS_MAP 等潜在版本差命令一次性免疫。幂等：已包裹（行首
+          # #ifdef CMD_SUSFS_ 紧邻 case）的块不会二次包裹——以是否存在
+          # "case CMD_SUSFS_" 行未被 #ifdef 前缀保护为判据，本 awk 对每个
+          # case 行独立插桩，重复运行会产生双 #ifdef，故先检测是否已处理过。
+          DISPATCH="BakaSU_src/kernel/supercall/dispatch.c"
+          test -f "$DISPATCH" || { echo "::error::dispatch.c not found in pinned driver"; exit 1; }
+          CASES="$(grep -c 'case CMD_SUSFS_' "$DISPATCH" || true)"
+          GUARDS="$(grep -c '#ifdef CMD_SUSFS_' "$DISPATCH" || true)"
+          if [ "$GUARDS" -ge "$CASES" ] && [ "$CASES" -gt 0 ]; then
+            echo "  -- dispatch.c already guarded ($GUARDS guards >= $CASES cases), skip"
+          else
+            awk '
+              /case CMD_SUSFS_[A-Z_0-9]+: *\{/ && !inblock {
+                line=$0
+                sub(/^.*case /, "", line)
+                sub(/:.*/, "", line)
+                print "#ifdef " line
+                print $0
+                inblock=1
+                next
+              }
+              inblock {
+                print $0
+                if ($0 ~ /^[ \t]*\}[ \t]*$/) { print "#endif"; inblock=0 }
+                next
+              }
+              { print }
+            ' "$DISPATCH" > "$DISPATCH.tmp" && mv "$DISPATCH.tmp" "$DISPATCH"
+            NEW_CASES="$(grep -c 'case CMD_SUSFS_' "$DISPATCH" || true)"
+            NEW_GUARDS="$(grep -c '#ifdef CMD_SUSFS_' "$DISPATCH" || true)"
+            [ "$NEW_GUARDS" -eq "$NEW_CASES" ] \
+              || { echo "::error::susfs guard wrap mismatch: $NEW_GUARDS guards vs $NEW_CASES cases (case body layout changed?)"; exit 1; }
+            echo "  -- $NEW_CASES susfs command cases wrapped in #ifdef guards"
+          fi
+
+          echo "== susfs 函数版本差护栏 #2：throne_tracker.c 刷新调用 =="
+          # main BakaSU 的 do_track_throne 末尾在 CONFIG_KSU_SUSFS_* 门控下调用
+          # susfs_parse_sus_path_app_strings() / susfs_parse_priority_app_strings()
+          # （susfs 1.5.x 新函数，刷新 uid 位图过滤器）。门控只看 Kconfig 特性
+          # 开关，不看 susfs 版本——vendor 开了 CONFIG 但旧 susfs 无实现 →
+          # 声明可见（编译过）但符号缺失（链接期 undefined symbol，CI 实测
+          # throne_tracker.c:372）。这是函数不是宏，无法用 #ifdef 守卫 →
+          # 对策：检测 vendor 内核树（排除 BakaSU_src）的 .c 文件是否实现该
+          # 函数，有则保留（未来 vendor 升 susfs 后功能自动恢复），无则把
+          # 调用行改写为 no-op 注释（仅丢一次过滤器刷新，等价旧 susfs 无此
+          # 能力时的行为）。只查 .c（.h 原型不算实现）。
+          TT="BakaSU_src/kernel/manager/throne_tracker.c"
+          test -f "$TT" || { echo "::error::throne_tracker.c not found in pinned driver"; exit 1; }
+          for fn in susfs_parse_sus_path_app_strings susfs_parse_priority_app_strings; do
+            if grep -qF "${fn}();" "$TT"; then
+              if grep -rl --include='*.c' "$fn" fs security 2>/dev/null | grep -q .; then
+                echo "  -- $fn implemented in vendor susfs, kept"
+              else
+                sed -i "s/${fn}();/\/* bakasu-modern: vendor susfs lacks ${fn} - refresh skipped (older susfs) *\//" "$TT"
+                ! grep -qF "${fn}();" "$TT" \
+                  || { echo "::error::throne_tracker susfs call patch failed: $fn (anchor layout changed?)"; exit 1; }
+                echo "  -- $fn absent in vendor susfs -> call patched to no-op"
+              fi
+            fi
+          done
+
+          echo "== 钩子签名核对：vendor 树调用的 ksu_handle_* 必须由驱动提供 =="
+          # vendor 树在 #ifdef CONFIG_KSU_SUSFS 内直接调用这些钩子（BakaSU 形态）。
+          # auto-hook 上游演进可能改名——逐个核对定义存在，缺一个即失败并报名。
+          MISSING=""
+          for sym in $(grep -roh 'ksu_handle_[a-z_0-9]*' fs/exec.c fs/open.c fs/stat.c | sort -u); do
+            if ! grep -rqE "(int|void|long) ${sym}\(" BakaSU_src/kernel; then
+              MISSING="$MISSING $sym"
+            fi
+          done
+          if [ -n "$MISSING" ]; then
+            echo "::error::vendor tree calls hooks not provided by pinned BakaSU:$MISSING"
+            echo "       -> upstream auto-hook renamed them; update the pin or add glue"
+            exit 1
+          fi
+          echo "-- all vendor-called ksu_handle_* hooks provided"
+
+          echo "== selinux_hide 符号接线（vendor BakaSU 预置钩子所需）=="
+          # 双形态：
+          #   main：kernel/feature/selinux_hide/selinux_hide.c，文件内自定义
+          #     __maybe_static 宏——KSU_COMPAT_HAS_SUSFS_FEATURE_SELINUX_HIDE
+          #     定义时展开为空（全部符号全局），否则 static。该宏由 susfs_compat.mk
+          #     依据 vendor hooks.c 是否含 ksu_selinux_hide_running 决定。仅状态锁
+          #     显式 static → 去 static 供 vendor 共享。
+          #   auto-hook：feature/selinux_hide.c，__maybe_static 是未定义宏 → 编译
+          #     报错 → 手动去宏（旧 workflow 同款）。
+          SHIDE="BakaSU_src/kernel/feature/selinux_hide/selinux_hide.c"
+          if [ ! -f "$SHIDE" ]; then
+            SHIDE="BakaSU_src/kernel/feature/selinux_hide.c"
+          fi
+          test -f "$SHIDE" || { echo "::error::selinux_hide.c not found in pinned driver (neither dir nor flat layout)"; exit 1; }
+          if grep -qE '^#define __maybe_static[[:space:]]*$' "$SHIDE"; then
+            # main 形态。前置校验：宏空展开依赖 susfs_compat.mk 的判定条件
+            grep -q 'ksu_selinux_hide_running' security/selinux/hooks.c \
+              || { echo "::error::vendor security/selinux/hooks.c lacks ksu_selinux_hide_running — susfs_compat.mk won't define KSU_COMPAT_HAS_SUSFS_FEATURE_SELINUX_HIDE, driver selinux_hide symbols stay static and vendor externs would break"; exit 1; }
+            sed -i 's/^static struct mutex \*ksu_selinux_status_lock = NULL;/struct mutex *ksu_selinux_status_lock = NULL;/' "$SHIDE"
+            grep -q '^struct mutex \*ksu_selinux_status_lock' "$SHIDE" \
+              || { echo "::error::selinux_hide.c lock static-removal failed (main form)"; exit 1; }
+            echo "-- main-form selinux_hide: __maybe_static self-configured (SUSFS=global); status lock de-staticed"
+          else
+            sed -i 's/__maybe_static struct selinux_state fake_state;/struct selinux_state fake_state;/' "$SHIDE"
+            sed -i 's/__maybe_static bool ksu_selinux_hide_enabled __read_mostly = false;/bool ksu_selinux_hide_enabled __read_mostly = false;/' "$SHIDE"
+            sed -i 's/__maybe_static bool ksu_selinux_hide_running __read_mostly = false;/bool ksu_selinux_hide_running __read_mostly = false;/' "$SHIDE"
+            sed -i 's/__maybe_static struct page \*fake_status = NULL;/struct page *fake_status = NULL;/' "$SHIDE"
+            sed -i 's/^static struct mutex \*ksu_selinux_status_lock = NULL;/struct mutex *ksu_selinux_status_lock = NULL;/' "$SHIDE"
+            ! grep -q '__maybe_static struct selinux_state fake_state;' "$SHIDE" \
+              || { echo "::error::fake_state __maybe_static removal failed"; exit 1; }
+            grep -q '^struct mutex \*ksu_selinux_status_lock' "$SHIDE" \
+              || { echo "::error::selinux_hide.c lock static-removal failed"; exit 1; }
+            echo "-- auto-hook-form selinux_hide: __maybe_static de-macroed; status lock now shared"
+          fi
+
+          echo "== 逐符号核对外部可见性，缺什么补什么（特性关闭语义）=="
+          SVC="security/selinux/ss/services.c"
+          test -f "$SVC" || { echo "::error::$SVC not found"; exit 1; }
+          for sym in ksu_selinux_hide_enabled ksu_selinux_hide_running \
+                     fake_status_initialize_key fake_status \
+                     ksu_selinux_status_lock initialize_fake_status; do
+            # 判定"驱动已提供"要点：
+            #   a) 宏定义形态（DEFINE_STATIC_KEY_TRUE/FALSE(sym)）文本后随 ')'，
+            #      不被 sym(;| |=|\( 捕获 → 补宏形态识别；
+            #   b) static 判定加词边界：__maybe_static 前缀（main 形态，SUSFS 下
+            #      展开为空 → 全局）不得被误判为 static 定义。
+            if { grep -rqE "(^|[^_a-zA-Z])${sym}(;| |=|\()" BakaSU_src/kernel 2>/dev/null \
+                 || grep -rqE "DEFINE_STATIC_KEY_(TRUE|FALSE)\(${sym}\)" BakaSU_src/kernel 2>/dev/null; } \
+               && ! grep -rqE "(^|[^_a-zA-Z])static (bool|struct page \*|struct mutex \*|struct static_key_false) ${sym}" BakaSU_src/kernel 2>/dev/null; then
+              echo "  -- $sym: provided by driver"
+            elif grep -q "\b${sym}\b" "$SVC" && grep -qE "(bool|struct page \*|struct mutex \*|DEFINE_STATIC_KEY_FALSE\(${sym}|void ${sym})" "$SVC"; then
+              echo "  -- $sym: already in services.c"
+            else
+              echo "  -- $sym: MISSING -> appending feature-off stub to services.c"
+              case "$sym" in
+                fake_status_initialize_key)
+                  # main 形态：SUSFS 分支为 __maybe_static DEFINE_STATIC_KEY_FALSE(...)
+                  # （宏空展开 → 全局 static key）；但其 #else 非 SUSFS 死代码分支
+                  # 有字面 static 声明，会触发上方 grep-2 误判为"驱动未提供"——
+                  # 在补桩前先识别自配置形态，命中则跳过（防重复符号）。
+                  # 注意 grep 必须 -r：目标是目录，无 -r 的 grep 对目录恒失败
+                  # （CI 实测：识别静默失效 → 误补桩 → 链接期 duplicate symbol）。
+                  if grep -rqE '__maybe_static[[:space:]]+DEFINE_STATIC_KEY_(FALSE|TRUE)\(fake_status_initialize_key\)' BakaSU_src/kernel 2>/dev/null \
+                     && grep -qE '^#define __maybe_static[[:space:]]*$' "$SHIDE" 2>/dev/null; then
+                    echo "  -- $sym: provided by driver (main-form self-configured __maybe_static)"
+                  else
+                    printf '\n/* bakasu-modern: vendor extern, driver does not define; no-op semantics */\n#include <linux/jump_label.h>\nDEFINE_STATIC_KEY_FALSE(fake_status_initialize_key);\n' >> "$SVC"
+                    grep -q 'DEFINE_STATIC_KEY_FALSE(fake_status_initialize_key)' "$SVC" \
+                      || { echo "::error::fake_status_initialize_key stub append failed"; exit 1; }
+                  fi ;;
+                fake_status)
+                  # 诊断式接线：driver 端 fake_status 的定义形态决定处理方式。
+                  #   - main 形态（#define __maybe_static 空展开；SUSFS 生效前提
+                  #     已由 selinux_hide 块的前置校验保证）→ 驱动的
+                  #     __maybe_static 定义即全局已提供，跳过补桩（防重复符号）。
+                  #   - 存在"非 static 非 extern"的裸全局定义（auto-hook 去宏已
+                  #     生效）→ 已提供，跳过补桩。
+                  #   - 仅 TU-local（static）定义或缺失 → services.c 落 feature-off
+                  #     全局 NULL。链接安全（driver 的 static 副本不冲突）；且
+                  #     initialize_fake_status 补桩函数引用 fake_status，此全局是
+                  #     其编译硬依赖（循环顺序 fake_status 先于它，满足）。
+                  #   注：循环顶部 grep-2 已有词边界（__maybe_static 前缀不再误判），
+                  #   但驱动 #else 非 SUSFS 死代码分支的字面 static 声明仍会让顶部
+                  #   误判"未提供"而进入本分支——故本分支需自行识别真实形态。
+                  #   CI 实测（main 形态）：GDEF 过滤器把 __maybe_static 定义行按
+                  #   auto-hook 语义（宏未定义=static）排除 → 误判 TU-local →
+                  #   误补桩 → 链接期 duplicate symbol: fake_status。
+                  if grep -qE '^#define __maybe_static[[:space:]]*$' "$SHIDE" 2>/dev/null \
+                     && grep -rqE 'struct page \*fake_status([[:space:]]*=|;)' BakaSU_src/kernel 2>/dev/null; then
+                    echo "  -- $sym: provided by driver (main-form self-configured __maybe_static global)"
+                  else
+                    GDEF="$(grep -rnE 'struct page \*fake_status( *=|;)' BakaSU_src/kernel 2>/dev/null \
+                      | grep -vE '__maybe_?static[[:space:]]+struct|(^|[[:space:]])static[[:space:]]+struct|extern[[:space:]]+struct' \
+                      | head -1 || true)"
+                    if [ -n "$GDEF" ]; then
+                      echo "  -- $sym: global definition present in driver: $GDEF"
+                    else
+                      printf '\n/* bakasu-modern: vendor extern; driver defines fake_status only TU-local (or absent) - feature-off semantics, no fake status page */\n#include <linux/mm.h>\nstruct page *fake_status = NULL;\n' >> "$SVC"
+                      grep -q 'struct page \*fake_status = NULL;' "$SVC" \
+                        || { echo "::error::fake_status stub append failed"; exit 1; }
+                      echo "  -- $sym: feature-off stub appended to services.c"
+                    fi
+                  fi ;;
+                initialize_fake_status)
+                  printf '\n/* bakasu-modern: driver lacked initialize_fake_status; stock 5.4 shape {seq=0, policyload=0} */\n#include <linux/mm.h>\nvoid initialize_fake_status(void)\n{\nstruct selinux_kernel_status *fake;\nstruct page *new_page;\n\nif (fake_status)\nreturn;\nif (!selinux_state.ss || !selinux_state.ss->status_page)\nreturn;\nnew_page = alloc_page(GFP_KERNEL | __GFP_ZERO);\nif (!new_page)\nreturn;\nfake = page_address(new_page);\nfake->version = 1;\nfake->sequence = 0;\nfake->enforcing = 1;\nfake->policyload = 0;\nfake->deny_unknown = 1;\nfake_status = new_page;\n}\nlate_initcall(initialize_fake_status);\n' >> "$SVC" ;;
+                *)
+                  echo "::error::symbol ${sym} missing from both driver and services.c — manual wiring needed"; exit 1 ;;
+              esac
+            fi
+          done
+          echo "-- selinux_hide symbol wiring complete"
+
+          echo "== 修复 preinit 的 void 函数 return false（若 preinit.h 存在）=="
+          PREINIT_H="BakaSU_src/kernel/preinit/preinit.h"
+          if [ -f "$PREINIT_H" ]; then
+            perl -0pi -e 's/(void\s+[a-zA-Z_][a-zA-Z0-9_]*\s*\([^)]*\)\s*\{[^}]*?)\breturn\s+false;/${1}return;/gs' "$PREINIT_H" || true
+            echo "-- preinit.h void-return patched (if anchors matched)"
+          else
+            echo "-- preinit.h not present at this pin, skipping"
+          fi
+
+          echo "== 隐藏内核侧 'ksu' 特征字符串（旧 workflow 同款，锚点漂移仅告警）=="
+          # 1) /proc/bus/input/handlers：音量键检测器的输入处理器名 "ksu" 任意应用可读
+          if grep -q '\.name = "ksu",' BakaSU_src/kernel/runtime/ksud_integration.c 2>/dev/null; then
+            sed -i 's/\.name = "ksu",/.name = "vkeymon",/' BakaSU_src/kernel/runtime/ksud_integration.c
+            grep -q '\.name = "vkeymon",' BakaSU_src/kernel/runtime/ksud_integration.c \
+              || { echo "::error::input handler rename failed"; exit 1; }
+            echo "  -- input handler renamed to vkeymon"
+          else
+            echo "  ::warning::ksud_integration.c anchor drifted; verify /proc/bus/input/handlers manually"
+          fi
+          # 2) /sys/kernel/security/lsm：LSM 标签 "ksu" → "ksm"（纯显示用途）
+          if [ -f BakaSU_src/kernel/hook/lsm_hooks.c ] && \
+             grep -q 'security_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), "ksu");' BakaSU_src/kernel/hook/lsm_hooks.c 2>/dev/null; then
+            sed -i 's/security_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), "ksu");/security_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), "ksm");/' \
+              BakaSU_src/kernel/hook/lsm_hooks.c
+            if [ -f BakaSU_src/kernel/hook/lsm_hook_magic.c ]; then
+              sed -i 's/hook->list\.lsm = "ksu";/hook->list.lsm = "ksm";/' BakaSU_src/kernel/hook/lsm_hook_magic.c
+            fi
+            echo "  -- lsm label renamed to ksm"
+          else
+            echo "  ::warning::lsm label anchor drifted; verify /sys/kernel/security/lsm manually"
+          fi
+          # 3) ps 可见的内核线程名 detect_apatch_conflict → cfg_monitor
+          if [ -f BakaSU_src/kernel/compat/apatch_conflict.c ] && \
+             grep -q '"detect_apatch_conflict"' BakaSU_src/kernel/compat/apatch_conflict.c 2>/dev/null; then
+            sed -i 's/"detect_apatch_conflict"/"cfg_monitor"/' BakaSU_src/kernel/compat/apatch_conflict.c
+            echo "  -- kthread renamed to cfg_monitor"
+          else
+            echo "  ::warning::kthread name anchor drifted (file may not exist at this pin)"
+          fi
+
+          echo "== 适配 auto-hook 的 priority uid filter（vendor 内核 SUSFS 无内核侧支持）=="
+          if ! grep -q 'susfs_set_priority_uid_filter' fs/susfs.c; then
+            DISPATCH="BakaSU_src/kernel/supercall/dispatch.c"
+            if [ -f "$DISPATCH" ] && grep -q 'susfs_set_priority_uid_filter' "$DISPATCH"; then
+              if ! grep -q 'define CMD_SUSFS_SET_PRIORITY_UID_FILTER' "$DISPATCH"; then
+                sed -i '\|#include <linux/susfs_def.h>|a\
+                #ifndef CMD_SUSFS_SET_PRIORITY_UID_FILTER\
+                #define CMD_SUSFS_SET_PRIORITY_UID_FILTER 0x60030 /* must match ksud magic.rs */\
+                #endif' "$DISPATCH"
+              fi
+              sed -i 's|susfs_set_priority_uid_filter(arg);|return -EOPNOTSUPP; /* vendor kernel susfs lacks kernel-side support */|' "$DISPATCH"
+              if ! grep -q 'void susfs_parse_priority_app_strings(void)' "$DISPATCH"; then
+                printf '\n#ifdef CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER\n/* vendor kernel susfs lacks this hook; keep it a no-op */\nvoid susfs_parse_priority_app_strings(void) {}\n#endif\n' >> "$DISPATCH"
+              fi
+              echo "  -- priority uid filter stubbed for this vendor kernel"
+            else
+              echo "  -- auto-hook HEAD no longer references priority uid filter; nothing to stub"
+            fi
+          else
+            echo "  -- vendor susfs has priority uid filter support, no stub needed"
+          fi
+
+          echo "== 反计时侧信道：statx 对齐补丁（旧 workflow 同款，锚点条件化）=="
+          # 【本次实验的核心差异之一】newfstatat:statx 耗时比值 >1.2 是春秋公开的
+          # 判定条件；Nova builtin 无 hook manager 无法对齐 statx，而 BakaSU 线
+          # 一直带着这个补丁——大概率就是"当年能过、现在不过"的机制差异。
+          BRIDGE="BakaSU_src/kernel/hook/syscall_event_bridge.c"
+          BRIDGE_H="BakaSU_src/kernel/hook/syscall_event_bridge.h"
+          HOOKMGR="BakaSU_src/kernel/hook/syscall_hook_manager.c"
+          if grep -q 'TP hooks are incompatible with Non-GKI' BakaSU_src/kernel/Kbuild; then
+            # main 分支形态：Kbuild 明文限制 TRACEPOINT/hook-manager 仅 GKI 2.0，
+            # 5.4 SUSFS-inline 路径不编译 hook manager/bridge → 补丁将成为死代码
+            echo "  ::warning::driver 为 main 分支形态：hook manager/bridge 仅 GKI 2.0 编译，5.4 SUSFS inline 模式不含它们"
+            echo "  ::warning::-> statx 时序对齐在本构建不可用，时序侧信道与 Nova 线同等暴露"
+          elif [ -f "$BRIDGE" ] && [ -f "$BRIDGE_H" ] && [ -f "$HOOKMGR" ]; then
+            if ! grep -q 'ksu_hook_statx' "$BRIDGE"; then
+              cat >> "$BRIDGE" <<'EOF'
+
+          long __nocfi ksu_hook_statx(int orig_nr, const struct pt_regs *regs)
+          {
+              if (!static_branch_unlikely(&ksu_su_compat_enabled))
+                  return ksu_call_syscall(orig_nr, regs);
+
+              return ksu_handle_stat_sucompat_internal(orig_nr, (struct pt_regs *)regs);
+          }
+          EOF
+            fi
+            grep -q 'ksu_hook_statx' "$BRIDGE" || { echo "::error::statx bridge hook append failed"; exit 1; }
+            if ! grep -q 'ksu_hook_statx' "$BRIDGE_H"; then
+              sed -i '/^long ksu_hook_faccessat(int orig_nr, const struct pt_regs \*regs);$/a long ksu_hook_statx(int orig_nr, const struct pt_regs *regs);' "$BRIDGE_H"
+            fi
+            grep -q 'long ksu_hook_statx' "$BRIDGE_H" || { echo "::error::statx hook declaration failed"; exit 1; }
+            if ! grep -q 'ksu_register_syscall_hook(__NR_statx' "$HOOKMGR"; then
+              sed -i 's|ksu_register_syscall_hook(__NR_faccessat, ksu_hook_faccessat);|ksu_register_syscall_hook(__NR_faccessat, ksu_hook_faccessat);\n    ksu_register_syscall_hook(__NR_statx, ksu_hook_statx);|' "$HOOKMGR"
+            fi
+            grep -q 'ksu_register_syscall_hook(__NR_statx, ksu_hook_statx);' "$HOOKMGR" \
+              || { echo "::error::statx hook registration failed (anchor drifted?)"; exit 1; }
+            echo "-- statx timing-alignment hook installed"
+          else
+            echo "  ::warning::hook manager files not found at this pin; statx alignment NOT installed"
+            echo "  ::warning::-> 时序侧信道在本构建将保持开放（与 Nova 线同等暴露）"
+          fi
+
+      - name: Backport sus_type/avd hiding into vendor 5.4 susfs
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          echo "== 回移植 6.6-dev 的 sus_type/avd 隐藏实现到 vendor 5.4 =="
+          # 与 slim14 线完全一致（vendor 树级补丁，驱动无关）。本步同时把 vendor
+          # my_* 钩子的 fake_state 调用切到 susfs 过滤路径——因此本构建不需要
+          # 旧 workflow 的 services.c fake_state 追加（调用点已被消除）。
+          if ! grep -q 'susfs_is_sus_type_rcu' fs/susfs.c; then
+            echo "-- backporting sus_type/avd hiding into vendor 5.4 susfs"
+            cat >> fs/susfs.c <<'SUSTYPE_EOF'
+
+          /* sus_type: backported from susfs4ksu gki-android15-6.6-dev */
+          static DEFINE_MUTEX(susfs_mutex_lock_sus_type);
+          static DEFINE_HASHTABLE(SUS_TYPE_HLIST, 10);
+
+          struct st_susfs_sus_type_hlist {
+          struct hlist_node                        node;
+          };
+
+          int susfs_add_sus_type(const char *secctx, u32 type_value) {
+          struct st_susfs_sus_type_hlist *new_entry, *tmp_entry;
+          struct hlist_node *tmp_hlist_node;
+          int err = 0;
+
+          mutex_lock(&susfs_mutex_lock_sus_type);
+          hash_for_each_possible_safe(SUS_TYPE_HLIST, tmp_entry, tmp_hlist_node, node, type_value) {
+          SUSFS_LOGE("secctx '%s', type_value '%u', was added before already\n",
+          secctx, type_value);
+          err = -EINVAL;
+          goto unlock;
+          }
+
+          new_entry = kzalloc(sizeof(struct st_susfs_sus_type_hlist), GFP_KERNEL);
+          if (!new_entry) {
+          err = -ENOMEM;
+          goto unlock;
+          }
+
+          hash_add_rcu(SUS_TYPE_HLIST, &new_entry->node, type_value);
+          SUSFS_LOGI("secctx '%s', type '%u', has been added to SUS_TYPE_HLIST\n",
+          secctx, type_value);
+          unlock:
+          mutex_unlock(&susfs_mutex_lock_sus_type);
+          return err;
+          }
+
+          bool susfs_is_sus_type_rcu(u32 type_value) {
+          struct st_susfs_sus_type_hlist *entry = NULL;
+
+          hash_for_each_possible_rcu(SUS_TYPE_HLIST, entry, node, type_value) {
+          return true;
+          }
+          return false;
+          }
+
+          static DEFINE_MUTEX(susfs_mutex_lock_sus_avd_allowed_hlist);
+          static DEFINE_HASHTABLE(SUS_AVD_ALLOWED_HLIST, 18);
+
+          struct susfs_sus_av_rule {
+          struct hlist_node node;
+          u32 s_type;
+          u32 t_type;
+          u32 c_type;
+          u32 orig_avd_allowed;
+          };
+
+          static inline u32 susfs_av_rule_hash(u32 ssid, u32 tsid, u16 tclass)
+          {
+          u32 h;
+
+          h = hash_32(ssid, 32);
+          h ^= rol32(hash_32(tsid, 32), 13);
+          h ^= rol32(hash_32((u32)tclass, 32), 19);
+
+          h += h << 13;
+          h ^= h >> 7;
+          h += h << 17;
+          h ^= h >> 5;
+
+          return h;
+          }
+
+          int susfs_add_sus_avd_allowed_by_type(u32 s_type, u32 t_type, u32 c_type, u32 orig_avd_allowed)
+          {
+          struct susfs_sus_av_rule *entry, *tmp_entry;
+          struct hlist_node *tmp_hlist_node;
+          int err = 0;
+          u32 key;
+
+          mutex_lock(&susfs_mutex_lock_sus_avd_allowed_hlist);
+
+          entry = kzalloc(sizeof(*entry), GFP_ATOMIC);
+          if (!entry) {
+          err = -ENOMEM;
+          goto unlock;
+          }
+
+          key = susfs_av_rule_hash(s_type, t_type, c_type);
+          hash_for_each_possible_safe(SUS_AVD_ALLOWED_HLIST, tmp_entry, tmp_hlist_node, node, key) {
+          if (tmp_entry->s_type == s_type &&
+              tmp_entry->t_type == t_type &&
+              tmp_entry->c_type == c_type)
+          {
+          /* Do not apply any new orig_avd_allowed for matched entry. */
+          kfree(entry);
+          goto unlock;
+          }
+          }
+
+          entry->s_type = s_type;
+          entry->t_type = t_type;
+          entry->c_type = c_type;
+          entry->orig_avd_allowed = orig_avd_allowed;
+
+          hash_add_rcu(SUS_AVD_ALLOWED_HLIST, &entry->node, key);
+          SUSFS_LOGI("av_rule '%u %u %u %u' has been added to SUS_AVD_ALLOWED_HLIST\n",
+          s_type, t_type, c_type, orig_avd_allowed);
+          unlock:
+          mutex_unlock(&susfs_mutex_lock_sus_avd_allowed_hlist);
+          return err;
+          }
+
+          void susfs_spoof_avd_allowed_rcu(u32 s_type, u32 t_type, u32 c_type, u32 *avd_allowed)
+          {
+          struct susfs_sus_av_rule *entry;
+          u32 key = susfs_av_rule_hash(s_type, t_type, c_type);
+
+          hash_for_each_possible_rcu(SUS_AVD_ALLOWED_HLIST, entry, node, key) {
+          if (entry->s_type == s_type &&
+              entry->t_type == t_type &&
+              entry->c_type == c_type)
+          {
+          *avd_allowed = entry->orig_avd_allowed;
+          return;
+          }
+          }
+          }
+          SUSTYPE_EOF
+            cat >> security/selinux/ss/services.c <<'SUSAVD_EOF'
+
+          /* sus_type hiding: backported from susfs4ksu gki-android15-6.6-dev (5.4 rwlock model) */
+          #ifdef CONFIG_KSU_SUSFS
+          extern bool susfs_is_sus_type_rcu(u32 sid);
+          extern void susfs_spoof_avd_allowed_rcu(u32 s_type, u32 t_type, u32 c_type, u32 *avd_allowed);
+
+          static int susfs_string_to_context_struct(struct policydb *pol,
+              struct sidtab *sidtabp,
+              char *scontext,
+              struct context *ctx,
+              u32 def_sid)
+          {
+          struct role_datum *role;
+          struct type_datum *typdatum;
+          struct user_datum *usrdatum;
+          char *scontextp, *p, oldc;
+          int rc = 0;
+
+          context_init(ctx);
+
+          /* Parse the security context. */
+
+          rc = -EINVAL;
+          scontextp = (char *) scontext;
+
+          /* Extract the user. */
+          p = scontextp;
+          while (*p && *p != ':')
+          p++;
+
+          if (*p == 0)
+          goto out;
+
+          *p++ = 0;
+
+          usrdatum = hashtab_search(pol->p_users.table, scontextp);
+          if (!usrdatum)
+          goto out;
+
+          ctx->user = usrdatum->value;
+
+          /* Extract role. */
+          scontextp = p;
+          while (*p && *p != ':')
+          p++;
+
+          if (*p == 0)
+          goto out;
+
+          *p++ = 0;
+
+          role = hashtab_search(pol->p_roles.table, scontextp);
+          if (!role)
+          goto out;
+          ctx->role = role->value;
+
+          /* Extract type. */
+          scontextp = p;
+          while (*p && *p != ':')
+          p++;
+          oldc = *p;
+          *p++ = 0;
+
+          typdatum = hashtab_search(pol->p_types.table, scontextp);
+          if (!typdatum || typdatum->attribute)
+          goto out;
+          if (likely(susfs_is_sus_type_rcu(typdatum->value)))
+          goto out;
+
+          ctx->type = typdatum->value;
+
+          rc = mls_context_to_sid(pol, oldc, p, ctx, sidtabp, def_sid);
+          if (rc)
+          goto out;
+
+          /* Check the validity of the new context. */
+          rc = -EINVAL;
+          if (!policydb_context_isvalid(pol, ctx))
+          goto out;
+          rc = 0;
+          out:
+          if (rc)
+          context_destroy(ctx);
+          return rc;
+          }
+
+          static int susfs_security_context_to_sid_core(const char *scontext, u32 scontext_len,
+          u32 *sid, u32 def_sid, gfp_t gfp_flags,
+          int force)
+          {
+          struct policydb *policydb;
+          struct sidtab *sidtab;
+          char *scontext2, *str = NULL;
+          struct context context;
+          int rc = 0;
+
+          /* An empty security context is never valid. */
+          if (!scontext_len)
+          return -EINVAL;
+
+          /* Copy the string to allow changes and ensure a NUL terminator */
+          scontext2 = kmemdup_nul(scontext, scontext_len, gfp_flags);
+          if (!scontext2)
+          return -ENOMEM;
+
+          if (!selinux_state.initialized) {
+          int i;
+
+          for (i = 1; i < SECINITSID_NUM; i++) {
+          if (!strcmp(initial_sid_to_string[i], scontext2)) {
+          *sid = i;
+          goto out;
+          }
+          }
+          *sid = SECINITSID_KERNEL;
+          goto out;
+          }
+          *sid = SECSID_NULL;
+
+          if (force) {
+          /* Save another copy for storing in uninterpreted form */
+          rc = -ENOMEM;
+          str = kstrdup(scontext2, gfp_flags);
+          if (!str)
+          goto out;
+          }
+          read_lock(&selinux_state.ss->policy_rwlock);
+          policydb = &selinux_state.ss->policydb;
+          sidtab = selinux_state.ss->sidtab;
+          rc = susfs_string_to_context_struct(policydb, sidtab, scontext2,
+                &context, def_sid);
+          if (rc == -EINVAL && force) {
+          context.str = str;
+          context.len = strlen(str) + 1;
+          str = NULL;
+          } else if (rc)
+          goto out_unlock;
+          rc = context_add_hash(policydb, &context);
+          if (rc)
+          goto out_unlock;
+          rc = sidtab_context_to_sid(sidtab, &context, sid);
+          context_destroy(&context);
+          out_unlock:
+          read_unlock(&selinux_state.ss->policy_rwlock);
+          out:
+          kfree(scontext2);
+          kfree(str);
+          return rc;
+          }
+
+          int susfs_security_context_to_sid(const char *scontext, u32 scontext_len, u32 *sid,
+              gfp_t gfp)
+          {
+          return susfs_security_context_to_sid_core(scontext, scontext_len,
+              sid, SECSID_NULL, gfp, 0);
+          }
+
+          int susfs_security_context_str_to_sid(const char *scontext, u32 *sid, gfp_t gfp)
+          {
+          return susfs_security_context_to_sid(scontext, strlen(scontext),
+                 sid, gfp);
+          }
+
+          void susfs_security_compute_av_user(u32 ssid,
+                u32 tsid,
+                u16 tclass,
+                struct av_decision *avd)
+          {
+          struct policydb *policydb;
+          struct sidtab *sidtab;
+          struct context *scontext = NULL, *tcontext = NULL;
+
+          read_lock(&selinux_state.ss->policy_rwlock);
+          avd_init(&selinux_state, avd);
+          if (!selinux_state.initialized)
+          goto allow;
+
+          policydb = &selinux_state.ss->policydb;
+          sidtab = selinux_state.ss->sidtab;
+
+          scontext = sidtab_search(sidtab, ssid);
+          if (!scontext) {
+          pr_err("SELinux: %s:  unrecognized SID %d\n",
+                 __func__, ssid);
+          goto out;
+          }
+
+          /* permissive domain? */
+          if (ebitmap_get_bit(&policydb->permissive_map, scontext->type))
+          avd->flags |= AVD_FLAGS_PERMISSIVE;
+
+          tcontext = sidtab_search(sidtab, tsid);
+          if (!tcontext) {
+          pr_err("SELinux: %s:  unrecognized SID %d\n",
+                 __func__, tsid);
+          goto out;
+          }
+
+          if (unlikely(!tclass)) {
+          if (policydb->allow_unknown)
+          goto allow;
+          goto out;
+          }
+
+          context_struct_compute_av(policydb, scontext, tcontext, tclass, avd,
+            NULL);
+          susfs_spoof_avd_allowed_rcu(scontext->type, tcontext->type, tclass,
+              &avd->allowed);
+           out:
+          read_unlock(&selinux_state.ss->policy_rwlock);
+          return;
+          allow:
+          avd->allowed = 0xffffffff;
+          goto out;
+          }
+          #endif // #ifdef CONFIG_KSU_SUSFS
+          SUSAVD_EOF
+            perl -0pi -e 's/security_context_to_sid\(&fake_state, buf, size, &sid, GFP_KERNEL\);/susfs_security_context_to_sid(buf, size, &sid, GFP_KERNEL);/; s/security_sid_to_context\(&fake_state, sid, &canon, &len\);/security_sid_to_context(&selinux_state, sid, &canon, &len);/; s/security_context_str_to_sid\(&fake_state, scon, &ssid, GFP_KERNEL\);/susfs_security_context_str_to_sid(scon, &ssid, GFP_KERNEL);/; s/security_context_str_to_sid\(&fake_state, tcon, &tsid, GFP_KERNEL\);/susfs_security_context_str_to_sid(tcon, &tsid, GFP_KERNEL);/; s/security_compute_av_user\(&fake_state, ssid, tsid, tclass, &avd\);/susfs_security_compute_av_user(ssid, tsid, tclass, &avd);/; s/security_context_to_sid\(&fake_state, value, size,\s*&sid, GFP_KERNEL\);/susfs_security_context_to_sid(value, size, &sid, GFP_KERNEL);/s' \
+              security/selinux/selinuxfs.c security/selinux/hooks.c
+            grep -q 'int susfs_add_sus_type(const char \*secctx' fs/susfs.c \
+              && grep -q 'int susfs_add_sus_avd_allowed_by_type(u32 s_type' fs/susfs.c \
+              && grep -q 'bool susfs_is_sus_type_rcu(u32 type_value)' fs/susfs.c \
+              && grep -q 'void susfs_spoof_avd_allowed_rcu' fs/susfs.c \
+              && grep -q 'void susfs_security_compute_av_user(u32 ssid' security/selinux/ss/services.c \
+              && grep -q 'susfs_string_to_context_struct' security/selinux/ss/services.c \
+              && grep -q 'susfs_security_context_to_sid(buf, size' security/selinux/selinuxfs.c \
+              && grep -q 'susfs_security_compute_av_user(ssid' security/selinux/selinuxfs.c \
+              && grep -q 'susfs_security_context_to_sid(value, size' security/selinux/hooks.c \
+              && ! grep -q 'security_compute_av_user(&fake_state' security/selinux/selinuxfs.c \
+              || { echo "::error::sus_type backport verification failed"; exit 1; }
+          else
+            echo "-- sus_type backport already present, skipping"
+          fi
+
+      - name: Patch SELinux status.c (stock-shape guard, slim5)
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          echo "== slim5：status 页保持 stock 5.4 形态 {sequence=0, policyload=0} =="
+          # vendor 树级补丁（驱动无关）：seqno==0 事件（KSU reset_avc_cache(0)）
+          # 不 bump sequence，保持页的 stock 形态。BakaSU 驱动同样会发 seqno=0 事件。
+          STATUS_C=security/selinux/ss/status.c
+          test -f "$STATUS_C" || { echo "::error::$STATUS_C not found"; exit 1; }
+          if grep -q 'susfs: update_policyload' "$STATUS_C"; then
+            echo "-- status.c guard already present, skipping"
+          else
+            python3 - "$STATUS_C" <<'PYEOF'
+          import sys
+          p = sys.argv[1]
+          s = open(p).read()
+          key = 'selinux_status_update_policyload'
+          lock = 'mutex_lock(&state->ss->status_lock);'
+          i = s.index(key)
+          j = s.index(lock, i)
+          end = j + len(lock)
+          s = s[:end] + '\n\t/* slim5: seqno==0 只来自 KSU reset_avc_cache(0)；stock 内核\n\t * 从不产生该事件，忽略之，保持页的 stock 形态（sequence 不动） */\n\tif (!seqno) {\n\t\tpr_info("susfs: update_policyload seqno=0 ignored\\n");\n\t\tmutex_unlock(&state->ss->status_lock);\n\t\treturn;\n\t}\n\tpr_info("susfs: update_policyload seqno=%d page=%p", seqno,\n\t\t   state->ss->status_page);' + s[end:]
+          open(p, 'w').write(s)
+          print('stock-shape guard patched')
+          PYEOF
+            grep -q 'susfs: update_policyload' "$STATUS_C" \
+              && grep -q 'seqno=0 ignored' "$STATUS_C" \
+              || { echo "::error::status.c stock-shape guard verification failed"; exit 1; }
+            echo "-- status.c stock-shape guard patched & verified"
+          fi
+
+      - name: Cover Shizuku(shell) in SELinux status fake page
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          echo "== 让 Shizuku(shell, uid 2000) 也读到伪造的 status 页 =="
+          F=security/selinux/selinuxfs.c
+          test -f "$F" || { echo "::error::$F not found"; exit 1; }
+          if grep -q 'current_uid()\.val >= 10000 && ksu_selinux_hide_enabled' "$F"; then
+            sed -i 's/current_uid()\.val >= 10000 && ksu_selinux_hide_enabled/(current_uid().val >= 10000 || current_uid().val == 2000) \&\& ksu_selinux_hide_enabled/' "$F"
+            grep -q 'current_uid().val == 2000) && ksu_selinux_hide_enabled' "$F" \
+              || { echo "::error::shell status spoof patch failed"; exit 1; }
+            echo "-- status fake page now covers app uids + shell(2000)"
+          else
+            echo "  ::warning::status gate anchor not found (vendor layout changed?) — skipping"
+          fi
+
+      - name: Configure Kernel (full SUSFS features)
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          export ARCH=arm64
+          export PATH="${{ env.CLANG_DIR }}/bin:$PATH"
+          export LLVM=1 LLVM_IAS=1 \
+                 CLANG_TRIPLE=aarch64-linux-gnu- \
+                 CROSS_COMPILE=aarch64-linux-gnu- \
+                 CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+
+          echo "== 直接向 defconfig 追加 SUSFS 配置 =="
+          DEFCONFIG_PATH="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
+          test -f "$DEFCONFIG_PATH" || { echo "::error::defconfig not found at $DEFCONFIG_PATH"; exit 1; }
+          sed -i 's/\xEF\xBC\x88//g; s/\xEF\xBC\x89//g' "$DEFCONFIG_PATH"
+          grep -q '^CONFIG_MIHW=y' "$DEFCONFIG_PATH" \
+            || { echo "::error::defconfig sanitize failed (MIHW line)"; exit 1; }
+
+          # PRIORITY_UID_FILTER 仅当该 pin 的 Kconfig 还提供时才追加
+          KCFG="drivers/kernelsu/Kconfig"
+          SYMS="KSU_SUSFS KSU_SUSFS_SUS_PATH KSU_SUSFS_SUS_MOUNT KSU_SUSFS_SUS_KSTAT \
+                KSU_SUSFS_SPOOF_UNAME KSU_SUSFS_ENABLE_LOG KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+                KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG KSU_SUSFS_OPEN_REDIRECT KSU_SUSFS_SUS_MAP"
+          if grep -q 'config KSU_SUSFS_PRIORITY_UID_FILTER' "$KCFG"; then
+            SYMS="$SYMS KSU_SUSFS_PRIORITY_UID_FILTER"
+          else
+            echo "-- this pin's Kconfig has no PRIORITY_UID_FILTER; skipping"
+          fi
+          for sym in $SYMS; do
+            echo "CONFIG_${sym}=y" >> "$DEFCONFIG_PATH"
+          done
+          grep -q 'CONFIG_KSU_SUSFS_SUS_MAP=y' "$DEFCONFIG_PATH" \
+            || { echo "::error::defconfig SUSFS append failed"; exit 1; }
+
+          if [ "${{ inputs.ikconfig_mode || 'kept' }}" = "disabled" ]; then
+            echo "== 二分对照构建：关闭 IKCONFIG/IKCONFIG_PROC（唯一变量，其余与 kept 版逐字节一致）=="
+            # 对照目的：复现"卡第二屏"。若 disabled 版卡屏而 kept 版开机，
+            # 则 IKCONFIG=n 致 MIUI boot hang 在 main 驱动线上再次实锤。
+            sed -i '/^CONFIG_IKCONFIG=/d; /^CONFIG_IKCONFIG_PROC=/d' "$DEFCONFIG_PATH"
+            printf '# CONFIG_IKCONFIG is not set\n# CONFIG_IKCONFIG_PROC is not set\n' >> "$DEFCONFIG_PATH"
+            # 实锤链：slim11 (IKCONFIG=n) 卡第二屏 → slim12-14 (IKCONFIG=y+净化) 可
+            # 开机 → 本线 faithful repro 再次关 IKCONFIG、cpufreq merge 干扰已回退，
+            # 仍卡第二屏 → 排除 merge tip 变量，IKCONFIG=n 致 MIUI boot 阶段 hang
+            # 实锤（MIUI 用户空间在 boot 阶段读 /proc/config.gz）。
+            # /proc/config.gz 文件必须存在（保开机）；KSU/SUSFS/KPM 指纹由后续
+            # "Sanitize /proc/config.gz embedding (slim12)" 步骤净化，反检测面不受损。
+            # 不再删除 IKHEADERS*——与 slim13/14 可开机基线保持一致，尊重 defconfig 原值。
+          else
+            echo "== 保留 IKCONFIG/IKCONFIG_PROC（卡第二屏实锤修复，slim12 方案回归）=="
+            echo "   （详细实锤链注释见对照分支与 .workbuddy 记忆日志）"
+          fi
+          echo "== 启用 pstore ramoops 配置（异常开机取证）=="
+          echo "   注意：当前仅启用驱动，ramoops 预留内存区（地皮）尚未注入——"
+          echo "   需先取得真机 /proc/iomem 后再经 AK3 patch_cmdline 配置，届时 /sys/fs/pstore 才会有内容"
+          for sym in PSTORE PSTORE_RAM PSTORE_CONSOLE; do
+            echo "CONFIG_${sym}=y" >> "$DEFCONFIG_PATH"
+          done
+
+          echo "== 生成 defconfig =="
+          make O=out ARCH=arm64 "${{ env.DEFCONFIG_NAME }}"
+          # IKCONFIG 保留为开启（卡第二屏修复）；断言在 olddefconfig 之后统一做
+
+          echo "== 配置 BakaSU：SUSFS inline-hook 全功能 =="
+          scripts/config --file out/.config \
+            --enable  KSU \
+            --enable  KSU_SUSFS \
+            --disable KSU_TRACEPOINT_HOOK \
+            --disable KSU_MANUAL_HOOK \
+            --enable  KALLSYMS_ALL \
+            --enable  KSU_SUSFS_SUS_PATH \
+            --enable  KSU_SUSFS_SUS_MOUNT \
+            --enable  KSU_SUSFS_SUS_KSTAT \
+            --enable  KSU_SUSFS_SPOOF_UNAME \
+            --enable  KSU_SUSFS_ENABLE_LOG \
+            --enable  KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+            --enable  KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+            --enable  KSU_SUSFS_OPEN_REDIRECT \
+            --enable  KSU_SUSFS_SUS_MAP \
+            --enable  PSTORE \
+            --enable  PSTORE_RAM \
+            --enable  PSTORE_CONSOLE \
+            --disable UAPI_HEADER_TEST \
+            --disable HEADERS_INSTALL \
+            --disable KSU_DEBUG \
+            --set-str LOCALVERSION ""
+            # /proc/version 不受 SUSFS SPOOF_UNAME 伪造，版本串带 susfs 等字样会被
+            # 春秋/Momo 类检测直接读出；强制保持空串，内核串回归原厂形态
+
+          if [ "${{ inputs.ikconfig_mode || 'kept' }}" = "disabled" ]; then
+            scripts/config --file out/.config --disable IKCONFIG --disable IKCONFIG_PROC
+          else
+            scripts/config --file out/.config --enable IKCONFIG --enable IKCONFIG_PROC
+          fi
+
+          if grep -q 'config KSU_SUSFS_PRIORITY_UID_FILTER' "$KCFG"; then
+            scripts/config --file out/.config --enable KSU_SUSFS_PRIORITY_UID_FILTER
+          fi
+
+          make O=out ARCH=arm64 olddefconfig
+
+          echo "== 校验 SUSFS 配置生效 =="
+          for sym in $SYMS; do
+            grep -q "^CONFIG_${sym}=y" out/.config || { echo "::error::CONFIG_${sym} not enabled"; exit 1; }
+          done
+          grep -q "^CONFIG_KSU_MANUAL_HOOK=" out/.config \
+            && { echo "::error::KSU_MANUAL_HOOK should be off"; exit 1; } || true
+          # IKCONFIG 断言按二分开关分支：kept=必须开（slim12 保开机）；
+          # disabled=必须关（对照版复现假设）
+          if [ "${{ inputs.ikconfig_mode || 'kept' }}" = "disabled" ]; then
+            ! grep -q '^CONFIG_IKCONFIG=y' out/.config \
+              || { echo "::error::ikconfig_mode=disabled but CONFIG_IKCONFIG=y — 对照版 IKCONFIG 关闭失败"; exit 1; }
+            ! grep -q '^CONFIG_IKCONFIG_PROC=y' out/.config \
+              || { echo "::error::ikconfig_mode=disabled but CONFIG_IKCONFIG_PROC=y"; exit 1; }
+          else
+            # slim12 断言：/proc/config.gz 必须存在（MIUI boot 阶段依赖，删了卡第二屏），
+            # 内容净化由后续 sanitize 步骤负责——两头兼得：保开机 + 保反检测
+            grep -q '^CONFIG_IKCONFIG=y' out/.config \
+              || { echo "::error::CONFIG_IKCONFIG must stay on (slim12: MIUI boot depends on /proc/config.gz)"; exit 1; }
+            grep -q '^CONFIG_IKCONFIG_PROC=y' out/.config \
+              || { echo "::error::CONFIG_IKCONFIG_PROC must stay on (slim12)"; exit 1; }
+          fi
+          grep -q "^CONFIG_KSU_TRACEPOINT_HOOK=" out/.config \
+            && { echo "::error::KSU_TRACEPOINT_HOOK should be off (5.4 non-GKI)"; exit 1; } || true
+          echo "-- config verified; ENABLE_LOG kept on for faithful repro (slim15 hygiene is a separate variable)"
+
+      - name: Sanitize /proc/config.gz embedding (slim12)
+        if: inputs.ikconfig_mode != 'disabled'
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          echo "== slim12：净化嵌入镜像的内核配置（保留 /proc/config.gz 文件本身） =="
+          # 原理：kernel/configs.c 用 .incbin "kernel/config_data.gz" 把这个 gz
+          # 嵌进 .rodata，/proc/config.gz 与 extract-ikconfig 读的都是它。
+          # vendor 树（zttlove sm8350 hyperos, 5.4）的生成链与主线不同：
+          #   $(obj)/config_data.gz: $(obj)/config_data FORCE
+          #     $(call if_changed,gzip)
+          #   filechk_cat = cat $<
+          #   $(obj)/config_data: $(KCONFIG_CONFIG) FORCE
+          #     $(call filechk,cat)
+          # 最小 patch 点 = filechk_cat 调用行：把 "cat $<" 换成"过滤后输出"，
+          # config_data / config_data.gz / .incbin 嵌入 / /proc/config.gz
+          # 整条链自动净化。
+          # 主线形态（config_data.gz 直接由 KCONFIG_CONFIG gzip）作为回退。
+          #   - 内核真实编译仍用完整 out/.config，KSU/SUSFS 功能零影响
+          #   - FORCE 使每次构建必重生成，patch 必然生效
+          #   - 文件继续存在（slim11 + 本线两次实锤：删了卡第二屏）
+          # 注：working-directory 是树根；vendor 的 IKCONFIG 规则在树根相对的
+          # 子目录 kernel/Makefile 里，不在树根 Makefile。
+          python3 - <<'PYEOF'
+          import re, sys
+          mk = open('kernel/Makefile').read()
+          # 形态一（vendor 5.4）：config_data 由 $(call filechk,cat) 从 .config 复制，
+          # 再 gzip 成 config_data.gz。替换其 recipe 行（tab 行，# 在引号内安全）。
+          # 注意不能替换 "filechk_cat = cat $<" 赋值行——make 变量赋值行中
+          # # 是注释起始符，模式里的 "# CONFIG_... is not set" 会截断赋值。
+          pat_vendor = re.compile(
+              r'(\$\(obj\)/config_data:\s*\$\(KCONFIG_CONFIG\)\s*FORCE\n\t)'
+              r'\$\(call filechk,cat\)')
+          # 形态二（主线 5.4）：gz 直接由 KCONFIG_CONFIG gzip
+          pat_main = re.compile(
+              r'(\$\(obj\)/config_data\.gz:\s*\$\(KCONFIG_CONFIG\)\s*FORCE\n\t)'
+              r'\$\(call if_changed,gzip\)')
+          # sanitize：删掉 KSU/SUSFS/KPM 的 =y/=m 行与 "is not set" 行
+          # （后者同样泄漏存在性）。替换文本落在 recipe 行内，# 在引号内。
+          sanitize = ('grep -vE "^(CONFIG_KSU|CONFIG_SUSFS|CONFIG_KPM)|'
+                      '^# CONFIG_(KSU|SUSFS|KPM)[A-Z0-9_]* is not set" ')
+          if pat_vendor.search(mk):
+              mk = pat_vendor.sub(lambda m: m.group(1) + sanitize + '$(KCONFIG_CONFIG) > $@', mk)
+              print('patched (vendor form): config_data now strips KSU/SUSFS/KPM lines')
+          elif pat_main.search(mk):
+              mk = pat_main.sub(lambda m: m.group(1) + sanitize
+                                + '$(KCONFIG_CONFIG) | gzip -n -9 > $@', mk)
+              print('patched (mainline form): config_data.gz generated from KSU/SUSFS/KPM-free .config')
+          else:
+              i = mk.find('config_data')
+              ctx = mk[max(0, i-200):i+300] if i != -1 else '(not found at all)'
+              sys.exit('::error::neither vendor nor mainline IKCONFIG rule found in kernel/Makefile; context: ' + repr(ctx))
+          open('kernel/Makefile', 'w').write(mk)
+          PYEOF
+          grep -n -A1 'config_data\.gz: \|config_data: ' kernel/Makefile
+          echo "-- slim12: sanitize patch applied (build will regenerate config_data via FORCE)"
+
+      - name: Fix vendor compile warnings (non-behavioral)
+        working-directory: kernel
+        run: |
+          set -e
+          FOCALTECH_MAKEFILE="drivers/input/touchscreen/focaltech_touch/Makefile"
+          if [ -f "$FOCALTECH_MAKEFILE" ]; then
+            sed -i 's/^ \+/\t/' "$FOCALTECH_MAKEFILE"
+            echo "Fixed leading spaces in focaltech Makefile"
+          fi
+          for entry in \
+            "drivers/staging/qcacld-3.0:-Wno-format" \
+            "drivers/staging/qca-wifi-host-cmn:-Wno-format" \
+            "drivers/thermal:-Wno-fortify-source"; do
+            DIR="${entry%%:*}"
+            FLAG="${entry##*:}"
+            if [ -d "$DIR" ] && [ -f "$DIR/Makefile" ]; then
+              grep -q -- "$FLAG" "$DIR/Makefile" || echo "ccflags-y += $FLAG" >> "$DIR/Makefile"
+            fi
+          done
+
+          echo "== 第二轮：实机构建告警清理（2026-11-25 实测 9 处，全部无行为变更）=="
+
+          # 1) qcacld parser_api.c -Warray-parameter：.c 形参 mdie[SIR_MDIE_SIZE]
+          #    与 .h:1056 声明 mdie[] 不一致。改 .c 侧为 []（不依赖宏在头文件
+          #    处的可见性，零风险；参数退化等价，编译产物不变）
+          P1="drivers/staging/qcacld-3.0/core/mac/src/sys/legacy/src/utils/src/parser_api.c"
+          if [ -f "$P1" ]; then
+            sed -i 's/uint8_t mdie\[SIR_MDIE_SIZE\]/uint8_t mdie[]/g' "$P1"
+            ! grep -q 'uint8_t mdie\[SIR_MDIE_SIZE\]' "$P1" \
+              || { echo "::error::parser_api.c mdie bound still mismatched"; exit 1; }
+            echo "-- 1) parser_api.c: mdie 形参定界对齐为头文件 [] 形态"
+          fi
+
+          # 2) dwc3-qcom.c:732 -Wunused-label：reset_assert 标签无任何 goto 引用
+          #    （-Wunused-label 仅在标签从未被使用时触发）→ 删标签行零风险
+          P2="drivers/usb/dwc3/dwc3-qcom.c"
+          if [ -f "$P2" ] && grep -qE '^[[:space:]]*reset_assert:' "$P2"; then
+            sed -i '/^[[:space:]]*reset_assert:[[:space:]]*$/d' "$P2"
+            ! grep -qE '^[[:space:]]*reset_assert:' "$P2" \
+              || { echo "::error::dwc3-qcom.c reset_assert label removal failed"; exit 1; }
+            echo "-- 2) dwc3-qcom.c: 未使用标签 reset_assert 已删除"
+          fi
+
+          # 3) 8250_pci.c:1877 -Wmacro-redefined：本地 #define ASIX=0x9710 与
+          #    pci_ids.h 的 0x125b 冲突。#undef 后重定义——本地值 0x9710 原语义
+          #    完全不变（原编译结果就是本地值胜出），仅消除重定义警告
+          P3="drivers/tty/serial/8250/8250_pci.c"
+          if [ -f "$P3" ] && ! grep -q '^#undef PCI_VENDOR_ID_ASIX' "$P3"; then
+            sed -i 's|^#define PCI_VENDOR_ID_ASIX[[:space:]]*0x9710|#undef PCI_VENDOR_ID_ASIX\n&|' "$P3"
+            grep -q '^#undef PCI_VENDOR_ID_ASIX' "$P3" \
+              || { echo "::error::8250_pci.c ASIX #undef insert failed"; exit 1; }
+            echo "-- 3) 8250_pci.c: 本地 ASIX 定义前插 #undef（取值不变）"
+          fi
+
+          # 4) fts_spi -Wfortify-source：%100s 目标缓冲 100 字节需 101——这是真
+          #    off-by-one 隐患，改 %99s（含 NUL 恰 100 字节；路径>99 本来就截断，
+          #    行为等价且更安全）
+          P4="drivers/input/touchscreen/fts_spi/fts_proc.c"
+          if [ -f "$P4" ]; then
+            sed -i 's/sscanf(p, "%100s", path)/sscanf(p, "%99s", path)/g' "$P4"
+            ! grep -q '"%100s", path' "$P4" \
+              || { echo "::error::fts_proc.c %100s remains"; exit 1; }
+            echo "-- 4a) fts_proc.c: sscanf %100s -> %99s"
+          fi
+          P5="drivers/input/touchscreen/fts_spi/fts.c"
+          if [ -f "$P5" ]; then
+            sed -i 's/sscanf(buf, "%100s %d %d", path, &mode\[0\], &mode\[1\]);/sscanf(buf, "%99s %d %d", path, \&mode[0], \&mode[1]);/g' "$P5"
+            ! grep -q '"%100s %d %d", path' "$P5" \
+              || { echo "::error::fts.c %100s remains"; exit 1; }
+            echo "-- 4b) fts.c: sscanf %100s -> %99s"
+          fi
+
+          # 5) tcp_output.c:2028 min(u64, long 常量) 触发
+          #    -Wcompare-distinct-pointer-types。min_t(u64,...) 与原 __careful_cmp
+          #    的算术提升路径结果逐位一致（u64 vs long 提升为 u64），纯告警修复
+          P6="net/ipv4/tcp_output.c"
+          if [ -f "$P6" ] && ! grep -q 'threshold = min_t(u64, srtt_in_ns >> 1, NSEC_PER_MSEC);' "$P6"; then
+            sed -i 's/threshold = min(srtt_in_ns >> 1, NSEC_PER_MSEC);/threshold = min_t(u64, srtt_in_ns >> 1, NSEC_PER_MSEC);/' "$P6"
+            grep -q 'threshold = min_t(u64, srtt_in_ns >> 1, NSEC_PER_MSEC);' "$P6" \
+              || { echo "::error::tcp_output.c min->min_t rewrite failed"; exit 1; }
+            echo "-- 5) tcp_output.c: min -> min_t(u64,...)"
+          fi
+
+          # 6) bootinfo.c:85/95 -Wunused-result：kstrtou32 返回值被忽略。
+          #    (void) 显式丢弃 = 原语义不变（clang 对 void 转换豁免该警告）
+          P7="techpack/bootinfo/bootinfo.c"
+          if [ -f "$P7" ]; then
+            sed -i 's/kstrtou32(buf, 16, &pu_reason);/(void)kstrtou32(buf, 16, \&pu_reason);/g' "$P7"
+            sed -i 's/kstrtou32(buf, 16, &pd_reason);/(void)kstrtou32(buf, 16, \&pd_reason);/g' "$P7"
+            ! grep -qE '^[[:space:]]*kstrtou32' "$P7" \
+              || { echo "::error::bootinfo.c kstrtou32 void-cast failed"; exit 1; }
+            echo "-- 6) bootinfo.c: kstrtou32 返回值显式丢弃"
+          fi
+
+          # 7) -Wmisleading-indentation（3 文件 5 处）：vendor 缩进与控制流不一致，
+          #    编译器实际语义即代码真实语义（缩进只是视觉误导，非逻辑错误）。
+          #    修法：文件级 #pragma 关闭该诊断（slim13 L3 兜底同款）——techpack
+          #    独立 Kbuild 不吃全局 KCFLAGS，必须落文件；语义零变化。
+          for F in \
+            "drivers/input/touchscreen/cyttsp5/cyttsp5_device_access.c" \
+            "techpack/camera_star/drivers/cam_sensor_module/cam_flash/cam_flash_core.c" \
+            "techpack/display/msm/mi_disp/mi_dsi_panel.c"; do
+            if [ -f "$F" ] && ! grep -q 'pragma clang diagnostic ignored "-Wmisleading-indentation"' "$F"; then
+              sed -i '0,/^#include/s/^#include/#pragma clang diagnostic ignored "-Wmisleading-indentation"\n#include/' "$F"
+              grep -q 'pragma clang diagnostic ignored "-Wmisleading-indentation"' "$F" \
+                || { echo "::error::misleading-indentation pragma insert failed: $F"; exit 1; }
+              echo "-- 7) $F: L3 pragma inserted"
+            fi
+          done
+          echo "== 第二轮告警清理完成 =="
+
+      - name: Build Kernel
+        working-directory: kernel
+        run: |
+          export ARCH=arm64
+          export PATH="${{ env.CLANG_DIR }}/bin:$PATH"
+          export LLVM=1 LLVM_IAS=1 \
+                 CLANG_TRIPLE=aarch64-linux-gnu- \
+                 CROSS_COMPILE=aarch64-linux-gnu- \
+                 CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+          export CCACHE_DIR="${{ github.workspace }}/.ccache"
+          export CCACHE_MAXSIZE=8G
+          # 去除 CI 构建指纹：/proc/version 里嵌入的构建者/主机名/时间戳会被检测用作
+          # "自编内核" 信号，固定为普通本地构建形态（旧 workflow 同款）
+          export KBUILD_BUILD_USER=builder
+          export KBUILD_BUILD_HOST=android-build
+          export KBUILD_BUILD_TIMESTAMP="Thu Jun 12 10:00:00 UTC 2025"
+
+          echo "== 预装 UAPI 头文件以启用 BakaSU preinit =="
+          make -j$(nproc) O=out ARCH=arm64 \
+            CC="ccache clang" LD="ld.lld" AR="llvm-ar" NM="llvm-nm" \
+            headers_install INSTALL_HDR_PATH="$PWD/out/usr" \
+            || echo "::warning::headers_install failed, BakaSU preinit will stay disabled (non-fatal)"
+          test -f out/usr/include/linux/unistd.h \
+            && echo "-- preinit UAPI headers ready" \
+            || echo "::warning::usr/include/linux/unistd.h missing, preinit will be disabled"
+
+          set +e
+          make -j$(nproc) O=out ARCH=arm64 \
+            CC="ccache clang" LD="ld.lld" AR="llvm-ar" NM="llvm-nm" \
+            OBJCOPY="llvm-objcopy" OBJDUMP="llvm-objdump" STRIP="llvm-strip" \
+            CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" \
+            KCFLAGS="-Wno-unknown-warning-option -Wno-error -Wno-format -Wno-incompatible-pointer-types \
+            -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-missing-prototypes \
+            -Wno-int-conversion -Wno-declaration-after-statement \
+            -Wframe-larger-than=131072 -Wno-unused-variable -Wno-unused-function \
+            -Wno-missing-braces -Wno-int-to-pointer-cast -Wno-address-of-packed-member \
+            -Wno-return-type -Wno-shift-negative-value -Wno-array-bounds" \
+            HOSTCFLAGS="" 2>&1 | tee build.log
+
+          if [ ${PIPESTATUS[0]} -ne 0 ]; then
+            echo "::error::Kernel build failed. Last 200 lines:"
+            tail -n 200 build.log
+            # 链接期 undefined symbol 快速定位
+            grep -n 'undefined symbol\|undefined reference' build.log | tail -n 40 || true
+            exit 1
+          fi
+
+          echo "=== Build finished ==="
+          echo "KSU identity: $(grep -m1 -oE 'KSU_PACKAGE_NAME[^ ]* [^ ]*' drivers/kernelsu/Makefile 2>/dev/null || echo 'see manager apk')"
+          # bakasu 复现版刻意不做 slim10 改名（保持驱动线单变量）——此处改为
+          # 统计 ksu_/susfs_ 符号残留，作为 kallsyms 泄漏面基线参考（预期 >0）
+          echo "kallsyms ksu_/susfs_ symbol count (baseline, expected >0 for this line):"
+          grep -cE ' [a-zA-Z0-9_]*(ksu_|susfs_)' /proc/kallsyms 2>/dev/null || echo "0 (kallsyms not readable on runner; check on device)"
+          ccache -s 2>/dev/null || true
+          ls -lh out/arch/arm64/boot/Image
+
+      - name: Verify config.gz sanitization (slim12)
+        if: inputs.ikconfig_mode != 'disabled'
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          echo "== slim12：校验嵌入镜像的内核配置已净化 =="
+          if [ ! -f out/kernel/config_data.gz ]; then
+            echo "::error::out/kernel/config_data.gz not produced — IKCONFIG off?"; exit 1
+          fi
+          # 指纹必须为零：KSU/SUSFS/KPM 的 =y / =m / is not set 行都不允许出现
+          if zcat out/kernel/config_data.gz | grep -E '^(CONFIG_KSU|CONFIG_SUSFS|CONFIG_KPM)|^# CONFIG_(KSU|SUSFS|KPM)'; then
+            echo "::error::config_data.gz still contains KSU/SUSFS fingerprints"
+            exit 1
+          fi
+          # 净化不能把配置弄空——行数应与完整 config 接近（仅少几十行指纹）
+          TOTAL=$(zcat out/kernel/config_data.gz | wc -l)
+          FULL=$(wc -l < out/.config)
+          echo "sanitized=$TOTAL lines, full=$FULL lines"
+          [ "$TOTAL" -gt 100 ] || { echo "::error::sanitized config suspiciously small"; exit 1; }
+          echo "-- slim12: /proc/config.gz will expose ZERO KSU/SUSFS/KPM entries; file itself stays for MIUI boot services"
+
+      - name: Package AnyKernel3
+        run: |
+          set -e
+          TIME=$(date +%Y%m%d-%H%M)
+          IMG_PATH="${{ env.KERNEL_DIR }}/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image"
+          test -f "$IMG_PATH"
+
+          rm -rf AnyKernel3
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git
+          cd AnyKernel3
+
+          cp "$IMG_PATH" ./Image
+          gzip -9 -f ./Image
+          rm -f ./Image
+
+          cat > anykernel.sh <<'AK3'
+          ### AnyKernel3 Ramdisk Mod Script
+          ## osm0sis @ xda-developers
+
+          ### AnyKernel setup
+          # global properties
+          properties() { '
+          kernel.string=Edwin BakaSU main Full SUSFS for Xiaomi 11 Ultra / Pro (star)
+          do.devicecheck=0
+          do.modules=0
+          do.systemless=1
+          do.cleanup=1
+          do.cleanuponabort=0
+          device.name1=star
+          device.name2=mars
+          supported.versions=
+          supported.patchlevels=
+          '; } # end properties
+
+          ### AnyKernel install
+          # boot files attributes
+          boot_attributes() {
+          set_perm_recursive 0 0 755 644 $RAMDISK/*;
+          set_perm_recursive 0 0 750 750 $RAMDISK/init* $RAMDISK/sbin;
+          } # end attributes
+
+          # boot shell variables
+          BLOCK=boot;
+          IS_SLOT_DEVICE=1;
+          RAMDISK_COMPRESSION=auto;
+          PATCH_VBMETA_FLAG=auto;
+
+          # import functions/variables and setup patching - see for reference (DO NOT REMOVE)
+          . tools/ak3-core.sh;
+
+          # boot install
+          split_boot;
+
+          flash_boot;
+          ## end boot install
+          AK3
+
+          chmod +x anykernel.sh
+          IK_SUFFIX="ikcfg-kept"
+          if [ "${{ inputs.ikconfig_mode || 'kept' }}" = "disabled" ]; then
+            IK_SUFFIX="ikcfg-off"
+          fi
+          echo "== 本次构建 IKCONFIG 模式: $IK_SUFFIX（zip 文件名已标记，防止 A/B 刷混）=="
+          ZF="../${{ env.DEVICE_CODENAME }}-BakaSU-main-SUSFS-Full-${IK_SUFFIX}-${TIME}.zip"
+          zip -r9 "$ZF" ./*
+
+          echo "== AK3 包结构自检（TWRP 兼容性）=="
+          unzip -l "$ZF" | grep -q 'META-INF/com/google/android/update-binary' \
+            || { echo "::error::AK3 zip missing update-binary - TWRP flash would fail"; exit 1; }
+          unzip -l "$ZF" | grep -qE '[[:space:]]Image\.gz$' \
+            || { echo "::error::AK3 zip missing Image.gz - TWRP flash would fail"; exit 1; }
+          unzip -l "$ZF" | grep -qE '[[:space:]]\.git/' \
+            && { echo "::error::AK3 zip contains .git - breaks ak3 parsing on some TWRP forks"; exit 1; } \
+            || true
+          echo "-- AK3 structure OK: update-binary + Image.gz present, no .git"
+          echo "== TWRP 刷机须知 =="
+          echo "  Actions Artifacts 下载的是外层传输包装 zip；必须先解压出内层"
+          echo "  ${DEVICE_CODENAME}-BakaSU-main-SUSFS-Full-*.zip 再进 TWRP 刷入。"
+          echo "  直接把外层 artifact zip 推进 TWRP 会报 'Updater process ended with ERROR: 1'"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel_bakasu_main_ikconfig_ab
+          path: ${{ env.DEVICE_CODENAME }}-BakaSU-main-SUSFS-Full-*.zip
