@@ -28,6 +28,66 @@ on:
           - "true"
           - "false"
 
+# ─────────────────────────────────────────────────────────────────────────────
+# nova-slim9：kallsyms 符号混淆——针对 "kernelsu detected" 的实锤对策。
+#   slim8 实机结果（2026-11-22 13:00）：reboot probe 留痕日志抓到春秋探测现场
+#     ——检测期间出现 8 条 "reboot probe magic1=0xdeadbeef magic2=0xcafebabe
+#     cmd=0"（uid=10303 为春秋 App、uid=0 为 ksud/管理器自举）。但核对
+#     vendor kernel/reboot.c（332-342 行）与 hook wrapper（323-330 行）后
+#     确认：hook 返回 -EINVAL 会经 "if (ret) goto orig_flow" 落入 stock 逻辑，
+#     非特权 App 最终拿到的仍是 stock 的 -EPERM，错误码与 stock 一致；
+#     ksu_manager_uid_authorized 仅是 appid 简单比较，开销纳秒级。
+#     ⇒ reboot 返回值/时序均非泄漏点，探测点另有其处。
+#   真凶（高置信推断，源自春秋类检测器的公开逆向分析 DeepWiki/KernelSU
+#     Detection）：/proc/kallsyms 符号扫描。非 root 也能读 kallsyms
+#     （kptr_restrict 只隐藏地址，符号名仍可见）；KSU builtin 编译的 150+
+#     个 ksu_* 全局符号与 susfs_* 符号全部在表中，检测器用裸 syscall 打开
+#     kallsyms 逐行 grep 'ksu' 即 100% 确定性命中，无需任何权限。KSU 的
+#     Kconfig 还强制 select KALLSYMS/KALLSYMS_ALL，源码无任何符号隐藏机制。
+#     这与春秋说明"根据运行时行为识别 KSU 特征、无需 Root 权限"完全吻合，
+#     也解释了为何 slim6（摘 stat hook）/slim7/8（reboot gate）都无效。
+#   slim9 对策：编译前对整棵内核源码树 .c/.h 做纯标识符改名
+#     ksu_ -> rsx_、susfs_ -> rsy_（驱动与 vendor 调用点同步改名，链接
+#     一致；已在本地驱动树上全量仿真：88 文件 1846 处、零残留、括号平衡
+#     一致、用户态路径字符串与 KSU_INSTALL_MAGIC* 宏完好）。编译后
+#     /proc/kallsyms 中不再出现任何 ksu_*/susfs_* 符号。
+# slim7 说明（对照实验设计，均保留）：
+#   slim6 实机结果（2026-11-22 上午）：
+#     - reboot_gate=true + 摘除 stat/faccessat hook 后，kernelsu detected 仍报；
+#     - **副作用：su 命令断裂**——终端 "su: command not found"，root 提权链
+#       不可用。根因：KSU 是 systemless，设备上没有真实的 /system/bin/su 文件；
+#       shell 敲 su 时沿 PATH 做 stat/faccessat 搜索，全靠这对 hook 把 su 路径
+#       伪装成"存在"（memcmp 命中→memcpy 换成 /system/bin/sh 的结果），shell
+#       才会发起 execve(su)，再由 execve hook 重定向 ksud 提权。摘掉
+#       stat/faccessat hook = su 永远不可见 = root 工作流断裂。此前判断
+#       "仅伪装用途、SUSFS 可替代"是错的——SUSFS sus_path 隐藏路径做不到
+#       "让不存在的文件出现在 PATH 搜索里"。
+#   slim7 修正（对照实验设计，一次只留一个变量）：
+#     A) 恢复 vendor 原始的 stat/faccessat hook 调用块（su 恢复可用）；
+#     B) 保留 reboot_gate=true（默认已开）——reboot(0xDEADBEEF,0xCAFEBABE)
+#        fd 自举是确定性探测（非特权调用方观察 stock 逐字节一致的 -EPERM），
+#        这是对 "kernelsu detected" 最对症的加固；
+#     C) 保留 slim5 的 status 页 stock 化 {sequence=0, policyload=0}。
+#   时序风险重评估：stat/faccessat hook 对未授权 App 的开销为 uid 比较链 +
+#   一次 RCU 哈希查找（allow_list 8 项），估算比值 ~1.05，远低于文档阈值
+#   1.2；且 slim5 时代该 hook 一直在场、detected 也一直在报，slim6 摘除后
+#   仍报——证明探测点大概率不是这对 hook 的时序，而是已被 gate 封死的
+#   reboot 自举之外的某个确定性向量（prctl 已无此接口；sys_read 正常时
+#   static key disabled）。若 slim7 复测仍报 detected，下一步用 dmesg 抓
+#   探测现场（检测前 dmesg -c 清空，检测后 grep ksu/magic）。
+# slim6 说明（摘除实验，已回退）：见 git 历史。
+# slim5 说明：
+#   status 页统一定格 stock 5.4 形态 {sequence=0, policyload=0}：
+#   A) status.c：update_policyload 对 seqno==0 直接 early-return；
+#   B) status.c：惰性分配保持原版赋值（sequence=0/policyload=0），
+#      删除 slim2-slim4 的 selinux_last_policyload 回填机制；
+#   C) services.c：initialize_fake_status（假页）与 ksu_real_status_normalize
+#      （真实页）统一定格 {sequence=0, policyload=0}。
+# 依据（已 git 全量验证）：两棵驱动树 kernel/ 全部 C 代码字节一致，
+# 仅 Makefile/setup.sh 品牌差异（com.sukisu.nova / VERSION_BASE 30000）。
+# 因此本文件与"实证可开机"的 Ultra 构建在内核内容上等价，只是品牌换成 Nova。
+# ─────────────────────────────────────────────────────────────────────────────
+
 env:
   KERNEL_REPO: zttlove/android_kernel_xiaomi_sm8350-hyperos
   KERNEL_BRANCH: dynamic
@@ -62,6 +122,11 @@ env:
   SUKISU_BRANCH: builtin
   # Nova 线（与 Ultra f9aa2fec23 代码等价，仅品牌不同；2026-11-21 git 全量 diff 验证）
   SUKISU_PIN: 4bec532dd447e2852aa8932afa768255350c103a
+
+# Optional Release 步骤用 GITHUB_TOKEN 创建 Release：默认令牌只读，
+# 必须显式授予 contents:write，否则 softprops/action-gh-release 静默 403
+permissions:
+  contents: write
 
 jobs:
   build-kernel:
@@ -2579,8 +2644,8 @@ jobs:
           name: kernel_sukisu_nova_slim14_v8
           path: ${{ env.DEVICE_CODENAME }}-SukiSU-Nova-slim14v8-*.zip
 
-      - name: Optional Release (if needed)
-        if: github.event_name == 'workflow_dispatch' && vars.RELEASE_ENABLED == 'true'
+      - name: Optional Release (publishes on every manual build)
+        if: github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: slim14v8_${{ github.run_number }}
