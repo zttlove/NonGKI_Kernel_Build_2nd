@@ -1879,8 +1879,10 @@ jobs:
             || { echo "::error::defconfig SUSFS append failed"; exit 1; }
 
           echo "== 启用 pstore ramoops（异常开机取证：/sys/fs/pstore/console-ramoops-*）=="
+          # 幂等追加：vendor star_defconfig 已自带这三行（CI 实证重复追加触发
+          # "override: reassigning to symbol" 警告），存在则跳过
           for sym in PSTORE PSTORE_RAM PSTORE_CONSOLE; do
-            echo "CONFIG_${sym}=y" >> "$DEFCONFIG_PATH"
+            grep -q "^CONFIG_${sym}=y" "$DEFCONFIG_PATH" || echo "CONFIG_${sym}=y" >> "$DEFCONFIG_PATH"
           done
 
           echo "== 生成 defconfig =="
@@ -1910,6 +1912,7 @@ jobs:
             --enable  KALLSYMS_ALL \
             --disable UAPI_HEADER_TEST \
             --disable HEADERS_INSTALL \
+            --disable LOCALVERSION_AUTO \
             --set-str LOCALVERSION ""
 
           # 【slim14】AVC spoof 需要内核 kprobe 支持（kprobe 挂 slow_avc_audit，
