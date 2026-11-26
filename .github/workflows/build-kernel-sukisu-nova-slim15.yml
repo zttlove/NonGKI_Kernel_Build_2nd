@@ -2609,7 +2609,7 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: slim14v8_${{ github.run_number }}
+          tag_name: slim15_${{ github.run_number }}
           name: "SukiSU Nova slim15 Full SUSFS Build"
           body: |
             ## SukiSU Nova slim15
