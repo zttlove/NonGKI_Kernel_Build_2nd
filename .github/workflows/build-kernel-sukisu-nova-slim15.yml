@@ -2598,3 +2598,24 @@ jobs:
 
           chmod +x anykernel.sh
           zip -r9 "../${{ env.DEVICE_CODENAME }}-SukiSU-Nova-slim15-${TIME}.zip" ./*
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel_sukisu_nova_slim15
+          path: ${{ env.DEVICE_CODENAME }}-SukiSU-Nova-slim15-*.zip
+
+      - name: Optional Release (publishes on every manual build)
+        if: github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: slim14v8_${{ github.run_number }}
+          name: "SukiSU Nova slim14 v8 Full SUSFS Build"
+          body: |
+            ## SukiSU Nova slim15
+            - SUSFS 全功能：SUS_PATH / SUS_MOUNT / SUS_KSTAT / SPOOF_UNAME / OPEN_REDIRECT / SUS_MAP / ENABLE_LOG
+            - 反检测全家桶：kallsyms 混淆 + AVC spoof + reboot gate + status 页 stock 化 + config.gz 净化
+            - 刷机有风险，请备份原内核（解外层 artifact zip 后 TWRP 刷入内层 AK3 包）
+          files: ${{ env.DEVICE_CODENAME }}-SukiSU-Nova-slim14v8-*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
