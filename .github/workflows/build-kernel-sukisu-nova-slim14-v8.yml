@@ -1,4 +1,4 @@
-name: "Build Kernel with SukiSU Nova (slim15v1 = slim15 + restrict_dmesg fix + image fingerprint baseline scan)"
+name: "Build Kernel with SukiSU Nova (slim15v2 = slim15v1 + LOCALVERSION_AUTO disable fix + PSTORE idempotent append)"
 
 on:
   workflow_dispatch:
@@ -313,9 +313,9 @@ jobs:
           echo "-- LSM file_permission hook removed from ksu_hooks[]"
 
           echo "== Slim15：内核版本打标（uname 可辨识）=="
-          printf -- '-slim15v1' > localversion
-          grep -q 'slim15v1' localversion || { echo "::error::localversion write failed"; exit 1; }
-          echo "-- uname -r will carry -slim15v1 (e.g. 5.4.302-slim15v1)"
+          printf -- '-slim15v2' > localversion
+          grep -q 'slim15v2' localversion || { echo "::error::localversion write failed"; exit 1; }
+          echo "-- uname -r will carry -slim15v2 (e.g. 5.4.302-slim15v2)"
 
           echo "== SukiSU builtin 适配：为 5.4 屏蔽 static_call 头 =="
           # static_call 是 5.10+ 内核设施，5.4 无此头文件；builtin 的
@@ -2698,7 +2698,7 @@ jobs:
           ### AnyKernel setup
           # global properties
           properties() { '
-          kernel.string=SukiSU Nova slim15v1 Full SUSFS for Xiaomi 11 Ultra / Pro (star)
+          kernel.string=SukiSU Nova slim15v2 Full SUSFS for Xiaomi 11 Ultra / Pro (star)
           do.devicecheck=0
           do.modules=0
           do.systemless=1
@@ -2735,31 +2735,32 @@ jobs:
           AK3
 
           chmod +x anykernel.sh
-          zip -r9 "../${{ env.DEVICE_CODENAME }}-SukiSU-Nova-slim15v1-${TIME}.zip" ./*
+          zip -r9 "../${{ env.DEVICE_CODENAME }}-SukiSU-Nova-slim15v2-${TIME}.zip" ./*
           cd ..
-          echo "zip_name=${{ env.DEVICE_CODENAME }}-SukiSU-Nova-slim15v1-${TIME}.zip" >> $GITHUB_OUTPUT
+          echo "zip_name=${{ env.DEVICE_CODENAME }}-SukiSU-Nova-slim15v2-${TIME}.zip" >> $GITHUB_OUTPUT
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kernel_sukisu_nova_slim15v1
-          path: ${{ env.DEVICE_CODENAME }}-SukiSU-Nova-slim15v1-*.zip
+          name: kernel_sukisu_nova_slim15v2
+          path: ${{ env.DEVICE_CODENAME }}-SukiSU-Nova-slim15v2-*.zip
 
       - name: Optional Release (publishes on every manual build)
         if: github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: slim15v1_${{ github.run_number }}
-          name: "SukiSU Nova slim15v1 Full SUSFS Build"
+          tag_name: slim15v2_${{ github.run_number }}
+          name: "SukiSU Nova slim15v2 Full SUSFS Build"
           body: |
-            ## SukiSU Nova slim15v1（slim15 + restrict_dmesg 修复 + 指纹基线自扫）
+            ## SukiSU Nova slim15v2（slim15v1 + CI 修复）
             - read 路径 stock 级开销：移除 LSM file_permission 全局钩子（ftrace 实证：春秋 4.6.3 对 /proc/thread-self/status 做 55,540 次 open+read 时序探针）
             - SUSFS 全功能：SUS_PATH / SUS_MOUNT / SUS_KSTAT / SPOOF_UNAME / OPEN_REDIRECT / SUS_MAP（日志关闭，去 dmesg 指纹）
             - 反检测全家桶：kallsyms 混淆 + AVC spoof + reboot gate + status 页 stock 化 + config.gz 净化
             - 手机端合并：cpufreq 强制排序（不依赖 git 历史）、KSU_VERSION 限流告警、ENABLE_LOG 关闭、blob:none clone、LOCALVERSION_AUTO 断言
             - slim15v1 新增：restrict_dmesg 开关修复（此前无实现）、构建后镜像字符串指纹基线自扫
-            - uname -r 带 -slim15v1 后缀，刷机后可直接确认版本
+            - slim15v2 新增：--disable LOCALVERSION_AUTO 落地（修复 CI 构建拦截，vendor defconfig 自带该配置）、PSTORE 配置幂等追加
+            - uname -r 带 -slim15v2 后缀，刷机后可直接确认版本
             - 刷机有风险，请备份原内核（Release zip 直接刷入，Artifact zip 需先解外层）
-          files: ${{ env.DEVICE_CODENAME }}-SukiSU-Nova-slim15v1-*.zip
+          files: ${{ env.DEVICE_CODENAME }}-SukiSU-Nova-slim15v2-*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
