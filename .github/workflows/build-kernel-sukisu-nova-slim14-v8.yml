@@ -1,4 +1,4 @@
-name: "Build Kernel with SukiSU Nova (Slim14 v8 = v7 + packaging fix: duplicate AK3 step removed, devicecheck off for TWRP)"
+name: "Build Kernel with SukiSU Nova (slim15v1 = slim15 + restrict_dmesg fix + image fingerprint baseline scan)"
 
 on:
   workflow_dispatch:
@@ -20,7 +20,7 @@ on:
           - "true"
           - "false"
       restrict_dmesg:
-        description: "slim11：dmesg_restrict=1 限制 app 读内核日志（反探测；卡第二屏嫌疑项，默认关闭，可实测开启）"
+        description: "dmesg_restrict=1 限制 app/shell 读内核日志（反探测；slim15 已修复实现，此前开关无效果；slim11 卡第二屏真凶是 IKCONFIG，与本开关无关，默认关闭）"
         required: false
         default: "false"
         type: choice
@@ -139,7 +139,7 @@ jobs:
           repository: ${{ env.KERNEL_REPO }}
           ref: ${{ env.KERNEL_BRANCH }}
           path: kernel
-          # depth=2：合并 tip 时需要 HEAD^1 做对照 diff（cpufreq 回退步骤依赖）
+          # depth=2：合并 tip 时需要 HEAD^1 做对照 diff（父提交打印，供 kernel_pin 对照构建）
           fetch-depth: 2
 
       - name: Verify Kernel Commit & Clean Workspace
@@ -155,31 +155,56 @@ jobs:
             exit 1
           fi
 
-      - name: Revert merge-brought cpufreq init-order change (bootloop fix)
+      - name: Enforce cpufreq init order (bootloop fix, unconditional)
         working-directory: kernel
         run: |
           set -euo pipefail
-
-          echo "== 回退合并带入的 qcom-cpufreq-hw.c 初始化时序改动 =="
-          # f4c3fdd4f 合并（Leecaarmy:dynamic → dynamic）相对 zttlove 侧基线的
-          # 全部差异只有这一个文件：把 cpufreq_register_driver() 挪到
-          # register_cpu_cycle_counter_cb()（WALT 周期计数回调）之后。这是
-          # boot 关键路径时序改动，实机构建后无限重启——与上一个能开机的
-          # 基线相比唯一的内核内容差异。回退它再做开机验证。
-          PC=drivers/cpufreq/qcom-cpufreq-hw.c
-          test -f "$PC" || { echo "::error::$PC not found"; exit 1; }
-          if [ "$(git log -1 --format=%P HEAD | wc -w)" -eq 2 ]; then
-            git diff HEAD^1 HEAD -- "$PC" | git apply -R --whitespace=nowarn
-            R=$(grep -n 'cpufreq_register_driver(&cpufreq_qcom_hw_driver)' "$PC" | head -1 | cut -d: -f1)
-            C=$(grep -n 'register_cpu_cycle_counter_cb(&cycle_counter_cb)' "$PC" | head -1 | cut -d: -f1)
-            if [ -n "$R" ] && [ -n "$C" ] && [ "$R" -lt "$C" ]; then
-              echo "-- reverted: cpufreq_register_driver (L$R) now precedes register_cpu_cycle_counter_cb (L$C)"
-            else
-              echo "::error::cpufreq revert verification failed (R=$R C=$C)"; exit 1
-            fi
-          else
-            echo "-- HEAD is not a merge commit, nothing to revert"
+          echo "== 强制 qcom-cpufreq-hw.c 注册顺序：cpufreq_register_driver() 在前 =="
+          # 【slim15：合并自手机端 v6】旧法（git diff HEAD^1 | git apply -R）依赖
+          # HEAD 是 merge commit，上游一旦 squash/rebase 就静默失效。改为不依赖
+          # git 历史：无论 HEAD 形态如何，都把注册顺序强制为可启动顺序。
+          # star 实机验证：先注册 cycle counter 回调（Leecaarmy 合并带入顺序）
+          # 会冷启动假死/无限重启；唯一可启动顺序是 cpufreq_register_driver() 在前。
+          # 锚点重写 + python 偏移断言 + shell 行号断言双重校验。
+          python3 - <<'PYEOF'
+          import sys
+          pc = "drivers/cpufreq/qcom-cpufreq-hw.c"
+          s = open(pc).read()
+          lock_line = "for_each_possible_cpu(cpu)\n\t\tspin_lock_init(&qcom_cpufreq_counter[cpu].lock);\n"
+          i = s.find(lock_line)
+          j = s.find("\tof_platform_populate(pdev->dev.of_node")
+          if i == -1 or j == -1 or j < i:
+              sys.exit("::error::anchor lines not found in qcom-cpufreq-hw.c")
+          good = lock_line + """
+          \t/*
+          \t * 注册顺序必须保持 cpufreq_register_driver() 在前：
+          \t * star 实机验证该顺序是唯一可正常启动的配置；颠倒后（先注册
+          \t * cycle counter 回调）会触发冷启动假死/无限重启。
+          \t */
+          \trc = cpufreq_register_driver(&cpufreq_qcom_hw_driver);
+          \tif (rc) {
+          \t\tdev_err(&pdev->dev, "CPUFreq HW driver failed to register\\n");
+          \t\treturn rc;
+          \t}
+          \trc = register_cpu_cycle_counter_cb(&cycle_counter_cb);
+          \tif (rc) {
+          \t\tdev_err(&pdev->dev, "cycle counter cb failed to register\\n");
+          \t\treturn rc;
+          \t}
+          """
+          s = s[:i] + good + s[j:]
+          open(pc, "w").write(s)
+          R = s.find("rc = cpufreq_register_driver(&cpufreq_qcom_hw_driver);")
+          C = s.find("rc = register_cpu_cycle_counter_cb(&cycle_counter_cb);")
+          assert R != -1 and C != -1 and R < C, "order verification failed"
+          print(f"-- enforced: cpufreq_register_driver(offset {R}) precedes register_cpu_cycle_counter_cb (offset {C})")
+          PYEOF
+          R=$(grep -n 'cpufreq_register_driver(&cpufreq_qcom_hw_driver)' drivers/cpufreq/qcom-cpufreq-hw.c | head -1 | cut -d: -f1)
+          C=$(grep -n 'register_cpu_cycle_counter_cb(&cycle_counter_cb)' drivers/cpufreq/qcom-cpufreq-hw.c | head -1 | cut -d: -f1)
+          if [ -z "$R" ] || [ -z "$C" ] || [ "$R" -ge "$C" ]; then
+            echo "::error::cpufreq order verification failed (R=$R C=$C)"; exit 1
           fi
+          echo "-- verified: cpufreq_register_driver (L$R) precedes register_cpu_cycle_counter_cb (L$C)"
 
       - name: Install Build Dependencies
         run: |
@@ -232,7 +257,9 @@ jobs:
 
           echo "== 拉取 SukiSU-Ultra (builtin) 并接管 drivers/kernelsu =="
           rm -rf SukiSU_src KernelSU drivers/kernelsu drivers/KernelSU
-          git clone --no-checkout -b "${{ env.SUKISU_BRANCH }}" "${{ env.SUKISU_REPO }}" SukiSU_src
+          # 【slim15：合并自手机端 v6】--filter=blob:none 省流量且更快：反检测/驱动
+          # 补丁只需要 pinned SHA 的树内容，blob 按需拉取即可
+          git clone --filter=blob:none --no-checkout -b "${{ env.SUKISU_BRANCH }}" "${{ env.SUKISU_REPO }}" SukiSU_src
           git -C SukiSU_src fetch --depth=1 origin "${{ env.SUKISU_PIN }}" \
             || git -C SukiSU_src fetch origin "${{ env.SUKISU_PIN }}" \
             || { echo "::error::cannot fetch driver pin ${{ env.SUKISU_PIN }}"; exit 1; }
@@ -261,6 +288,34 @@ jobs:
           grep -q 'CONFIG_KSU_SUSFS' fs/open.c || { echo "::error::fs/open.c lacks KSU_SUSFS hooks"; exit 1; }
           grep -q 'CONFIG_KSU_SUSFS' fs/stat.c || { echo "::error::fs/stat.c lacks KSU_SUSFS hooks"; exit 1; }
           echo "-- kernel-side SUSFS hooks verified (no kernel patching needed)"
+
+          echo "== Slim15：移除 LSM file_permission 全局钩子（read 路径恢复 stock 级开销）=="
+          # 背景（2026-11-25/26 ftrace 实证）：春秋 4.6.3 的 probe-leaf 线程对
+          # /proc/thread-self/status 做 55,540 次 open+read（probe-budgets.tsv
+          # 自适应预算）＝纯时序探针；reboot/prctl 魔数探针 0 命中、内容类
+          # 检查全部干净。slim14 与 stock 在 read 路径上唯一的系统性差异是
+          # Nova builtin 在 ksu_hooks[] 无条件注册的
+          #   LSM_HOOK_INIT(file_permission, ksu_mount_hide_file_permission)
+          # ——全系统每次 read()（rw_verify_area → security_file_permission）
+          # 都会进入 LSM 链多执行一次该回调（stock 无此调用）。其原始用途仅是
+          # mount_hide 在首次读 proc mounts 时换 show 函数；kernel umount
+          # （setresuid 路径）已独立兜底模块挂载隐藏，且春秋不读 mountinfo
+          # （trace 零条），删除该钩子对行为面无回归。
+          # 注：5.4 上 ksu_selinux_hide_init() 不会被调用（>=5.10 才注册），
+          # "Hide SELinux modification" 开关在本内核是空操作，试验 A 阴性正常。
+          L="SukiSU_src/kernel/hook/lsm_hook.c"
+          test -f "$L" || { echo "::error::lsm_hook.c not found"; exit 1; }
+          grep -q 'LSM_HOOK_INIT(file_permission, ksu_mount_hide_file_permission)' "$L" \
+            || { echo "::error::file_permission hook line not found (upstream drift)"; exit 1; }
+          sed -i '/LSM_HOOK_INIT(file_permission, ksu_mount_hide_file_permission)/d' "$L"
+          ! grep -q 'LSM_HOOK_INIT(file_permission' "$L" \
+            || { echo "::error::file_permission hook still registered"; exit 1; }
+          echo "-- LSM file_permission hook removed from ksu_hooks[]"
+
+          echo "== Slim15：内核版本打标（uname 可辨识）=="
+          printf -- '-slim15v1' > localversion
+          grep -q 'slim15v1' localversion || { echo "::error::localversion write failed"; exit 1; }
+          echo "-- uname -r will carry -slim15v1 (e.g. 5.4.302-slim15v1)"
 
           echo "== SukiSU builtin 适配：为 5.4 屏蔽 static_call 头 =="
           # static_call 是 5.10+ 内核设施，5.4 无此头文件；builtin 的
@@ -1812,8 +1867,10 @@ jobs:
           # 注意：不追加 KSU_SUSFS_PRIORITY_UID_FILTER —— builtin Kconfig 默认 y，
           # 但本树内核侧 SUSFS v2.3.0 没有 susfs_parse_priority_app_strings() 等实现，
           # 开启会在 pkg_observer.c 产生未定义符号，必须在下面显式 disable
+          # 【slim15：合并自手机端 v6】KSU_SUSFS_ENABLE_LOG 不追加 —— SUSFS 日志会
+          # 把 "susfs" 字样写进 dmesg，app 有 dmesg 读权时是指纹；下面显式 disable
           for sym in KSU_SUSFS KSU_SUSFS_SUS_PATH KSU_SUSFS_SUS_MOUNT KSU_SUSFS_SUS_KSTAT \
-                     KSU_SUSFS_SPOOF_UNAME KSU_SUSFS_ENABLE_LOG KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+                     KSU_SUSFS_SPOOF_UNAME KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
                      KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG KSU_SUSFS_OPEN_REDIRECT \
                      KSU_SUSFS_SUS_MAP; do
             echo "CONFIG_${sym}=y" >> "$DEFCONFIG_PATH"
@@ -1839,7 +1896,7 @@ jobs:
             --enable  KSU_SUSFS_SUS_MOUNT \
             --enable  KSU_SUSFS_SUS_KSTAT \
             --enable  KSU_SUSFS_SPOOF_UNAME \
-            --enable  KSU_SUSFS_ENABLE_LOG \
+            --disable KSU_SUSFS_ENABLE_LOG \
             --enable  KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
             --enable  KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
             --enable  KSU_SUSFS_OPEN_REDIRECT \
@@ -1865,6 +1922,16 @@ jobs:
             # /proc/version 不受 SUSFS SPOOF_UNAME 伪造，版本串带 susfs 等字样会被
             # 春秋/Momo 类检测直接读出；强制保持空串，内核串回归原厂形态
 
+          # 【slim15 修复】restrict_dmesg 开关此前无实现（只在断言里反向检查，
+          # 开了必失败）——开关开时显式启用 CONFIG_SECURITY_DMESG_RESTRICT：
+          # dmesg_restrict=1 后非特权用户（app/shell）读内核日志得到 EPERM，
+          # slim8 的 reboot probe 留痕与 avc_spoof 日志不再可被探测方读取。
+          # 默认关闭，保持 vendor 原行为（Android sepolicy 本身已禁 app 读 dmesg，
+          # 此开关主要封堵 shell uid 通道，如经 Shizuku 的读取）。
+          if [ "${{ inputs.restrict_dmesg }}" = "true" ]; then
+            scripts/config --file out/.config --enable SECURITY_DMESG_RESTRICT
+          fi
+
           # 【slim12 反检测核心】净化 /proc/config.gz 内容，而非删除文件：
           # 实机取证：/proc/config.gz 非 root 可读（-r--r--r--），内容含
           # CONFIG_KSU=y + 全套 CONFIG_KSU_SUSFS_*——任何 app
@@ -1882,7 +1949,7 @@ jobs:
 
           echo "== 校验 SUSFS 配置生效 =="
           for sym in KSU KSU_SUSFS KSU_SUSFS_SUS_PATH KSU_SUSFS_SUS_MOUNT KSU_SUSFS_SUS_KSTAT \
-                     KSU_SUSFS_SPOOF_UNAME KSU_SUSFS_ENABLE_LOG KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+                     KSU_SUSFS_SPOOF_UNAME KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
                      KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG KSU_SUSFS_OPEN_REDIRECT \
                      KSU_SUSFS_SUS_MAP PSTORE PSTORE_RAM PSTORE_CONSOLE; do
             grep -q "^CONFIG_${sym}=y" out/.config || { echo "::error::CONFIG_${sym} not enabled"; exit 1; }
@@ -1893,8 +1960,9 @@ jobs:
           grep -q '^CONFIG_IKCONFIG_PROC=y' out/.config \
             || { echo "::error::CONFIG_IKCONFIG_PROC must stay on (slim12 keeps config.gz, sanitized)"; exit 1; }
           if [ "${{ inputs.restrict_dmesg }}" = "true" ]; then
-            ! grep -q '^CONFIG_SECURITY_DMESG_RESTRICT=y' out/.config \
-              && { echo "::error::dmesg_restrict default not enabled — ksu logs readable by apps"; exit 1; } || true
+            grep -q '^CONFIG_SECURITY_DMESG_RESTRICT=y' out/.config \
+              || { echo "::error::restrict_dmesg requested but CONFIG_SECURITY_DMESG_RESTRICT not set"; exit 1; }
+            echo "-- dmesg_restrict=1 active: kernel log unreadable to non-root (app/shell)"
           fi
           echo "-- slim12: config.gz kept but will be sanitized; dmesg_restrict=$(if [ "${{ inputs.restrict_dmesg }}" = "true" ]; then echo on; else echo off; fi)"
           grep -q '^CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER=y' out/.config \
@@ -1904,6 +1972,13 @@ jobs:
             || { echo "::error::CONFIG_KPROBES not enabled - avc_spoof would silently fail"; exit 1; }
           grep -q '^CONFIG_KPM=y' out/.config \
             && { echo "::error::CONFIG_KPM should stay off"; exit 1; } || true
+          # 【slim15：合并自手机端 v6】SUSFS 日志必须保持关闭（dmesg 指纹）；
+          # v8 旧版开着 ENABLE_LOG，与手机端实机验证过的配置存在分歧，此处对齐
+          grep -q '^CONFIG_KSU_SUSFS_ENABLE_LOG=y' out/.config \
+            && { echo "::error::SUSFS logging must stay off (dmesg fingerprint)"; exit 1; } || true
+          # LOCALVERSION_AUTO 关闭：开着会让 uname -r 带 -g<sha> 后缀（自编指纹）
+          grep -q '^CONFIG_LOCALVERSION_AUTO=y' out/.config \
+            && { echo "::error::LOCALVERSION_AUTO must stay off (uname -r would gain -g<sha>)"; exit 1; } || true
 
       - name: Sanitize /proc/config.gz embedding (slim12)
         working-directory: kernel
@@ -2551,8 +2626,31 @@ jobs:
           fi
 
           echo "=== Build finished ==="
+          # 【slim15：合并自手机端 v6】KSU_VERSION 由 kernel/Makefile 现算：
+          # 30000 + <main 分支提交数> - 4001，提交数靠构建时 curl api.github.com 取得。
+          # Actions 共享出口 IP 极易被限流，一旦失败会静默回退成 13000 —— 内核能刷入，
+          # 但 Nova 管理器判定 "版本不匹配" / 拒绝授权。这里把算出来的值打出来并显式告警。
+          KV=$(grep -m1 -o 'SukiSU-Nova version: [0-9]*' build.log | grep -o '[0-9]*$' || true)
+          echo "KSU_VERSION=${KV:-unknown}"
+          case "${KV:-}" in
+            3[0-9][0-9][0-9]) echo "-- KSU_VERSION in Nova range (3xxxx), ok" ;;
+            *) echo "::warning::KSU_VERSION=${KV:-unknown} 不在 3xxxx 段 —— 多半是 API 限流导致回退；管理器会报版本不匹配" ;;
+          esac
           ccache -s 2>/dev/null || true
           ls -lh out/arch/arm64/boot/Image
+
+          # 【slim15 新增】镜像字符串指纹自扫（非致命，仅基线留档）：
+          # kallsyms 符号已被混淆（rsx_/rsy_），字符串字面量按设计保留
+          # （pr_info 日志、[ksu_driver] 管理 ABI 等）。此处输出基线清单，
+          # 版本间 diff 可发现意外泄漏的指纹串；若某类命中数突增即查来源。
+          echo "== Image 字符串指纹自扫（基线留档） =="
+          STRINGS_IMG=$(strings out/arch/arm64/boot/Image 2>/dev/null || true)
+          for pat in 'ksu_' 'susfs_' 'sukisu' 'KernelSU' 'rsx_' 'rsy_'; do
+            N=$(printf '%s\n' "$STRINGS_IMG" | grep -ci "$pat" || true)
+            echo "  fingerprint '$pat': $N hits"
+          done
+          echo "-- 字面量样本（前 15 条，均为设计保留项）--"
+          printf '%s\n' "$STRINGS_IMG" | grep -iE 'ksu|susfs' | sort -u | head -15 || true
 
       - name: Verify config.gz sanitization (slim12)
         working-directory: kernel
@@ -2597,7 +2695,7 @@ jobs:
           ### AnyKernel setup
           # global properties
           properties() { '
-          kernel.string=SukiSU Nova slim14 v8 Full SUSFS for Xiaomi 11 Ultra / Pro (star)
+          kernel.string=SukiSU Nova slim15v1 Full SUSFS for Xiaomi 11 Ultra / Pro (star)
           do.devicecheck=0
           do.modules=0
           do.systemless=1
@@ -2634,27 +2732,31 @@ jobs:
           AK3
 
           chmod +x anykernel.sh
-          zip -r9 "../${{ env.DEVICE_CODENAME }}-SukiSU-Nova-slim14v8-${TIME}.zip" ./*
+          zip -r9 "../${{ env.DEVICE_CODENAME }}-SukiSU-Nova-slim15v1-${TIME}.zip" ./*
           cd ..
-          echo "zip_name=${{ env.DEVICE_CODENAME }}-SukiSU-Nova-slim14v8-${TIME}.zip" >> $GITHUB_OUTPUT
+          echo "zip_name=${{ env.DEVICE_CODENAME }}-SukiSU-Nova-slim15v1-${TIME}.zip" >> $GITHUB_OUTPUT
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kernel_sukisu_nova_slim14_v8
-          path: ${{ env.DEVICE_CODENAME }}-SukiSU-Nova-slim14v8-*.zip
+          name: kernel_sukisu_nova_slim15v1
+          path: ${{ env.DEVICE_CODENAME }}-SukiSU-Nova-slim15v1-*.zip
 
       - name: Optional Release (publishes on every manual build)
         if: github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: slim14v8_${{ github.run_number }}
-          name: "SukiSU Nova slim14 v8 Full SUSFS Build"
+          tag_name: slim15v1_${{ github.run_number }}
+          name: "SukiSU Nova slim15v1 Full SUSFS Build"
           body: |
-            ## SukiSU Nova slim14 v8（v7 + 打包修正）
-            - SUSFS 全功能：SUS_PATH / SUS_MOUNT / SUS_KSTAT / SPOOF_UNAME / OPEN_REDIRECT / SUS_MAP / ENABLE_LOG
+            ## SukiSU Nova slim15v1（slim15 + restrict_dmesg 修复 + 指纹基线自扫）
+            - read 路径 stock 级开销：移除 LSM file_permission 全局钩子（ftrace 实证：春秋 4.6.3 对 /proc/thread-self/status 做 55,540 次 open+read 时序探针）
+            - SUSFS 全功能：SUS_PATH / SUS_MOUNT / SUS_KSTAT / SPOOF_UNAME / OPEN_REDIRECT / SUS_MAP（日志关闭，去 dmesg 指纹）
             - 反检测全家桶：kallsyms 混淆 + AVC spoof + reboot gate + status 页 stock 化 + config.gz 净化
-            - 刷机有风险，请备份原内核（解外层 artifact zip 后 TWRP 刷入内层 AK3 包）
-          files: ${{ env.DEVICE_CODENAME }}-SukiSU-Nova-slim14v8-*.zip
+            - 手机端合并：cpufreq 强制排序（不依赖 git 历史）、KSU_VERSION 限流告警、ENABLE_LOG 关闭、blob:none clone、LOCALVERSION_AUTO 断言
+            - slim15v1 新增：restrict_dmesg 开关修复（此前无实现）、构建后镜像字符串指纹基线自扫
+            - uname -r 带 -slim15v1 后缀，刷机后可直接确认版本
+            - 刷机有风险，请备份原内核（Release zip 直接刷入，Artifact zip 需先解外层）
+          files: ${{ env.DEVICE_CODENAME }}-SukiSU-Nova-slim15v1-*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
