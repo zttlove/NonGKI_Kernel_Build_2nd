@@ -1,4 +1,4 @@
-name: "Build Kernel with SukiSU Nova (Slim20 - policy fake page, digits-only uname)"
+name: "Build Kernel with SukiSU Nova (Slim20 - policy fake page, digits-only uname)88"
 
 on:
   workflow_dispatch:
