@@ -260,7 +260,7 @@ jobs:
     timeout-minutes: 120
     steps:
       - name: Checkout Kernel Source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: ${{ env.KERNEL_REPO }}
           ref: ${{ env.KERNEL_BRANCH }}
@@ -317,7 +317,7 @@ jobs:
           sudo ln -sf /usr/lib/x86_64-linux-gnu/libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5 || true
 
       - name: Cache ccache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .ccache
           # 【slim22】按 pin 取 key：原来用 run_id，等于每次 run 都 miss 并上传
@@ -328,7 +328,7 @@ jobs:
             ccache-sukisu-star-
 
       - name: Cache Clang Toolchain
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         id: clang-cache
         with:
           path: ${{ env.CLANG_DIR }}
@@ -2681,7 +2681,7 @@ jobs:
           zip -r9 "../${{ env.DEVICE_CODENAME }}-SukiSU-Nova-slim25-${TIME}.zip" ./*
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: star-SukiSU-Nova-slim25
           path: ${{ env.DEVICE_CODENAME }}-SukiSU-Nova-slim25-*.zip
