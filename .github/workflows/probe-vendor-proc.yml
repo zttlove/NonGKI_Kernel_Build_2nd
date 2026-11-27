@@ -1,0 +1,118 @@
+name: "Probe vendor proc source (no build, ~1 min)"
+
+# 只做一件事：把 vendor 树里 fs/proc/base.c 的 proc_pid_readdir / get_proc_task /
+# proc_pid_lookup / proc_task_readdir 原样打出来，外加 HIDEPID 在整个 fs/ 里的出现位置，
+# 并把这几个源文件本身作为 artifact 上传。slim23/slim24 的进程隐藏两次都因为锚点
+# 不匹配被跳过（"proc hide anchors all missing"），在拿到真实源码形状之前不再盲写补丁。
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout vendor kernel
+        uses: actions/checkout@v4
+        with:
+          repository: zttlove/android_kernel_xiaomi_sm8350-hyperos
+          ref: dynamic
+          path: kernel
+          fetch-depth: 1
+
+      - name: Dump proc structures
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+
+          echo "== kernel: $(git log -1 --format='%h %s') =="
+          echo "== fs/proc/base.c: $(wc -l < fs/proc/base.c) lines, $(wc -c < fs/proc/base.c) bytes =="
+
+          python3 - <<'PYEOF'
+          import re, subprocess
+
+          out = []
+          def p(x=''):
+              out.append(x)
+
+          s = open('fs/proc/base.c', encoding='utf-8', errors='surrogateescape').read()
+          p('file: fs/proc/base.c bytes=%d lines=%d' % (len(s), s.count('\n') + 1))
+          p('')
+
+          kws = ['proc_pid_readdir', 'proc_fill_cache', 'has_pid_permissions',
+                 'HIDEPID_INVISIBLE', 'HIDEPID_NOT_PTRACEABLE', 'hide_pid',
+                 'get_proc_task', 'next_tgid', 'proc_pid_lookup', 'proc_pid_instantiate',
+                 'proc_task_name', 'comm_show', 'proc_pid_cmdline_read', 'proc_task_readdir',
+                 'proc_tgid_base_inode_operations', 'tgid_base_stuff']
+          for kw in kws:
+              p('KW %-32s count=%-4d first=%d' % (kw, s.count(kw), s.find(kw)))
+          p('')
+
+          def dump_fn(name, cap=26000):
+              for m in re.finditer(r'^[A-Za-z_][\w \t\*]*\b' + re.escape(name) + r'\s*\(', s, re.M):
+                  i = s.find('{', m.end())
+                  if i < 0:
+                      continue
+                  if s.find(';', m.end(), i) >= 0:
+                      continue
+                  depth, j = 0, i
+                  while j < len(s):
+                      if s[j] == '{':
+                          depth += 1
+                      elif s[j] == '}':
+                          depth -= 1
+                          if depth == 0:
+                              break
+                      j += 1
+                  p('===== FN %s @%d =====' % (name, m.start()))
+                  p(s[m.start(): min(j + 1, m.start() + cap)])
+                  p('')
+                  return
+              p('===== FN %s NOT FOUND =====' % name)
+              p('')
+
+          for fn in ('proc_pid_readdir', 'get_proc_task', 'proc_pid_lookup',
+                     'proc_task_readdir', 'proc_pid_instantiate', 'comm_show',
+                     'proc_pid_cmdline_read'):
+              dump_fn(fn)
+
+          t = open('fs/statfs.c', encoding='utf-8', errors='surrogateescape').read()
+          i = t.find('int vfs_statfs(')
+          p('===== fs/statfs.c vfs_statfs @%d =====' % i)
+          p(t[i:i + 1800] if i >= 0 else '(vfs_statfs not found)')
+          p('')
+
+          for args, title in (
+              (['grep', '-rn', 'HIDEPID', 'fs/', 'include/'], 'grep -rn HIDEPID fs/ include/'),
+              (['grep', '-rn', 'hide_pid', 'fs/proc/', 'include/linux/'], 'grep -rn hide_pid'),
+              (['grep', '-n', 'get_proc_task', 'fs/proc/base.c'], 'grep -n get_proc_task fs/proc/base.c'),
+          ):
+              try:
+                  r = subprocess.run(args, capture_output=True, text=True)
+                  rc, text = r.returncode, (r.stdout or '(no match)')[:8000]
+              except Exception as e:
+                  rc, text = -1, '(grep failed: %r)' % (e,)
+              p('===== %s (rc=%d) =====' % (title, rc))
+              p(text)
+              p('')
+
+          open('../probe-report.txt', 'w').write('\n'.join(out))
+          print('\n'.join(out)[:24000])
+          PYEOF
+
+          ls -l ../probe-report.txt
+
+      - name: Report tail in log
+        run: tail -n 260 probe-report.txt || true
+
+      - name: Upload probe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vendor-probe
+          path: |
+            probe-report.txt
+            kernel/fs/proc/base.c
+            kernel/fs/proc/array.c
+            kernel/fs/statfs.c
+          if-no-files-found: error
