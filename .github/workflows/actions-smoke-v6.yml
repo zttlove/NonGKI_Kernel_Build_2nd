@@ -1,0 +1,23 @@
+name: "Actions runtime smoke test (upload-artifact v6)"
+
+# 上一轮结论：checkout@v5、cache@v5 已是 Node 24（无警告），但
+# actions/upload-artifact@v5 仍指向 Node 20 —— 剩下的唯一警告来自它。
+# 这个 30 秒的测试只看一件事：upload-artifact@v6 是否存在、是否不再告警。
+
+on:
+  workflow_dispatch:
+
+jobs:
+  upload-v6:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: write file
+        run: |
+          echo hello > smoke.txt
+          ls -l smoke.txt
+      - name: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6
+        with:
+          name: smoke-v6
+          path: smoke.txt
