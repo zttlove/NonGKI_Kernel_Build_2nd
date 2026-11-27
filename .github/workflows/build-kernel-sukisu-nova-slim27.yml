@@ -1,0 +1,2917 @@
+name: "Build Kernel with SukiSU Nova (Slim27 - kill/ptrace probe view camouflage)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      reboot_gate:
+        description: "启用 sys_reboot supercall fd 自举门控（反探测加固；出现开机循环请关掉）"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      obfuscate_symbols:
+        description: "kallsyms 符号混淆（反探测；preinit runner 编译报错时可临时关掉恢复构建）"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      restrict_dmesg:
+        description: "slim11：dmesg_restrict=1 限制 app 读内核日志（反探测；卡第二屏嫌疑项，默认关闭，可实测开启）"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      probe_log:
+        description: "slim22：重建 reboot 探测留痕日志（诊断用；默认关——该日志会记录探测者 uid，本身就是特征）"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      fake_fs_magic:
+        description: "slim23：overlayfs 伪装成哪种文件系统（默认 0xEF53=ext4；star 的 /system 若是 erofs 改 0xE0F5E1E2）"
+        required: false
+        default: "0xEF53"
+        type: string
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# slim27 (2026-11-27)：kill/ptrace 存在性探测视图伪装——Futile hide 2 的实锤对策。
+#   实证链（2026-11-27 晚，slim26 构建刷入 + root strace 全程 trace 春秋主进程）：
+#   1) 春秋主进程 com.chunqiunativecheck 检测期间对全 pid 空间做 kill(pid, SIG_0)
+#      顺序扫描（trace 实录 34521 次 kill + 28866 次 tgkill，errno 分布：
+#      EPERM=779 / ESRCH=24505）——用 EPERM(存在但无权)/ESRCH(不存在) 探测进程存在性。
+#   2) 同时 ptrace(SEIZE/INTERRUPT/DETACH) 123 次探测附近进程可附着性。
+#   3) slim25 的进程隐藏只覆盖 /proc readdir+lookup（app 视角 ENOENT），但
+#      kill 探测走 signal 权限路径：ksud 等对 app 返回 EPERM（存在）——
+#      「kill 说存在 / /proc 说不存在」的不一致正是 Futile hide 2 的直接证据，
+#      detected 大概率同源（EPERM-but-invisible 集合非空 = 有被藏的 root 守护）。
+#   4) trace 另证：NETLINK_SOCK_DIAG socket 已使用（netlink_sock_diag_policy
+#      探针，对应解密字符串）；/proc/net/unix 读 400 次；TracerPid 705601 次读取
+#      全部为 0（slim21 盾零泄露）；APatch 鉴权密钥项为 trace 环境诱发待复测。
+#   对策：kernel/signal.c check_kill_permission 与 kernel/ptrace.c ptrace_attach
+#   分别插入与 slim25 (ksu_hide_proc_from) 完全同名的 comm 名单（strcmp 精确匹配：
+#   ksud/ksu/susfsd/kernelsu/su/magiskd/apd）与相同的读者门控（uid>=10000 或 shell）：
+#   命中即返回 -ESRCH，使 kill()/ptrace() 视图与 /proc 视图一致——探测面三处
+#   （/proc readdir+lookup、kill、ptrace）闭合。uid 0/system(1000) 语义不变。
+#   锚点已在 v5.4 vanilla signal.c/ptrace.c 上实测唯一命中；fail-fast。
+#   注：本步骤与 slim25 是同一伪装语义在三张面的铺开，不改变任何 root 工作流。
+# ─────────────────────────────────────────────────────────────────────────────
+# slim26 (2026-11-27)：uid-0 tracer 放行（kernel/ptrace.c）——诊断工具型步骤。
+#   实证链（2026-11-27 实机）：
+#   1) MT 终端 su shell CapEff=0000000000000000（grep Cap /proc/self/status
+#      实抓）——root uid 但没有任何 capability，连带 dmesg klogctl 拒读。
+#   2) 春秋 app 进程 prctl(PR_SET_DUMPABLE,0) 自封：/proc/<pid> 下 environ/
+#      auxv/mem/fd/clear_refs 属主全部变 0:0（正常应为 app uid），cwd/exe
+#      symlink 不可读，dumpable=0 标准指纹。
+#   3) 两者叠加：__ptrace_may_access 对春秋 PTRACE_SEIZE 报 Operation not
+#      permitted——cred 不匹配（0 != 10331）→ ptrace_has_cap() 需
+#      CAP_SYS_PTRACE 而 CapEff=0 失败；dumpable!=SUID_DUMP_USER 的第二道
+#      cap 检查同样失败。root 调试能力完全不可用，无法 trace 检测过程。
+#   对策：kernel/ptrace.c __ptrace_may_access 两处放行 uid==0 tracer：
+#   - cred 比较前直接 goto ok（绕过 cap 路线）；
+#   - dumpable 检查对 uid0 tracer 不返回 -EPERM。
+#   自洽性：仅与 slim21 TracerPid 盾配套成立——uid0 tracer 对 app 的
+#   status/stat 汇报恒为 0，被 trace 的 app 无感知；同 uid ptrace（fork+
+#   parent、crash_dump）不走 uid0 路线，行为不变。SELinux
+#   security_ptrace_access_check 仍执行：实机曾在旧内核上成功 attach 春秋
+#   （su 域 ptrace 已被策略允许）；若个别 ROM 拒绝，运行期补
+#   ksud sepolicy patch "allow su appdomain process ptrace" 即可。
+#   锚点已在 v5.4 vanilla ptrace.c 上实测：两处各唯一命中、替换后括号/
+#   语义平衡；步骤 fail-fast，vendor 树漂移时直接报错不静默。
+#   注意：本步骤目的是拿到春秋检测全程的 syscall 记录以定位 kernelsu
+#   detected 的真实探针，属于测量仪器而非伪装面——探测侧唯一新增可见点
+#   是 ptrace 行为本身，已被 TracerPid 盾遮蔽。
+# slim25 (2026-11-27)：进程隐藏改用 vendor 真实源码的锚点（probe 实证）
+#   slim23/slim24 两次都跳过，根因已由 vendor-probe 产物确认，不是猜测：
+#   1) fs/proc/base.c 里 proc_pid_lookup 是非 static 的：
+#        struct dentry *proc_pid_lookup(struct dentry *dentry, unsigned int flags)
+#      slim23 的 "^static struct dentry *proc_pid_lookup(" 必然不命中；
+#   2) get_proc_task 在 base.c 里只有调用没有定义（定义在别的翻译单元），
+#      slim24 的第二个锚点也不命中；
+#   3) slim24 用裸 "HIDEPID_INVISIBLE" 找 readdir，但它第一次出现在
+#      proc_pid_permission()，后面 300 字符内没有 continue;，于是 readdir 也被跳过。
+#   slim25 的三处锚点全部取自 vendor 真实文件、各命中 1 次（已在本机对
+#   真实 base.c 跑过：3 处 helper 引用、括号平衡、插入位置正确）：
+#     - "struct dentry *proc_pid_lookup(struct dentry *dentry, unsigned int flags)"
+#     - lookup 体内 "if (!task)\n\t\tgoto out;\n\n\tresult = proc_pid_instantiate(...)"
+#     - readdir 体内 "if (!has_pid_permissions(ns, iter.task, HIDEPID_INVISIBLE))"
+#   语义：uid>=10000 或 shell(2000) 的读者，枚举 /proc 看不到这些 pid，直接
+#   打开 /proc/<pid> 也得到 ENOENT（与"进程不存在"一致）；root/system 不受影响。
+#   锚点已实证，步骤改为 fail-fast（去掉 continue-on-error）。
+#   另：probe 还显示 vendor 的 vfs_statfs 已被 SUSFS 的 SUS_MOUNT 改写
+#   （susfs_is_current_proc_umounted() 时直接用 non-sus mount 的 statfs），
+#   所以 statfs 很可能本来就不是泄漏点，slim23 起的 statfs 伪装多半是 no-op（无害）。
+# ─────────────────────────────────────────────────────────────────────────────
+# slim24 (2026-11-27)：修 slim23 的进程隐藏（slim23 那次构建里它整段被跳过）
+#   slim23 的 note 用的是 "static struct dentry *proc_pid_lookup(" 行首锚点，
+#   真实 vendor 树里这个定义不是这个形状（annotation: proc_pid_lookup definition
+#   not found），于是隐藏整段没落地 —— 那次产物只带 statfs 伪装，正好可以当
+#   "只有 statfs 一条变量" 的干净实验。
+#   slim24 换成两个更稳的锚点，且缩进从源码行推导、不写死 tab：
+#     1) proc_pid_readdir 的 HIDEPID_INVISIBLE / continue —— 枚举隐藏（主路径）；
+#     2) get_proc_task() —— /proc/<pid>/comm、cmdline、stat 的内容读取；
+#        这个函数是 5.4 base.c 里固定的单行实现，形状漂移的余地小。
+#   两者都只对 uid>=10000 或 shell(2000) 生效；root/system 不受影响。
+#   若两个锚点仍失配：该步骤 continue-on-error 照常出包，但会把
+#   proc_pid_lookup / get_proc_task / HIDEPID_INVISIBLE 附近的源码上下文以
+#   "DIAG" 前缀打进日志——下一次据此写精确补丁，不再猜。
+# ─────────────────────────────────────────────────────────────────────────────
+# slim23 (2026-11-27)：两条此前 22 版从未碰过的"无权限可见面"（都不是猜出来的通道，
+#   而是任何 app 都能直接读到的内核状态，且与 KSU 的 systemless 实现强绑定）：
+#   A) statfs 反 overlay：KSU/Magisk 这类 systemless root 必然把 /system、/vendor、
+#      /product 以 overlayfs 挂上。SUSFS 的 SUS_MOUNT 只处理 /proc/*/mountinfo 的
+#      条目，不处理 statfs —— app 一次 statfs("/system") 就能拿到
+#      f_type=0x794c7630(overlayfs)，stock 机这里是 ext4/erofs。vfs_statfs 里对
+#      uid>=10000 或 shell(2000) 的读者把 f_type 换回底层类型（输入 fake_fs_magic，
+#      默认 0xEF53=ext4），f_namelen 归一到 255；enforcement 与 su 视角不变。
+#   B) 进程表：无权限 app 可以 getdents /proc 再读 /proc/<pid>/comm、cmdline。
+#      ksud（以及 susfsd/magiskd/apd）是 root 实现的"运行时进程级"特征，之前 22 版
+#      一条都没覆盖。proc_pid_readdir 与 proc_pid_lookup 两处过滤：uid>=10000 或
+#      shell(2000) 既看不到这些 pid 的目录项，也打不开 /proc/<pid>/...；root 与
+#      system(1000) 完全不受影响。
+#   风险与判读：A 依赖假想的底层类型（star 大概率 ext4；若是 erofs 用输入改成
+#   0xE0F5E1E2 重编即可），且只在读到 overlayfs 时生效，非 overlay 路径不动。
+#   B 的锚点是 5.4 fs/proc/base.c 的 proc_pid_lookup/proc_pid_readdir；该步骤
+#   continue-on-error，锚点不匹配时会在 annotation 里明确写 "NOT applied"，
+#   构建照常出包，但那个包不带进程隐藏——看 annotation 再决定要不要重跑。
+# ─────────────────────────────────────────────────────────────────────────────
+# slim22 (2026-11-27)：日志通道与 dmesg 开关收口（slim21 功能集合不变，只堵泄漏面）
+#   1) 注入代码里的 pr_info/pr_warn 全部降为 pr_debug，并把消息前缀
+#      "ksu:"/"susfs:"/"bakasu_" 换成语义中性文本。这些字符串是内核自己写死的
+#      指纹：只要 dmesg 对检测所用的 uid（app，或 Shizuku 的 shell 2000）可读，
+#      一次 grep 就 100% 命中，比 config.gz / kallsyms 都难封。未定义 DEBUG 的
+#      翻译单元里 pr_debug 是不产生任何输出的空操作。
+#   2) slim8 的 reboot 探测留痕改成输入开关 probe_log（默认 false），文本去掉
+#      ksu 字样。原实现插在 uid 门控之前：任何 app 打一次 magic1，内核就替它把
+#      "uid=<检测器 uid>" 写进 dmesg，等于替检测器留痕。
+#   3) restrict_dmesg 输入终于落地：slim11-slim21 只有校验没有 scripts/config，
+#      打开必然在 olddefconfig 之后失败；现在 true 时真正启用
+#      CONFIG_SECURITY_DMESG_RESTRICT。
+#   4) CONFIG_KSU_SUSFS_ENABLE_LOG 关闭：打开时 SUSFS 自己会往 dmesg 打
+#      "susfs: ..." 行（sus_path / umount / avd 等），属同一类指纹。
+#   5) kallsyms 残留：KALLSYMS_ALL=y 连 static 符号都出现在 /proc/kallsyms，而
+#      之前只改 ksu_/susfs_，于是 initialize_fake_status / fake_status /
+#      bakasu_fake_status_init / bakasu_fake_policy 这些"自解释"名字原样留在表里。
+#      混淆步骤新增 bakasu_ -> rsz_、fake_status -> rsv_status 两条替换。
+#   TracerPid 盾语义不变（全局归零，不做 reader-uid 门控——app 无法制造 root
+#   tracer，这个分歧对 app 不可观测），只补幂等守卫、断言与干净的报错。
+#   下一刀（slim23 已落地前两条）：statfs("/system") 的 overlayfs 魔数、
+#   /proc/*/cmdline 里的 ksud 常驻进程；/data/adb 存在性仍未处理。
+# ─────────────────────────────────────────────────────────────────────────────
+# slim21 (2026-11-27)：在 slim20 基础上唯一新增 TracerPid 盾。
+#   实证链：strace -f 附着 com.chunqiunativecheck 后，其 mount-view-rpc 线程
+#   读 /proc/self/status + 全部 61 线程 status，解析 TracerPid(strace pid)
+#   → 主进程 tgkill(SIGABRT) 自杀（trace 1083 行实录 + crash_dump tombstone）。
+#   对策：fs/proc/array.c task_state() 报告 TracerPid 时，若 tracer uid==0
+#   （root 调试器，如 su 下的 strace）则报 0。同 uid ptrace（fork+parent、
+#   crash_dump 转储）不受影响，无自洽性分叉。
+# ─────────────────────────────────────────────────────────────────────────────
+# slim18 判读（2026-11-26 晚，slim17 实机结果：异常 3 项）：
+#   slim17 唯二变量中：
+#   ✅ uname .scmversion 修复实锤生效——Tampered kernel / 第三方rom/自编译内核 /
+#      Suspicious Surroundings(b) 三项全部消失（6→3），pin 前移的 uname 漂移混淆清零。
+#   ❌ status 假页移除为倒退——春秋新增"检测 SELinux Policy 时发现可疑问题：
+#      status.sequence/policyload"。而 v7/slim5 时代同一检测项（假页在场 + 真实页
+#      seqno==0 早退）是消失的（历史实测：slim5 刷入后春秋 6→3，od=[1,0,1,0]）。
+#      结论：解密清单"点名假页"只是春秋的检测设计目标，实际抓不到 slim5 假页；
+#      slim17 全 uid 服务真实页后，KSU 运行期事件（setenforce/avc reset）推进真实
+#      页，与冻结 {0,0} 断言冲突，反而暴露。slim18 回滚 status 至 slim5/6 方案。
+#   保留：uname 修复与校验、AVC spoof 维持移除、sus_type/sus_avd backport、
+#     slim13 uid 门控、slim12 config 净化、slim9 符号混淆、reboot 门控。
+#   kernelsu detected 仍在（v7 时代即存在）——下一刀候选：sus_avd"还原授权位"
+#     调用移除（对应解密 oracle 族 libselinux/raw disagree，让 raw access 决策自洽）。
+# ─────────────────────────────────────────────────────────────────────────────
+# slim19/20 判读（2026-11-26 晚，slim18 实机多轮）：
+#   ✅ status 假页 + uname 修复生效：BRENE 伪装串在场时 2 项历史最优基线。
+#   ✅ 内核串纯数字实锤：g 段含字母的 f4c3fdd4 被拒（Tampered kernel 回归），
+#      四个纯数字值全过——春秋核对是 g[0-9]{8} 类正则，slim20 注入纯数字串。
+#   ✅ BRENE(SUSFS SPOOF_UNAME) 对全 uid 生效且只覆盖 uname 系统调用，
+#      /proc/version 不在覆盖面——BRENE 伪装关闭后由内核原生串接管。
+#   ❗ 新实锤（22:31 轮）："Direct exact rule: system_server execmem"——
+#      春秋读 /sys/fs/selinux/policy（读不受限）解析活 policydb 扫描特征
+#      allow 规则。注入源：/data/adb/ksu/zygisk/libzygisk.so（SukiSU 内置
+#      Zygisk 给 system_server 开 execmem，HMA 依赖，不可移除）。
+#   slim20 对策 = policy 假页：app/shell 打开 policy 节点时在 sel_open_policy
+#      的 security_read_policy 之后把 plm->data 换成 vendor stock 预编译策略
+#      的逐字节拷贝（/vendor/etc/selinux/precompiled_sepolicy），read/mmap 全部
+#      视角=stock，注入规则不可见，enforcement 无损（Zygisk/HMA 功能保留）。
+#   sus_avd spoof 维持不摘：oracle 自洽性——raw access 查询（spoof 还原为
+#      注入前授权位）↔ policy 假页（stock，无注入规则）两侧一致，
+#      解密项 "oracle mismatch: libselinux/raw access disagree" 无法成立；
+#      若摘 spoof 则 raw=注入后 ≠ stock policy，oracle 反而成立。
+
+# nova-slim9：kallsyms 符号混淆——针对 "kernelsu detected" 的实锤对策。
+#   slim8 实机结果（2026-11-22 13:00）：reboot probe 留痕日志抓到春秋探测现场
+#     ——检测期间出现 8 条 "reboot probe magic1=0xdeadbeef magic2=0xcafebabe
+#     cmd=0"（uid=10303 为春秋 App、uid=0 为 ksud/管理器自举）。但核对
+#     vendor kernel/reboot.c（332-342 行）与 hook wrapper（323-330 行）后
+#     确认：hook 返回 -EINVAL 会经 "if (ret) goto orig_flow" 落入 stock 逻辑，
+#     非特权 App 最终拿到的仍是 stock 的 -EPERM，错误码与 stock 一致；
+#     ksu_manager_uid_authorized 仅是 appid 简单比较，开销纳秒级。
+#     ⇒ reboot 返回值/时序均非泄漏点，探测点另有其处。
+#   真凶（高置信推断，源自春秋类检测器的公开逆向分析 DeepWiki/KernelSU
+#     Detection）：/proc/kallsyms 符号扫描。非 root 也能读 kallsyms
+#     （kptr_restrict 只隐藏地址，符号名仍可见）；KSU builtin 编译的 150+
+#     个 ksu_* 全局符号与 susfs_* 符号全部在表中，检测器用裸 syscall 打开
+#     kallsyms 逐行 grep 'ksu' 即 100% 确定性命中，无需任何权限。KSU 的
+#     Kconfig 还强制 select KALLSYMS/KALLSYMS_ALL，源码无任何符号隐藏机制。
+#     这与春秋说明"根据运行时行为识别 KSU 特征、无需 Root 权限"完全吻合，
+#     也解释了为何 slim6（摘 stat hook）/slim7/8（reboot gate）都无效。
+#   slim9 对策：编译前对整棵内核源码树 .c/.h 做纯标识符改名
+#     ksu_ -> rsx_、susfs_ -> rsy_（驱动与 vendor 调用点同步改名，链接
+#     一致；已在本地驱动树上全量仿真：88 文件 1846 处、零残留、括号平衡
+#     一致、用户态路径字符串与 KSU_INSTALL_MAGIC* 宏完好）。编译后
+#     /proc/kallsyms 中不再出现任何 ksu_*/susfs_* 符号。
+# slim7 说明（对照实验设计，均保留）：
+#   slim6 实机结果（2026-11-22 上午）：
+#     - reboot_gate=true + 摘除 stat/faccessat hook 后，kernelsu detected 仍报；
+#     - **副作用：su 命令断裂**——终端 "su: command not found"，root 提权链
+#       不可用。根因：KSU 是 systemless，设备上没有真实的 /system/bin/su 文件；
+#       shell 敲 su 时沿 PATH 做 stat/faccessat 搜索，全靠这对 hook 把 su 路径
+#       伪装成"存在"（memcmp 命中→memcpy 换成 /system/bin/sh 的结果），shell
+#       才会发起 execve(su)，再由 execve hook 重定向 ksud 提权。摘掉
+#       stat/faccessat hook = su 永远不可见 = root 工作流断裂。此前判断
+#       "仅伪装用途、SUSFS 可替代"是错的——SUSFS sus_path 隐藏路径做不到
+#       "让不存在的文件出现在 PATH 搜索里"。
+#   slim7 修正（对照实验设计，一次只留一个变量）：
+#     A) 恢复 vendor 原始的 stat/faccessat hook 调用块（su 恢复可用）；
+#     B) 保留 reboot_gate=true（默认已开）——reboot(0xDEADBEEF,0xCAFEBABE)
+#        fd 自举是确定性探测（非特权调用方观察 stock 逐字节一致的 -EPERM），
+#        这是对 "kernelsu detected" 最对症的加固；
+#     C) 保留 slim5 的 status 页 stock 化 {sequence=0, policyload=0}。
+#   时序风险重评估：stat/faccessat hook 对未授权 App 的开销为 uid 比较链 +
+#   一次 RCU 哈希查找（allow_list 8 项），估算比值 ~1.05，远低于文档阈值
+#   1.2；且 slim5 时代该 hook 一直在场、detected 也一直在报，slim6 摘除后
+#   仍报——证明探测点大概率不是这对 hook 的时序，而是已被 gate 封死的
+#   reboot 自举之外的某个确定性向量（prctl 已无此接口；sys_read 正常时
+#   static key disabled）。若 slim7 复测仍报 detected，下一步用 dmesg 抓
+#   探测现场（检测前 dmesg -c 清空，检测后 grep ksu/magic）。
+# slim6 说明（摘除实验，已回退）：见 git 历史。
+# slim5 说明：
+#   status 页统一定格 stock 5.4 形态 {sequence=0, policyload=0}：
+#   A) status.c：update_policyload 对 seqno==0 直接 early-return；
+#   B) status.c：惰性分配保持原版赋值（sequence=0/policyload=0），
+#      删除 slim2-slim4 的 selinux_last_policyload 回填机制；
+#   C) services.c：initialize_fake_status（假页）与 ksu_real_status_normalize
+#      （真实页）统一定格 {sequence=0, policyload=0}。
+# 依据（已 git 全量验证）：两棵驱动树 kernel/ 全部 C 代码字节一致，
+# 仅 Makefile/setup.sh 品牌差异（com.sukisu.nova / VERSION_BASE 30000）。
+# 因此本文件与"实证可开机"的 Ultra 构建在内核内容上等价，只是品牌换成 Nova。
+# ─────────────────────────────────────────────────────────────────────────────
+
+env:
+  KERNEL_REPO: zttlove/android_kernel_xiaomi_sm8350-hyperos
+  KERNEL_BRANCH: dynamic
+  # Pinned vendor source (8-char SHA).
+  # 2026-11-14: 旧 pin 36982074 被上游抹除（历史重写，仓库仅剩 dynamic 单分支），
+  # 被迫前移到 f4c3fdd4f —— 它是 "Merge branch 'Leecaarmy:dynamic' into dynamic"
+  # 的合并提交，**尚未经开机验证**；首个构建即为开机测试，若出现循环重启，
+  # 排查方向是 Leecaarmy 侧带入的改动（其 fork 的 dynamic 分支）。
+  # Build FAILS if the dynamic branch tip differs -- update ONLY after verifying a new-tip build boots.
+  KERNEL_COMMIT_PIN: "f4c3fdd4"
+  DEFCONFIG_NAME: vendor/star_defconfig
+  DEVICE_CODENAME: star
+  OUTPUT_DIR: out
+  CLANG_DIR: ${{ github.workspace }}/toolchains/clang
+  KERNEL_DIR: ${{ github.workspace }}/kernel
+  # SukiSU-Ultra 内核驱动（builtin 分支）。
+  # 分支选型依据（源码验证，2026-11）：
+  #   - main / v4.3.0-r2 是 kprobes 运行时 hook 线，不带 CONFIG_KSU_SUSFS*
+  #     Kconfig、不带 susfs_is_current_ksu_domain()，其 ksu_handle_*_sucompat
+  #     是 pt_regs 签名（供运行时 hook 用）；而本内核树在
+  #     #ifdef CONFIG_KSU_SUSFS 内直接调用 filename 指针签名的
+  #     ksu_handle_execveat/_sucompat/post_execveat_sucompat/faccessat/
+  #     vfs_fstat/stat，启用 KSU_SUSFS 即链接失败。
+  #   - builtin 分支正是为手工钩子内核设计：Kconfig 自带完整 KSU_SUSFS 菜单，
+  #     CONFIG_KSU_SUSFS=y 时按树期望的签名导出上述全部 ksu_handle_*，
+  #     提供 susfs_is_current_ksu_domain()，并在 ksu_main.c 里调用内核侧
+  #     fs/susfs.c 的 susfs_init()。
+  #   - builtin 无 tag；GitHub 不支持按裸 SHA fetch，故 clone builtin 后强校验
+  #     HEAD 是否为验证过的 commit（f9aa2fec，2026-11-13 复验），分支前移即失败，
+  #     避免上游漂移破坏下面对 sucompat.c 的行锚定胶水补丁。
+  SUKISU_REPO: https://github.com/SukiSU-Nova/SukiSU-Nova.git
+  SUKISU_BRANCH: builtin
+  # Nova 线（与 Ultra f9aa2fec23 代码等价，仅品牌不同；2026-11-21 git 全量 diff 验证）
+  SUKISU_PIN: 4bec532dd447e2852aa8932afa768255350c103a
+
+jobs:
+  build-kernel:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ env.KERNEL_REPO }}
+          ref: ${{ env.KERNEL_BRANCH }}
+          path: kernel
+          # depth=2：合并 tip 时需要 HEAD^1 做对照 diff（cpufreq 回退步骤依赖）
+          fetch-depth: 2
+
+      - name: Verify Kernel Commit & Clean Workspace
+        working-directory: kernel
+        run: |
+          git reset --hard HEAD
+          git clean -fdx
+          SHORT_SHA=$(git rev-parse --short=8 HEAD)
+          echo "Kernel: $(git log -1 --format='%h %s')"
+          if [ "$SHORT_SHA" != "$KERNEL_COMMIT_PIN" ]; then
+            echo "::error::vendor kernel source drifted: branch tip ${SHORT_SHA} != pinned ${KERNEL_COMMIT_PIN}"
+            echo "The 'dynamic' branch was moved/rewritten. Update KERNEL_COMMIT_PIN in workflow env ONLY after a build from the new tip is verified to boot."
+            exit 1
+          fi
+
+      - name: Revert merge-brought cpufreq init-order change (bootloop fix)
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+
+          echo "== 回退合并带入的 qcom-cpufreq-hw.c 初始化时序改动 =="
+          # f4c3fdd4f 合并（Leecaarmy:dynamic → dynamic）相对 zttlove 侧基线的
+          # 全部差异只有这一个文件：把 cpufreq_register_driver() 挪到
+          # register_cpu_cycle_counter_cb()（WALT 周期计数回调）之后。这是
+          # boot 关键路径时序改动，实机构建后无限重启——与上一个能开机的
+          # 基线相比唯一的内核内容差异。回退它再做开机验证。
+          PC=drivers/cpufreq/qcom-cpufreq-hw.c
+          test -f "$PC" || { echo "::error::$PC not found"; exit 1; }
+          if [ "$(git log -1 --format=%P HEAD | wc -w)" -eq 2 ]; then
+            git diff HEAD^1 HEAD -- "$PC" | git apply -R --whitespace=nowarn
+            R=$(grep -n 'cpufreq_register_driver(&cpufreq_qcom_hw_driver)' "$PC" | head -1 | cut -d: -f1)
+            C=$(grep -n 'register_cpu_cycle_counter_cb(&cycle_counter_cb)' "$PC" | head -1 | cut -d: -f1)
+            if [ -n "$R" ] && [ -n "$C" ] && [ "$R" -lt "$C" ]; then
+              echo "-- reverted: cpufreq_register_driver (L$R) now precedes register_cpu_cycle_counter_cb (L$C)"
+            else
+              echo "::error::cpufreq revert verification failed (R=$R C=$C)"; exit 1
+            fi
+          else
+            echo "-- HEAD is not a merge commit, nothing to revert"
+          fi
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bc bison flex libssl-dev libelf-dev \
+            zip unzip python3 perl git curl ccache xxd cpio kmod \
+            libtinfo5
+          sudo ln -sf /usr/lib/x86_64-linux-gnu/libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5 || true
+
+      - name: Cache ccache
+        uses: actions/cache@v5
+        with:
+          path: .ccache
+          # 【slim22】按 pin 取 key：原来用 run_id，等于每次 run 都 miss 并上传
+          # 一份新的 8G 缓存（仓库配额 10G，几次就把别的缓存挤掉，还白烧上传时间）。
+          key: ccache-sukisu-star-${{ env.KERNEL_COMMIT_PIN }}-v2
+          restore-keys: |
+            ccache-sukisu-star-${{ env.KERNEL_COMMIT_PIN }}-
+            ccache-sukisu-star-
+
+      - name: Cache Clang Toolchain
+        uses: actions/cache@v5
+        id: clang-cache
+        with:
+          path: ${{ env.CLANG_DIR }}
+          key: clang-17.0.6-x86_64-ubuntu22.04
+
+      - name: Download Clang 17.0.6
+        if: steps.clang-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "${{ env.CLANG_DIR }}"
+          curl -fL --retry 3 -o /tmp/clang.tar.xz \
+            https://github.com/llvm/llvm-project/releases/download/llvmorg-17.0.6/clang+llvm-17.0.6-x86_64-linux-gnu-ubuntu-22.04.tar.xz
+          tar -xf /tmp/clang.tar.xz -C "${{ env.CLANG_DIR }}" --strip-components=1
+
+      - name: Verify Clang
+        run: ${{ env.CLANG_DIR }}/bin/clang --version
+
+      - name: Integrate SukiSU-Ultra (full SUSFS)
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          export ARCH=arm64
+          export PATH="${{ env.CLANG_DIR }}/bin:$PATH"
+          export LLVM=1 LLVM_IAS=1 \
+                 CLANG_TRIPLE=aarch64-linux-gnu- \
+                 CROSS_COMPILE=aarch64-linux-gnu- \
+                 CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+
+          echo "== 清理内核树 =="
+          make mrproper >/dev/null 2>&1 || true
+
+          echo "== 拉取 SukiSU-Ultra (builtin) 并接管 drivers/kernelsu =="
+          rm -rf SukiSU_src KernelSU drivers/kernelsu drivers/KernelSU
+          git clone --no-checkout -b "${{ env.SUKISU_BRANCH }}" "${{ env.SUKISU_REPO }}" SukiSU_src
+          git -C SukiSU_src fetch --depth=1 origin "${{ env.SUKISU_PIN }}" \
+            || git -C SukiSU_src fetch origin "${{ env.SUKISU_PIN }}" \
+            || { echo "::error::cannot fetch driver pin ${{ env.SUKISU_PIN }}"; exit 1; }
+          git -C SukiSU_src checkout --detach "${{ env.SUKISU_PIN }}"
+          ACTUAL_SHA="$(git -C SukiSU_src rev-parse HEAD)"
+          PIN_SHA="${{ env.SUKISU_PIN }}"
+          if [ "$ACTUAL_SHA" != "$PIN_SHA" ]; then
+            echo "::error::SukiSU checkout ${ACTUAL_SHA:0:12} != pinned ${PIN_SHA:0:12}"
+            exit 1
+          fi
+          echo "SukiSU Nova: $(git -C SukiSU_src log -1 --format='%h %s')"
+          grep -Eq '^KSU_PACKAGE_NAME[[:space:]]*\?=[[:space:]]*com\.sukisu\.nova$' SukiSU_src/kernel/Makefile \
+            || { echo "::error::pinned SukiSU is not the Nova line"; exit 1; }
+          echo "-- Nova line verified (com.sukisu.nova / VERSION_BASE 30000)"
+          ln -sfn ../SukiSU_src/kernel drivers/kernelsu
+
+          grep -q 'kernelsu' drivers/Makefile || \
+            printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> drivers/Makefile
+          grep -q 'drivers/kernelsu/Kconfig' drivers/Kconfig || \
+            sed -i '/^endmenu/i\source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+
+          echo "== 确认内核侧 SUSFS 完整性 =="
+          test -f fs/susfs.c || { echo "::error::fs/susfs.c missing - kernel branch lacks SUSFS"; exit 1; }
+          test -f include/linux/susfs_def.h || { echo "::error::include/linux/susfs_def.h missing"; exit 1; }
+          grep -q 'CONFIG_KSU_SUSFS' fs/exec.c || { echo "::error::fs/exec.c lacks KSU_SUSFS hooks"; exit 1; }
+          grep -q 'CONFIG_KSU_SUSFS' fs/open.c || { echo "::error::fs/open.c lacks KSU_SUSFS hooks"; exit 1; }
+          grep -q 'CONFIG_KSU_SUSFS' fs/stat.c || { echo "::error::fs/stat.c lacks KSU_SUSFS hooks"; exit 1; }
+          echo "-- kernel-side SUSFS hooks verified (no kernel patching needed)"
+
+          echo "== SukiSU builtin 适配：为 5.4 屏蔽 static_call 头 =="
+          # static_call 是 5.10+ 内核设施，5.4 无此头文件；builtin 的
+          # kernel_includes.h 无条件 include 它而全树无实际调用，5.4 下
+          # 直接 fatal error。加版本保护（>=5.10 才 include）
+          KIH="SukiSU_src/kernel/kernel_includes.h"
+          test -f "$KIH" || { echo "::error::kernel_includes.h not found"; exit 1; }
+          if ! grep -B1 '^#include <linux/static_call.h>' "$KIH" | grep -q 'KERNEL_VERSION(5, 10, 0)'; then
+            sed -i 's|^#include <linux/static_call.h>$|#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)\n#include <linux/static_call.h>\n#endif|' "$KIH"
+          fi
+          grep -B1 '^#include <linux/static_call.h>' "$KIH" | grep -q 'KERNEL_VERSION(5, 10, 0)' \
+            || { echo "::error::static_call.h version guard patch failed"; exit 1; }
+          echo "-- static_call.h guarded for pre-5.10 kernels"
+
+          echo "== SukiSU builtin 适配：ksu_su_compat_enabled 由 bool 改为静态键 =="
+          # 树侧 fs/exec.c|open.c|stat.c 以 static_branch_likely/unlikely 消费该开关
+          # （extern struct static_key_true），builtin 驱动却定义成 bool；保持同名
+          # bool 会被 jump_label 当静态键内存解释，语义错误。改为真正的静态键，
+          # 并同步 feature get/set 的读写方式（jump_label 经驱动 Kbuild 的
+          # kernel_includes.h 强制包含对全部 TU 可见，ksud.c 同款用法已验证）
+          SUC="SukiSU_src/kernel/feature/sucompat.c"
+          SUCH="SukiSU_src/kernel/feature/sucompat.h"
+          test -f "$SUC" && test -f "$SUCH" || { echo "::error::builtin sucompat sources not found"; exit 1; }
+          sed -i 's/^bool ksu_su_compat_enabled __read_mostly = true;$/DEFINE_STATIC_KEY_TRUE(ksu_su_compat_enabled);/' "$SUC"
+          sed -i 's/\*value = ksu_su_compat_enabled ? 1 : 0;/*value = static_key_enabled(\&ksu_su_compat_enabled) ? 1 : 0;/' "$SUC"
+          sed -i 's|^    ksu_su_compat_enabled = enable;$|    if (enable) static_branch_enable(\&ksu_su_compat_enabled); else static_branch_disable(\&ksu_su_compat_enabled);|' "$SUC"
+          sed -i 's/if (!ksu_su_compat_enabled)/if (!static_key_enabled(\&ksu_su_compat_enabled))/' "$SUC"
+          sed -i 's/^extern bool ksu_su_compat_enabled;$/extern struct static_key_true ksu_su_compat_enabled;/' "$SUCH"
+          grep -q 'DEFINE_STATIC_KEY_TRUE(ksu_su_compat_enabled);' "$SUC" \
+            || { echo "::error::ksu_su_compat_enabled static-key conversion failed (definition)"; exit 1; }
+          grep -q 'static_branch_enable(&ksu_su_compat_enabled);' "$SUC" \
+            && grep -q 'static_branch_disable(&ksu_su_compat_enabled);' "$SUC" \
+            || { echo "::error::ksu_su_compat_enabled static-key conversion failed (feature set)"; exit 1; }
+          grep -q 'static_key_enabled(&ksu_su_compat_enabled)' "$SUC" \
+            || { echo "::error::ksu_su_compat_enabled static-key conversion failed (getter)"; exit 1; }
+          grep -q 'extern struct static_key_true ksu_su_compat_enabled;' "$SUCH" \
+            || { echo "::error::ksu_su_compat_enabled static-key conversion failed (header)"; exit 1; }
+          ! grep -q 'bool ksu_su_compat_enabled __read_mostly' "$SUC" \
+            || { echo "::error::stale bool definition remains in sucompat.c"; exit 1; }
+          echo "-- ksu_su_compat_enabled now a real static key (matches kernel-side static_branch consumers)"
+
+          echo "== SukiSU builtin 适配：sulog event.c 的 strncpy_from_user_nofault =="
+          # builtin Kconfig 无独立 SULOG 开关（sulog/event.c 被 ksu_main.c 无条件
+          # #include），defconfig 关不掉；5.4 无该 API（编译期隐式声明、LTO 链接期
+          # undefined symbol）。替换为 strncpy_from_user（调用点在 execve 参数采集、
+          # 进程上下文，可安全睡眠）并补 <linux/uaccess.h>；\b 只命中裸调用，
+          # kernel_compat.h 的 ksu_strncpy_from_user_nofault 包装（event.c 其余两处）不受影响
+          EVENT="SukiSU_src/kernel/sulog/event.c"
+          test -f "$EVENT" || { echo "::error::sulog/event.c not found"; exit 1; }
+          grep -q '#include <linux/uaccess.h>' "$EVENT" || \
+            sed -i '1i #include <linux/uaccess.h>' "$EVENT"
+          grep -q '#include <linux/uaccess.h>' "$EVENT" \
+            || { echo "::error::uaccess.h include insertion failed"; exit 1; }
+          sed -i 's/\bstrncpy_from_user_nofault(/strncpy_from_user(/g' "$EVENT"
+          grep -q 'strncpy_from_user(arg, (const void __user' "$EVENT" \
+            && ! grep -Eq '\bstrncpy_from_user_nofault\(' "$EVENT" \
+            || { echo "::error::strncpy_from_user_nofault replacement failed"; exit 1; }
+          echo "-- sulog event.c now uses strncpy_from_user (5.4-safe)"
+
+          REBOOT_GATE="${{ inputs.reboot_gate || 'false' }}"
+          if [ "$REBOOT_GATE" = "true" ]; then
+          echo "== SukiSU builtin 加固：sys_reboot supercall fd 自举通道的调用方门控 =="
+          # builtin 的 ksu_handle_sys_reboot（SUSFS 变体，dispatch.c）对
+          # magic1=0xDEADBEEF + magic2=0xCAFEBABE 的 reboot() 调用无条件走
+          # ksu_supercall_reboot_handler：安装 supercall fd 并返回 0，全程无 uid 门控。
+          # 任何三方 app 无需 root 即可：发起该调用 → 观察返回 0（stock 对非
+          # CAP_SYS_BOOT 一律 -EPERM）/ 进程 fd 表多出 ksu fd → 100% 确认 KernelSU
+          # 存在。这是公开已知的 KSU 无 root 探测手法，即春秋 4.6.3
+          # "kernelsu detected（运行时行为特征）" 的实现向量。
+          # 修复：仅 root 与已识别管理器（经典 appid 或动态管理器注册，状态持久化，
+          # 重启后立即可用）保留自举通道；其余调用方返回 -EINVAL → reboot.c 的
+          # orig_flow 走 stock 流程 → 非 CAP_SYS_BOOT 得到与原厂逐字节一致的 -EPERM，
+          # 返回值与 fd 副作用双双归零。
+          DIS="SukiSU_src/kernel/supercall/dispatch.c"
+          test -f "$DIS" || { echo "::error::supercall/dispatch.c not found"; exit 1; }
+          python3 - "$DIS" <<'PYREBOOT_EOF'
+          import sys
+          path = sys.argv[1]
+          src = open(path).read()
+          old = (
+              "    if (magic2 == KSU_INSTALL_MAGIC2)\n"
+              "        return ksu_supercall_reboot_handler(arg);\n"
+          )
+          new = (
+              "    if (magic2 == KSU_INSTALL_MAGIC2) {\n"
+              "        /* bakasu anti-detect: third-party apps must neither bootstrap a\n"
+              "         * supercall fd nor observe a stock-divergent return. Stock\n"
+              "         * sys_reboot yields -EPERM to non-CAP_SYS_BOOT callers; a non-zero\n"
+              "         * return sends them down orig_flow (kernel/reboot.c) which produces\n"
+              "         * exactly that -EPERM. Root and the identified manager keep the\n"
+              "         * bootstrap channel. */\n"
+              "        if (current_uid().val != 0 &&\n"
+              "            !ksu_manager_uid_authorized(current_uid().val))\n"
+              "            return -EINVAL;\n"
+              "        return ksu_supercall_reboot_handler(arg);\n"
+              "    }\n"
+          )
+          if old in src:
+              src = src.replace(old, new, 1)
+          elif "bakasu anti-detect" in src:
+              pass
+          else:
+              sys.exit("reboot gate target not found in dispatch.c")
+          open(path, "w").write(src)
+          PYREBOOT_EOF
+          grep -q 'bakasu anti-detect' "$DIS" \
+            || { echo "::error::reboot gate patch failed"; exit 1; }
+          grep -q 'ksu_manager_uid_authorized(current_uid().val)' "$DIS" \
+            || { echo "::error::reboot gate authorization check missing"; exit 1; }
+          [ "$(grep -c 'return ksu_supercall_reboot_handler(arg);' "$DIS")" = "1" ] \
+            || { echo "::error::reboot gate call-site count unexpected"; exit 1; }
+          echo "-- sys_reboot bootstrap channel now gated to root/manager; third-party apps observe stock -EPERM"
+          else
+            echo "-- reboot gate DISABLED via workflow input; dispatch.c left untouched"
+          fi
+
+          echo "== 修复 vendor selinux 预置钩子的 6 个未定义符号（services.c 末尾追加定义，特性关闭语义）=="
+          # vendor 树 security/selinux/{selinuxfs.c,hooks.c} 的 BakaSU 预置钩子在
+          # #ifdef CONFIG_KSU_SUSFS 内以 extern 引用 selinux_hide 特性符号；SukiSU
+          # builtin 的 kernel/feature/selinux_hide.c 被 ksu_main.c 的
+          # #if LINUX_VERSION_CODE >= 5.10 门控，5.4 下不参与编译，符号无人提供，
+          # LTO 链接期 undefined。直接把“特性关闭”语义的定义追加进
+          # security/selinux/ss/services.c：CONFIG_SECURITY_SELINUX=y 下该 TU 必然
+          # 参与 vmlinux 链接。类型逐一对齐 BakaSU sync-up selinux_hide.{c,h}：
+          # 门控 bool=false、静态键恒关、指针 NULL、钩子空函数 —— 全部消费点自带
+          # 判空/静态键守卫，行为即“特性关闭”。
+          # 注意不可走独立 stub TU + 顶层 Makefile obj-y：kbuild 只在目录 Makefile
+          # 里消费 obj-y，顶层 Makefile 的 obj-y 是死赋值（也不 export），TU 永不
+          # 编译，守卫却 grep 同一死赋值照样通过 —— CI 实测 6 符号全部 undefined。
+          SVC="security/selinux/ss/services.c"
+          test -f "$SVC" || { echo "::error::security/selinux/ss/services.c not found"; exit 1; }
+          if ! grep -q 'bool ksu_selinux_hide_enabled' "$SVC"; then
+            cat >> "$SVC" <<'KSU_SVCCOMPAT_EOF'
+
+          /* ksu vendor selinux_hide compat：vendor selinuxfs.c/hooks.c 的 BakaSU 预置钩子
+           * 引用的符号，SukiSU builtin 在 5.4 下不提供（>=5.10 版本门控）。
+           * fake_state 不在此列：其调用点已由 sus_type 回移植的 perl 替换消除，
+           * 仅剩 extern 声明（无符号需求）。追加块所需 include：cache.h（__read_mostly）、
+           * jump_label.h（DEFINE_STATIC_KEY_FALSE）、mm.h（alloc_page/page_address）；
+           * mutex.h 本文件已直接包含，bool/NULL 由既有包含链提供。
+           * 特性语义：延迟激活。enabled/running 起步 false（=可启动基线），仅当
+           * late_initcall 成功构造 fake_status 后才置 true，使 vendor 的 my_write_access
+           * / my_write_context / my_setprocattr / my_sel_open_handle_status 对 app uid
+           * （>=10000）走 susfs 过滤路径（uid<10000 与内核进程不受影响），配合 sus_type
+           * 回移植实现 /access、/context 探测的 -EINVAL 与 avd 还原。 */
+          #include <linux/cache.h>
+          #include <linux/jump_label.h>
+          #include <linux/mm.h>
+
+          /* enabled 门控 my_sel_open_handle_status（uid>=10000 时以 fake_status 换
+           * 真实页）；running 门控 my_write_access / my_write_context / my_setprocattr
+           * 的 susfs 还原路径（uid>=10000）。两者起步 false（与可启动基线等价），
+           * 仅当 late_initcall 成功构造 fake_status 后才整体置 true —— 任何失败路径
+           * 下内核照常启动，绝不卡第一屏。 */
+          bool ksu_selinux_hide_enabled __read_mostly = false;
+          bool ksu_selinux_hide_running __read_mostly = false;
+
+          /* vendor: extern struct static_key_false ...; 仅门控 selinuxfs.c:262 的
+           * 兜底重试（!fake_status 时才触发），置位本身无害 */
+          DEFINE_STATIC_KEY_FALSE(fake_status_initialize_key);
+
+          /* BakaSU: __maybe_static struct page *fake_status = NULL（消费点判空） */
+          struct page *fake_status = NULL;
+
+          /* BakaSU 定义与 vendor extern 均为 struct mutex *；vendor 消费点判空后
+           * lock/unlock 保护 fake_status 读取。此处仅接线指针，初始化函数自身无锁。 */
+          struct mutex *ksu_selinux_status_lock = NULL;
+
+          /* 构造 stock 观感的状态页供 my_sel_open_handle_status 服务给 app uid：
+           * slim5 按照实证修正（KernelSU PR #3647 + 春秋 4.6.x 真机复测）：
+           * <6.10 内核（含 5.4）stock 设备的 status 页指纹是
+           * {sequence=0, policyload=0}——首次策略加载早于页惰性分配，update
+           * 被 page==NULL 静默丢弃，stock 内核此后不再 reload。slim2-4 填的
+           * {sequence=2, policyload=1} 是 6.10+ 形态，春秋报
+           * "sequence/policyload unexpected"。本函数复制真实页的
+           * version/deny_unknown 后按 stock 5.4 形态定格。
+           * 【锁定纪律】5.4 的 selinux_kernel_status_page() 内部自取 status_lock
+           * （ss/status.c:47）。旧版本函数在持锁状态下调用它 → 同一互斥锁自嵌套 →
+           * 死锁在 late_initcall → init 未启动内核即挂死 → 卡第一屏（两次 bootloop
+           * 根因）。本函数因此完全无锁：late_initcall 上下文无并发；vendor 兜底调用
+           * 点（selinuxfs.c:263）也在锁外；最坏并发是双份分配，内容一致后者胜出，
+           * 仅泄漏一页，无碍。 */
+          void initialize_fake_status(void)
+          {
+          struct selinux_kernel_status *fake, *real = NULL;
+          struct page *new_page;
+
+          if (fake_status)
+          return;
+          if (!selinux_state.ss)
+          return;
+
+          if (selinux_state.ss->status_page)
+          real = page_address(selinux_state.ss->status_page);
+
+          new_page = alloc_page(GFP_KERNEL | __GFP_ZERO);
+          if (!new_page) {
+          pr_debug("selinux: status page alloc failed\n");
+          return;
+          }
+          fake = page_address(new_page);
+          fake->version = real ? real->version : SELINUX_KERNEL_STATUS_VERSION;
+          /* stock 5.4 形态：{sequence=0, policyload=0}（<6.10 指纹，见上） */
+          fake->sequence = 0;
+          fake->enforcing = 1;
+          fake->policyload = 0;
+          fake->deny_unknown = real ? real->deny_unknown : 1;
+
+          fake_status = new_page;
+          pr_debug("selinux: status page installed\n");
+          }
+
+          /* 初始化尾段：先装假页，成功才激活 enabled/running。静态键无条件开——
+           * 它只门控兜底重试，假页就绪时 no-op，未就绪时给首次 open 一次重试机会
+           * （重试路径已无锁，不会死锁）。 */
+          static int __init bakasu_fake_status_init(void)
+          {
+          static_key_enable(&fake_status_initialize_key.key);
+          initialize_fake_status();
+          if (fake_status) {
+          ksu_selinux_hide_enabled = true;
+          ksu_selinux_hide_running = true;
+          pr_debug("selinux: status view active\n");
+          } else {
+          pr_debug("selinux: status view unavailable\n");
+          }
+          return 0;
+          }
+          late_initcall(bakasu_fake_status_init);
+
+          /* 真实页定格（slim5 重写）：stock 5.4 形态 {sequence=0, policyload=0}。
+           * slim4 真机实测：即使 seqno=0 防护保住了 policyload=1，KSU 的 5 次
+           * reset_avc_cache(0) 仍把 sequence 顶到 16，且回填的 1/1 组合本身
+           * 不是 <6.10 的 stock 指纹（stock 页惰性分配于首载之后，恒 {0,0}）。
+           * 本 late_initcall 在用户空间起来之前运行：selinux_kernel_status_page()
+           * （内部自取 status_lock，本函数在锁外调用，安全——死锁仅发生在持锁
+           * 重入）触发惰性分配或取回已有页，然后无条件定格。此后真实事件
+           * （setenforce / 真实 reload，stock 语义）会正常推进，无需再干预。 */
+          static int __init ksu_real_status_normalize(void)
+          {
+          struct selinux_kernel_status *st;
+          struct page *pg;
+
+          if (!selinux_state.ss)
+          return 0;
+          pg = selinux_kernel_status_page(&selinux_state);
+          if (!pg) {
+          pr_debug("selinux: status page alloc failed\n");
+          return 0;
+          }
+          st = page_address(pg);
+          pr_debug("selinux: status snapshot seq=%u enforcing=%u policyload=%u\n",
+          st->sequence, st->enforcing, st->policyload);
+          st->sequence = 0;
+          st->policyload = 0;
+          pr_debug("selinux: status normalized {seq=0, policyload=0}\n");
+          return 0;
+          }
+          late_initcall(ksu_real_status_normalize);
+          KSU_SVCCOMPAT_EOF
+          fi
+          for sym in ksu_selinux_hide_enabled ksu_selinux_hide_running \
+                     fake_status_initialize_key fake_status \
+                     ksu_selinux_status_lock initialize_fake_status; do
+            grep -q "\b$sym\b" "$SVC" || { echo "::error::services.c missing symbol $sym"; exit 1; }
+          done
+          echo "-- 6 vendor selinux_hide symbols defined in security/selinux/ss/services.c"
+
+
+      - name: Instrument sys_reboot dispatch (slim8/slim22, probe log opt-in)
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+
+          echo "== slim22：reboot 探测留痕默认关闭 + uid 读取时序对称 =="
+          # slim7 实机：kernelsu detected 仍报，且 dmesg 无任何探测痕迹 -> slim8 加了留痕。
+          # 但那条 pr_info 本身就是特征，且插在 uid 门控之前：任何 app 打一次 magic1，
+          # 内核就替它把 "uid=<检测器 uid>" 写进 dmesg。slim22 把它变成输入开关
+          # （probe_log，默认 false），文本去掉 ksu 字样；时序对称（先比整型 magic2，
+          # 命中后才读 current_uid）始终保留。
+          DIS="SukiSU_src/kernel/supercall/dispatch.c"
+          test -f "$DIS" || { echo "::error::supercall/dispatch.c not found"; exit 1; }
+          LOG_PROBE="${{ inputs.probe_log || 'false' }}"
+          python3 - "$DIS" "$LOG_PROBE" <<'PYEOF'
+          import sys
+          path, log_probe = sys.argv[1], sys.argv[2].strip().lower() == 'true'
+          src = open(path).read()
+
+          if log_probe and 'reboot: magic1' not in src:
+              key = "    if (magic1 != KSU_INSTALL_MAGIC1) {"
+              assert src.count(key) == 1, 'magic1 check not unique: %d' % src.count(key)
+              i = src.index(key)
+              close = "\n    }\n"
+              j = src.index(close, i) + len(close)
+              ins = ('    pr_info_ratelimited("reboot: magic1=%#x magic2=%#x cmd=%u uid=%u\\n",\n'
+                     '                        magic1, magic2, cmd, current_uid().val);\n')
+              src = src[:j] + ins + src[j:]
+
+          # 时序对称：SUSFS_MAGIC 分支原写法 magic2 == SUSFS_MAGIC && uid == 0，
+          # 每次调用都要读 current_uid()；改为先比整型 magic2，uid 仅在命中时读取。
+          old_susfs = "if (magic2 == SUSFS_MAGIC && current_uid().val == 0) {"
+          new_susfs = ("if (magic2 == SUSFS_MAGIC &&\n"
+                       "        current_uid().val == 0) {")
+          assert src.count(old_susfs) == 1, 'susfs branch anchor not unique: %d' % src.count(old_susfs)
+          src = src.replace(old_susfs, new_susfs)
+
+          open(path, 'w').write(src)
+          print('probe log %s; uid read reorder applied' % ('ON' if log_probe else 'OFF'))
+          PYEOF
+          grep -q 'current_uid().val == 0' "$DIS" \
+            || { echo "::error::uid reorder not applied"; exit 1; }
+          # gate 补丁（Integrate 步骤）必须仍在其位
+          grep -q 'bakasu anti-detect' "$DIS" \
+            || { echo "::error::reboot gate patch missing"; exit 1; }
+          if [ "$LOG_PROBE" = "true" ]; then
+            grep -q 'reboot: magic1' "$DIS" \
+              || { echo "::error::probe log requested but not inserted"; exit 1; }
+          else
+            ! grep -q 'reboot: magic1' "$DIS" \
+              || { echo "::error::probe log present although probe_log=false"; exit 1; }
+          fi
+          echo "-- dispatch.c instrumented (probe log=$LOG_PROBE); gate intact"
+
+      - name: Backport sus_type/avd hiding into vendor 5.4 susfs
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+
+          echo "== 回移植 6.6-dev 的 sus_type/avd 隐藏实现到 vendor 5.4 =="
+          # 上游 susfs4ksu（gki-android15-6.6-dev）把 BakaSU 注入的 policy 规则缓存在内核哈希表：
+          #   - susfs_add_sus_type: 注册注入的 type；app 解析该 type 的 context 时按 -EINVAL 拒绝
+          #   - susfs_add_sus_avd_allowed_by_type/susfs_spoof_avd_allowed_rcu: 记录注入前的
+          #     avd.allowed，app 走 /sys/fs/selinux/access 查询时还原为注入前的授权位
+          # vendor 5.4（susfs v2.3.0）无此实现，且 selinux 锁模型不同（policy_rwlock 而非 6.6 的
+          # RCU + selinux_policy），这里按 5.4 语义回移植内核侧存储与 services.c 过滤实现，并把
+          # selinuxfs.c/hooks.c 中 my_* 钩子的 fake_state 调用切到 susfs 过滤路径
+          if ! grep -q 'susfs_is_sus_type_rcu' fs/susfs.c; then
+            echo "-- backporting sus_type/avd hiding into vendor 5.4 susfs"
+            # 1) fs/susfs.c：sus_type / sus_avd_allowed 内核存储（照搬 6.6-dev，日志宏改用
+            #    v2.3.0 的 SUSFS_LOGE/SUSFS_LOGI，上游用 v2.4+ 才有的 *_RL 变体）
+            cat >> fs/susfs.c <<'SUSTYPE_EOF'
+
+          /* sus_type: backported from susfs4ksu gki-android15-6.6-dev */
+          static DEFINE_MUTEX(susfs_mutex_lock_sus_type);
+          static DEFINE_HASHTABLE(SUS_TYPE_HLIST, 10);
+
+          struct st_susfs_sus_type_hlist {
+          struct hlist_node                        node;
+          };
+
+          int susfs_add_sus_type(const char *secctx, u32 type_value) {
+          struct st_susfs_sus_type_hlist *new_entry, *tmp_entry;
+          struct hlist_node *tmp_hlist_node;
+          int err = 0;
+
+          mutex_lock(&susfs_mutex_lock_sus_type);
+          hash_for_each_possible_safe(SUS_TYPE_HLIST, tmp_entry, tmp_hlist_node, node, type_value) {
+          SUSFS_LOGE("secctx '%s', type_value '%u', was added before already\n",
+          secctx, type_value);
+          err = -EINVAL;
+          goto unlock;
+          }
+
+          new_entry = kzalloc(sizeof(struct st_susfs_sus_type_hlist), GFP_KERNEL);
+          if (!new_entry) {
+          err = -ENOMEM;
+          goto unlock;
+          }
+
+          hash_add_rcu(SUS_TYPE_HLIST, &new_entry->node, type_value);
+          SUSFS_LOGI("secctx '%s', type '%u', has been added to SUS_TYPE_HLIST\n",
+          secctx, type_value);
+          unlock:
+          mutex_unlock(&susfs_mutex_lock_sus_type);
+          return err;
+          }
+
+          bool susfs_is_sus_type_rcu(u32 type_value) {
+          struct st_susfs_sus_type_hlist *entry = NULL;
+
+          hash_for_each_possible_rcu(SUS_TYPE_HLIST, entry, node, type_value) {
+          return true;
+          }
+          return false;
+          }
+
+          static DEFINE_MUTEX(susfs_mutex_lock_sus_avd_allowed_hlist);
+          static DEFINE_HASHTABLE(SUS_AVD_ALLOWED_HLIST, 18);
+
+          struct susfs_sus_av_rule {
+          struct hlist_node node;
+          u32 s_type;
+          u32 t_type;
+          u32 c_type;
+          u32 orig_avd_allowed;
+          };
+
+          static inline u32 susfs_av_rule_hash(u32 ssid, u32 tsid, u16 tclass)
+          {
+          u32 h;
+
+          h = hash_32(ssid, 32);
+          h ^= rol32(hash_32(tsid, 32), 13);
+          h ^= rol32(hash_32((u32)tclass, 32), 19);
+
+          h += h << 13;
+          h ^= h >> 7;
+          h += h << 17;
+          h ^= h >> 5;
+
+          return h;
+          }
+
+          int susfs_add_sus_avd_allowed_by_type(u32 s_type, u32 t_type, u32 c_type, u32 orig_avd_allowed)
+          {
+          struct susfs_sus_av_rule *entry, *tmp_entry;
+          struct hlist_node *tmp_hlist_node;
+          int err = 0;
+          u32 key;
+
+          mutex_lock(&susfs_mutex_lock_sus_avd_allowed_hlist);
+
+          entry = kzalloc(sizeof(*entry), GFP_ATOMIC);
+          if (!entry) {
+          err = -ENOMEM;
+          goto unlock;
+          }
+
+          key = susfs_av_rule_hash(s_type, t_type, c_type);
+          hash_for_each_possible_safe(SUS_AVD_ALLOWED_HLIST, tmp_entry, tmp_hlist_node, node, key) {
+          if (tmp_entry->s_type == s_type &&
+              tmp_entry->t_type == t_type &&
+              tmp_entry->c_type == c_type)
+          {
+          /* Do not apply any new orig_avd_allowed for matched entry. */
+          kfree(entry);
+          goto unlock;
+          }
+          }
+
+          entry->s_type = s_type;
+          entry->t_type = t_type;
+          entry->c_type = c_type;
+          entry->orig_avd_allowed = orig_avd_allowed;
+
+          hash_add_rcu(SUS_AVD_ALLOWED_HLIST, &entry->node, key);
+          SUSFS_LOGI("av_rule '%u %u %u %u' has been added to SUS_AVD_ALLOWED_HLIST\n",
+          s_type, t_type, c_type, orig_avd_allowed);
+          unlock:
+          mutex_unlock(&susfs_mutex_lock_sus_avd_allowed_hlist);
+          return err;
+          }
+
+          void susfs_spoof_avd_allowed_rcu(u32 s_type, u32 t_type, u32 c_type, u32 *avd_allowed)
+          {
+          struct susfs_sus_av_rule *entry;
+          u32 key = susfs_av_rule_hash(s_type, t_type, c_type);
+
+          hash_for_each_possible_rcu(SUS_AVD_ALLOWED_HLIST, entry, node, key) {
+          if (entry->s_type == s_type &&
+              entry->t_type == t_type &&
+              entry->c_type == c_type)
+          {
+          *avd_allowed = entry->orig_avd_allowed;
+          return;
+          }
+          }
+          }
+          SUSTYPE_EOF
+            # 2) security/selinux/ss/services.c：5.4 适配的过滤实现。与 6.6 原版的差异：
+            #    - 6.6 用 rcu_read_lock + rcu_dereference(selinux_state.policy)，5.4 用
+            #      read_lock(&selinux_state.ss->policy_rwlock) + 内嵌 policydb/sidtab
+            #    - 5.4 的 context_to_sid 查找依赖 context->hash，需先 context_add_hash()
+            #    - string_to_context_struct 按本内核用 hashtab_search(pol->p_xxx.table, ...)
+            cat >> security/selinux/ss/services.c <<'SUSAVD_EOF'
+
+          /* sus_type hiding: backported from susfs4ksu gki-android15-6.6-dev (5.4 rwlock model) */
+          #ifdef CONFIG_KSU_SUSFS
+          extern bool susfs_is_sus_type_rcu(u32 sid);
+          extern void susfs_spoof_avd_allowed_rcu(u32 s_type, u32 t_type, u32 c_type, u32 *avd_allowed);
+
+          static int susfs_string_to_context_struct(struct policydb *pol,
+              struct sidtab *sidtabp,
+              char *scontext,
+              struct context *ctx,
+              u32 def_sid)
+          {
+          struct role_datum *role;
+          struct type_datum *typdatum;
+          struct user_datum *usrdatum;
+          char *scontextp, *p, oldc;
+          int rc = 0;
+
+          context_init(ctx);
+
+          /* Parse the security context. */
+
+          rc = -EINVAL;
+          scontextp = (char *) scontext;
+
+          /* Extract the user. */
+          p = scontextp;
+          while (*p && *p != ':')
+          p++;
+
+          if (*p == 0)
+          goto out;
+
+          *p++ = 0;
+
+          usrdatum = hashtab_search(pol->p_users.table, scontextp);
+          if (!usrdatum)
+          goto out;
+
+          ctx->user = usrdatum->value;
+
+          /* Extract role. */
+          scontextp = p;
+          while (*p && *p != ':')
+          p++;
+
+          if (*p == 0)
+          goto out;
+
+          *p++ = 0;
+
+          role = hashtab_search(pol->p_roles.table, scontextp);
+          if (!role)
+          goto out;
+          ctx->role = role->value;
+
+          /* Extract type. */
+          scontextp = p;
+          while (*p && *p != ':')
+          p++;
+          oldc = *p;
+          *p++ = 0;
+
+          typdatum = hashtab_search(pol->p_types.table, scontextp);
+          if (!typdatum || typdatum->attribute)
+          goto out;
+          if (likely(susfs_is_sus_type_rcu(typdatum->value)))
+          goto out;
+
+          ctx->type = typdatum->value;
+
+          rc = mls_context_to_sid(pol, oldc, p, ctx, sidtabp, def_sid);
+          if (rc)
+          goto out;
+
+          /* Check the validity of the new context. */
+          rc = -EINVAL;
+          if (!policydb_context_isvalid(pol, ctx))
+          goto out;
+          rc = 0;
+          out:
+          if (rc)
+          context_destroy(ctx);
+          return rc;
+          }
+
+          static int susfs_security_context_to_sid_core(const char *scontext, u32 scontext_len,
+          u32 *sid, u32 def_sid, gfp_t gfp_flags,
+          int force)
+          {
+          struct policydb *policydb;
+          struct sidtab *sidtab;
+          char *scontext2, *str = NULL;
+          struct context context;
+          int rc = 0;
+
+          /* An empty security context is never valid. */
+          if (!scontext_len)
+          return -EINVAL;
+
+          /* Copy the string to allow changes and ensure a NUL terminator */
+          scontext2 = kmemdup_nul(scontext, scontext_len, gfp_flags);
+          if (!scontext2)
+          return -ENOMEM;
+
+          if (!selinux_state.initialized) {
+          int i;
+
+          for (i = 1; i < SECINITSID_NUM; i++) {
+          if (!strcmp(initial_sid_to_string[i], scontext2)) {
+          *sid = i;
+          goto out;
+          }
+          }
+          *sid = SECINITSID_KERNEL;
+          goto out;
+          }
+          *sid = SECSID_NULL;
+
+          if (force) {
+          /* Save another copy for storing in uninterpreted form */
+          rc = -ENOMEM;
+          str = kstrdup(scontext2, gfp_flags);
+          if (!str)
+          goto out;
+          }
+          read_lock(&selinux_state.ss->policy_rwlock);
+          policydb = &selinux_state.ss->policydb;
+          sidtab = selinux_state.ss->sidtab;
+          rc = susfs_string_to_context_struct(policydb, sidtab, scontext2,
+                &context, def_sid);
+          if (rc == -EINVAL && force) {
+          context.str = str;
+          context.len = strlen(str) + 1;
+          str = NULL;
+          } else if (rc)
+          goto out_unlock;
+          rc = context_add_hash(policydb, &context);
+          if (rc)
+          goto out_unlock;
+          rc = sidtab_context_to_sid(sidtab, &context, sid);
+          context_destroy(&context);
+          out_unlock:
+          read_unlock(&selinux_state.ss->policy_rwlock);
+          out:
+          kfree(scontext2);
+          kfree(str);
+          return rc;
+          }
+
+          int susfs_security_context_to_sid(const char *scontext, u32 scontext_len, u32 *sid,
+              gfp_t gfp)
+          {
+          return susfs_security_context_to_sid_core(scontext, scontext_len,
+              sid, SECSID_NULL, gfp, 0);
+          }
+
+          int susfs_security_context_str_to_sid(const char *scontext, u32 *sid, gfp_t gfp)
+          {
+          return susfs_security_context_to_sid(scontext, strlen(scontext),
+                 sid, gfp);
+          }
+
+          void susfs_security_compute_av_user(u32 ssid,
+                u32 tsid,
+                u16 tclass,
+                struct av_decision *avd)
+          {
+          struct policydb *policydb;
+          struct sidtab *sidtab;
+          struct context *scontext = NULL, *tcontext = NULL;
+
+          read_lock(&selinux_state.ss->policy_rwlock);
+          avd_init(&selinux_state, avd);
+          if (!selinux_state.initialized)
+          goto allow;
+
+          policydb = &selinux_state.ss->policydb;
+          sidtab = selinux_state.ss->sidtab;
+
+          scontext = sidtab_search(sidtab, ssid);
+          if (!scontext) {
+          pr_err("SELinux: %s:  unrecognized SID %d\n",
+                 __func__, ssid);
+          goto out;
+          }
+
+          /* permissive domain? */
+          if (ebitmap_get_bit(&policydb->permissive_map, scontext->type))
+          avd->flags |= AVD_FLAGS_PERMISSIVE;
+
+          tcontext = sidtab_search(sidtab, tsid);
+          if (!tcontext) {
+          pr_err("SELinux: %s:  unrecognized SID %d\n",
+                 __func__, tsid);
+          goto out;
+          }
+
+          if (unlikely(!tclass)) {
+          if (policydb->allow_unknown)
+          goto allow;
+          goto out;
+          }
+
+          context_struct_compute_av(policydb, scontext, tcontext, tclass, avd,
+            NULL);
+          susfs_spoof_avd_allowed_rcu(scontext->type, tcontext->type, tclass,
+              &avd->allowed);
+           out:
+          read_unlock(&selinux_state.ss->policy_rwlock);
+          return;
+          allow:
+          avd->allowed = 0xffffffff;
+          goto out;
+          }
+          #endif // #ifdef CONFIG_KSU_SUSFS
+          SUSAVD_EOF
+            # 3) selinuxfs.c / hooks.c：my_* 钩子由 fake_state 路径切到 susfs 过滤路径
+            #    （fake_state 浅拷贝的 initialized 恒为 false，标准接口会退化为全放行/假 SID）
+            perl -0pi -e 's/security_context_to_sid\(&fake_state, buf, size, &sid, GFP_KERNEL\);/susfs_security_context_to_sid(buf, size, &sid, GFP_KERNEL);/; s/security_sid_to_context\(&fake_state, sid, &canon, &len\);/security_sid_to_context(&selinux_state, sid, &canon, &len);/; s/security_context_str_to_sid\(&fake_state, scon, &ssid, GFP_KERNEL\);/susfs_security_context_str_to_sid(scon, &ssid, GFP_KERNEL);/; s/security_context_str_to_sid\(&fake_state, tcon, &tsid, GFP_KERNEL\);/susfs_security_context_str_to_sid(tcon, &tsid, GFP_KERNEL);/; s/security_compute_av_user\(&fake_state, ssid, tsid, tclass, &avd\);/susfs_security_compute_av_user(ssid, tsid, tclass, &avd);/; s/security_context_to_sid\(&fake_state, value, size,\s*&sid, GFP_KERNEL\);/susfs_security_context_to_sid(value, size, &sid, GFP_KERNEL);/s' \
+              security/selinux/selinuxfs.c security/selinux/hooks.c
+            # 4) 落盘校验
+            grep -q 'int susfs_add_sus_type(const char \*secctx' fs/susfs.c \
+              && grep -q 'int susfs_add_sus_avd_allowed_by_type(u32 s_type' fs/susfs.c \
+              && grep -q 'bool susfs_is_sus_type_rcu(u32 type_value)' fs/susfs.c \
+              && grep -q 'void susfs_spoof_avd_allowed_rcu' fs/susfs.c \
+              && grep -q 'void susfs_security_compute_av_user(u32 ssid' security/selinux/ss/services.c \
+              && grep -q 'susfs_string_to_context_struct' security/selinux/ss/services.c \
+              && grep -q 'susfs_security_context_to_sid(buf, size' security/selinux/selinuxfs.c \
+              && grep -q 'susfs_security_compute_av_user(ssid' security/selinux/selinuxfs.c \
+              && grep -q 'susfs_security_context_to_sid(value, size' security/selinux/hooks.c \
+              && ! grep -q 'security_compute_av_user(&fake_state' security/selinux/selinuxfs.c \
+              || { echo "::error::sus_type backport verification failed"; exit 1; }
+          else
+            echo "-- sus_type backport already present, skipping"
+          fi
+
+      - name: Patch SELinux status.c (stock-shape guard, slim5/6)
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+
+          echo "== slim5：status 页保持 stock 5.4 形态 {sequence=0, policyload=0} =="
+          # 实证链（slim4 真机 od + 春秋 4.6.x + KernelSU PR #3647 + DuckDetector）：
+          #   <6.10 内核 stock 设备 status 页指纹即 {sequence=0, policyload=0}：
+          #   首次策略加载（ss/services.c:2205-2209，latest_granting=1）早于页的
+          #   惰性分配，update 被 page==NULL 静默丢弃；stock 内核此后不 reload。
+          #   KSU reset_avc_cache(0)（rules.c 261/782）的 seqno=0 事件 stock 内核
+          #   不存在——slim4 真机：这 5 次调用把 sequence 顶到 16（stock 恒 0）。
+          # slim5：
+          #   A) update_policyload 对 seqno==0 直接 early-return（sequence 不动）；
+          #   B) 惰性分配保持原版赋值（sequence=0 / policyload=0），删除
+          #      slim2-slim4 的 selinux_last_policyload 回填；
+          #   C) 假页/真实页统一由 initialize_fake_status / normalize 定格 {0,0}。
+          STATUS_C=security/selinux/ss/status.c
+          test -f "$STATUS_C" || { echo "::error::$STATUS_C not found"; exit 1; }
+          if grep -q 'selinux: policyload seqno=0 ignored' "$STATUS_C"; then
+            echo "-- status.c guard already present, skipping"
+          else
+            python3 - "$STATUS_C" <<'PYEOF'
+          import sys
+          p = sys.argv[1]
+          s = open(p).read()
+          key = 'selinux_status_update_policyload'
+          lock = 'mutex_lock(&state->ss->status_lock);'
+          i = s.index(key)
+          j = s.index(lock, i)
+          end = j + len(lock)
+          # A) seqno=0 早退：不 bump sequence、不写 policyload（stock 无此事件）
+          s = s[:end] + '\n\t/* slim5: seqno==0 只来自 KSU reset_avc_cache(0)；stock 内核\n\t * 从不产生该事件，忽略之，保持页的 stock 形态（sequence 不动） */\n\tif (!seqno) {\n\t\tpr_debug("selinux: policyload seqno=0 ignored\\n");\n\t\tmutex_unlock(&state->ss->status_lock);\n\t\treturn;\n\t}\n\tpr_debug("selinux: policyload seqno=%d page=%p", seqno,\n\t\t   state->ss->status_page);' + s[end:]
+          open(p, 'w').write(s)
+          print('stock-shape guard patched')
+          PYEOF
+            grep -q 'selinux: policyload seqno=0 ignored' "$STATUS_C" \
+              && grep -q 'seqno=0 ignored' "$STATUS_C" \
+              && grep -q 'status->policyload = 0;' "$STATUS_C" \
+              && grep -q 'status->sequence = 0;' "$STATUS_C" \
+              && ! grep -q 'selinux_last_policyload' "$STATUS_C" \
+              || { echo "::error::status.c stock-shape guard verification failed"; exit 1; }
+            echo "-- status.c stock-shape guard patched & verified"
+          fi
+
+      - name: Cover Shizuku(shell) in SELinux status fake page
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          echo "== 让 Shizuku(shell, uid 2000) 也读到伪造的 status 页 =="
+          # vendor 的 my_sel_open_handle_status 只在 uid>=10000 时换成假页。
+          # 若检测链路经 Shizuku（uid=2000）读 /sys/fs/selinux/status，
+          # 会绕过假页看到真实页。这里只额外放行 shell(2000)，不碰 uid 0/1000。
+          F=security/selinux/selinuxfs.c
+          test -f "$F" || { echo "::error::$F not found"; exit 1; }
+          grep -q 'current_uid()\.val >= 10000 && ksu_selinux_hide_enabled' "$F" \
+            || { echo "::error::status hook anchor not found (vendor layout changed?)"; exit 1; }
+          sed -i 's/current_uid()\.val >= 10000 && ksu_selinux_hide_enabled/(current_uid().val >= 10000 || current_uid().val == 2000) \&\& ksu_selinux_hide_enabled/' "$F"
+          grep -q 'current_uid().val == 2000) && ksu_selinux_hide_enabled' "$F" \
+            || { echo "::error::shell status spoof patch failed"; exit 1; }
+          ! grep -q 'current_uid()\.val >= 10000 && ksu_selinux_hide_enabled' "$F" \
+            || { echo "::error::old status gate still present"; exit 1; }
+          echo "-- status fake page now covers app uids + shell(2000)"
+
+      - name: Patch SELinux policy fake page (slim20)
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+
+          echo "== slim20：policy 假页——app/shell 读 policy 时服务 vendor stock 预编译策略 =="
+          # 实证链（2026-11-26 晚）：春秋 4.6.3 报 "Direct exact rule:
+          # system_server execmem"——它读 /sys/fs/selinux/policy（app 可读，仅写被拒）
+          # 解析活 policydb 扫描特征 allow 规则。规则注入源是 SukiSU 内置 Zygisk
+          # （/data/adb/ksu/zygisk/libzygisk.so 给 system_server 开 execmem，
+          # HMA 依赖）——规则本身不能删。
+          # 机制：5.4 sel_open_policy 用 security_read_policy 把活 policydb 序列化
+          # 到 plm->data，sel_read_policy/sel_mmap_policy_fault 全部服务这份缓冲。
+          # 在 security_read_policy 之后把 plm->data 换成 vendor stock 预编译策略
+          # （/vendor/etc/selinux/precompiled_sepolicy）的逐字节拷贝，app 的
+          # read/mmap 视角=stock，注入规则不可见；enforcement 走活 policydb 不受影响。
+          # 门控：ksu_selinux_hide_enabled + uid>=10000 或 shell(2000)，与 status
+          # 假页覆盖面一致；uid<2000（system/root）不受影响。失败 fail-open。
+          F=security/selinux/selinuxfs.c
+          test -f "$F" || { echo "::error::$F not found"; exit 1; }
+          ! grep -q 'ksu_fake_policy_data' "$F" || { echo "-- already patched, skip"; exit 0; }
+
+          # 4.1) 帮助函数插入到 sel_open_policy 定义之前（C 声明顺序要求）
+          python3 - <<'PYEOF'
+          import sys
+          f = 'security/selinux/selinuxfs.c'
+          s = open(f).read()
+          anchor = 'static int sel_open_policy(struct inode *inode, struct file *filp)'
+          assert s.count(anchor) == 1, 'anchor not unique: %d' % s.count(anchor)
+          helpers = r'''/* slim20: policy fake page - serve vendor stock precompiled policy to app/shell.
+           * 依据：春秋 4.6.3 "Direct exact rule:" 家族读 policy 二进制扫描 KSU/Zygisk
+           * 注入规则；5.4 sel_open_policy 把活 policydb 序列化进 plm->data，read/mmap
+           * 均消费该缓冲。替换为 stock 预编译策略拷贝后注入规则不可见，enforcement
+           * 不受影响。加载失败 fail-open（服务真实 policy）。 */
+          static char *ksu_fake_policy_data;
+          static size_t ksu_fake_policy_len;
+          static DEFINE_MUTEX(ksu_fake_policy_mutex);
+
+          static int ksu_fake_policy_load(void)
+          {
+          	struct file *filp;
+          	char *buf;
+          	size_t len;
+          	loff_t pos = 0;
+
+          	if (ksu_fake_policy_data)
+          		return 0;
+          	filp = filp_open("/vendor/etc/selinux/precompiled_sepolicy",
+          		 O_RDONLY, 0);
+          	if (IS_ERR(filp))
+          		return PTR_ERR(filp);
+          	len = i_size_read(file_inode(filp));
+          	if (len < 1024 || len > (64u << 20)) {
+          		filp_close(filp, NULL);
+          		return -EINVAL;
+          	}
+          	buf = vmalloc(len);
+          	if (!buf) {
+          		filp_close(filp, NULL);
+          		return -ENOMEM;
+          	}
+          	kernel_read(filp, buf, len, &pos);
+          	filp_close(filp, NULL);
+          	if (pos != len) {
+          		vfree(buf);
+          		return -EIO;
+          	}
+          	ksu_fake_policy_data = buf;
+          	ksu_fake_policy_len = len;
+          	pr_debug("selinux: policy view cached (%zu bytes)\n",
+          		len);
+          	return 0;
+          }
+
+          static void ksu_selinux_fake_policy_swap(struct inode *inode,
+          				struct policy_load_memory *plm)
+          {
+          	char *buf;
+          	size_t len;
+          	u32 uid = current_uid().val;
+
+          	if (!ksu_selinux_hide_enabled)
+          		return;
+          	if (uid < 10000 && uid != 2000)
+          		return;
+          	mutex_lock(&ksu_fake_policy_mutex);
+          	if (!ksu_fake_policy_data)
+          		ksu_fake_policy_load();
+          	if (ksu_fake_policy_data) {
+          		len = ksu_fake_policy_len;
+          		buf = vmalloc(len);
+          		if (buf) {
+          			memcpy(buf, ksu_fake_policy_data, len);
+          			vfree(plm->data);
+          			plm->data = buf;
+          			plm->len = len;
+          			inode_lock(inode);
+          			i_size_write(inode, len);
+          			inode_unlock(inode);
+          		}
+          	}
+          	mutex_unlock(&ksu_fake_policy_mutex);
+          }
+
+          '''
+          s = s.replace(anchor, helpers + anchor)
+          open(f, 'w').write(s)
+          print('helpers inserted before sel_open_policy')
+
+          PYEOF
+
+          # 4.2) 调用点：security_read_policy 成功后换缓冲
+          python3 - <<'PYEOF'
+          f = 'security/selinux/selinuxfs.c'
+          s = open(f).read()
+          old = "\trc = security_read_policy(state, &plm->data, &plm->len);\n\tif (rc)\n\t\tgoto err;\n"
+          assert s.count(old) == 1, 'call anchor not unique: %d' % s.count(old)
+          new = old + "\tksu_selinux_fake_policy_swap(inode, plm);\n"
+          s = s.replace(old, new)
+          open(f, 'w').write(s)
+          print('swap call inserted')
+
+          PYEOF
+
+          # 4.3) 落盘校验
+          grep -q 'static void ksu_selinux_fake_policy_swap' "$F" \
+            && grep -q 'precompiled_sepolicy' "$F" \
+            && grep -q 'ksu_selinux_fake_policy_swap(inode, plm);' "$F" \
+            || { echo "::error::policy fake page patch failed"; exit 1; }
+          echo "-- policy fake page ready: app/shell policy reads serve stock precompiled_sepolicy"
+
+      - name: Shield TracerPid from root tracers (slim21/slim22)
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+
+          echo "== slim21：TracerPid 盾——root (uid 0) 调试器对 app 不可见，反反调试 =="
+          # strace 附着实测（2026-11-27）：春秋 mount-view-rpc 线程读 /proc/self/status
+          # 与全部 61 个线程的 status，解析 TracerPid，非零即 tgkill(SIGABRT) 自杀。
+          # 对策：tracer uid==0 时 TracerPid 报 0；同 uid ptrace（fork+parent、
+          # crash_dump 转储）不受影响。语义不做 reader-uid 门控——app 无法制造 root
+          # tracer，所以这个分歧对 app 不可观测，全局归零反而没有 fd 转交绕过面。
+          # slim22：补幂等守卫、落盘断言与可读报错（slim21 只打印不校验，锚点漂移
+          # 时只会给一个 Python traceback）。
+          python3 - <<'PYEOF'
+          import sys
+          p = 'fs/proc/array.c'
+          s = open(p, encoding='utf-8', errors='surrogateescape').read()
+          if 'slim21: TracerPid shield' in s:
+              print('TracerPid shield already present - skipping')
+              sys.exit(0)
+          old = "\ttracer = ptrace_parent(p);\n\tif (tracer)\n\t\ttpid = task_pid_nr_ns(tracer, ns);\n"
+          new = ("\ttracer = ptrace_parent(p);\n"
+                 "\tif (tracer) {\n"
+                 "\t\ttpid = task_pid_nr_ns(tracer, ns);\n"
+                 "\t\t/* slim21: TracerPid shield - a uid-0 tracer (root debugger such as\n"
+                 "\t\t * strace running under su) is invisible to unprivileged readers.\n"
+                 "\t\t * Same-uid ptrace (fork+parent tracer, crash_dump) is untouched. */\n"
+                 "\t\tif (__kuid_val(task_uid(tracer)) == 0)\n"
+                 "\t\t\ttpid = 0;\n"
+                 "\t}\n")
+          if s.count(old) != 1:
+              sys.exit('::error::anchor not found or ambiguous in fs/proc/array.c (%d hits)' % s.count(old))
+          s = s.replace(old, new, 1)
+          open(p, 'w', encoding='utf-8', errors='surrogateescape').write(s)
+          print('TracerPid shield inserted')
+          PYEOF
+          grep -q '__kuid_val(task_uid(tracer)) == 0' fs/proc/array.c \
+            || { echo "::error::TracerPid shield not applied"; exit 1; }
+          grep -n -A12 'slim21: TracerPid shield' fs/proc/array.c
+
+      - name: Allow uid-0 tracer through ptrace access checks (slim26)
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+
+          echo "== slim26：uid 0 tracer 放行——恢复 root 调试能力（与 slim21 TracerPid 盾配套）=="
+          python3 - <<'PYEOF'
+          import sys
+          p = 'kernel/ptrace.c'
+          s = open(p, encoding='utf-8', errors='surrogateescape').read()
+          if 'slim26: uid-0 tracer bypass' in s:
+              print('uid-0 tracer bypass already present - skipping')
+              sys.exit(0)
+          old1 = "\ttcred = __task_cred(task);\n\tif (uid_eq(caller_uid, tcred->euid) &&\n"
+          new1 = ("\ttcred = __task_cred(task);\n"
+                  "\t/* slim26: uid-0 tracer bypass - MT/su shells on this device run\n"
+                  "\t * with CapEff=0, so the ptrace_has_cap() route below can never be\n"
+                  "\t * taken. Bypass for uid 0 only; paired with the slim21 TracerPid\n"
+                  "\t * shield so the traced app cannot see the debugger. */\n"
+                  "\tif (__kuid_val(cred->uid) == 0)\n"
+                  "\t\tgoto ok;\n"
+                  "\tif (uid_eq(caller_uid, tcred->euid) &&\n")
+          n1 = s.count(old1)
+          if n1 != 1:
+              sys.exit('::error::anchor1 (cred-match block) not found or ambiguous in kernel/ptrace.c (%d hits)' % n1)
+          s = s.replace(old1, new1, 1)
+          old2 = "\tif (mm &&\n\t    ((get_dumpable(mm) != SUID_DUMP_USER) &&\n\t     !ptrace_has_cap(mm->user_ns, mode)))\n\t    return -EPERM;\n"
+          new2 = ("\tif (mm &&\n"
+                  "\t    ((get_dumpable(mm) != SUID_DUMP_USER) &&\n"
+                  "\t     !ptrace_has_cap(mm->user_ns, mode) &&\n"
+                  "\t     __kuid_val(cred->uid) != 0))\n"
+                  "\t    return -EPERM;\n")
+          n2 = s.count(old2)
+          if n2 != 1:
+              sys.exit('::error::anchor2 (dumpable block) not found or ambiguous in kernel/ptrace.c (%d hits)' % n2)
+          s = s.replace(old2, new2, 1)
+          open(p, 'w', encoding='utf-8', errors='surrogateescape').write(s)
+          print('uid-0 tracer bypass inserted (cred-match + dumpable)')
+          PYEOF
+          grep -q '__kuid_val(cred->uid) == 0' kernel/ptrace.c \
+            || { echo "::error::uid-0 tracer bypass (anchor1) not applied"; exit 1; }
+          grep -q '__kuid_val(cred->uid) != 0' kernel/ptrace.c \
+            || { echo "::error::uid-0 tracer bypass (dumpable) not applied"; exit 1; }
+          grep -n -A6 'slim26: uid-0 tracer bypass' kernel/ptrace.c
+
+      - name: Patch kill presence camouflage (slim27)
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+
+          echo "== slim27：kill(pid,0) 存在性探测视图伪装——与 slim25 /proc 视图对齐 =="
+          python3 - <<'PYEOF'
+          import sys
+          p = 'kernel/signal.c'
+          s = open(p, encoding='utf-8', errors='surrogateescape').read()
+          if 'slim27_unprivileged_probe_hidden' in s:
+              print('kill probe camouflage already present - skipping')
+              sys.exit(0)
+          helper = (
+              "/* slim27: unprivileged-probe view camouflage. Unprivileged callers\n"
+              " * (uid>=10000 or shell) probe process existence with kill(pid, 0) and\n"
+              " * ptrace(SEIZE, pid): -ESRCH means absent, -EPERM means present-but-root.\n"
+              " * slim25 hides daemon pids from /proc, so a pid answering kill() with\n"
+              " * -EPERM while absent from /proc readdir is direct evidence that\n"
+              " * something is hidden (Futile hide). Answer -ESRCH for the same reader\n"
+              " * classes and the same comm list so kill()/ptrace() agree with the /proc\n"
+              " * view. uid 0 / system(1000) keep normal semantics. */\n"
+              "static bool slim27_unprivileged_probe_hidden(const struct task_struct *task)\n"
+              "{\n"
+              "\tstatic const char * const hidden[] = {\n"
+              "\t\t\"ksud\", \"ksu\", \"susfsd\", \"kernelsu\", \"su\", \"magiskd\", \"apd\",\n"
+              "\t};\n"
+              "\tu32 uid = current_uid().val;\n"
+              "\tint i;\n"
+              "\n"
+              "\tif (!(uid >= 10000 || uid == 2000))\n"
+              "\t\treturn false;\n"
+              "\tfor (i = 0; i < ARRAY_SIZE(hidden); i++) {\n"
+              "\t\tif (!strcmp(task->comm, hidden[i]))\n"
+              "\t\t\treturn true;\n"
+              "\t}\n"
+              "\treturn false;\n"
+              "}\n"
+              "\n")
+          fn_anchor = "static int check_kill_permission(int sig, struct kernel_siginfo *info,\n"
+          n1 = s.count(fn_anchor)
+          if n1 != 1:
+              sys.exit('::error::anchor1 (check_kill_permission signature) hits=%d - NOT applied' % n1)
+          s = s.replace(fn_anchor, helper + fn_anchor, 1)
+          logic_anchor = (
+              "\tif (!valid_signal(sig))\n"
+              "\t\treturn -EINVAL;\n"
+              "\n"
+              "\tif (!si_fromuser(info))\n"
+              "\t\treturn 0;\n")
+          n2 = s.count(logic_anchor)
+          if n2 != 1:
+              sys.exit('::error::anchor2 (valid_signal+si_fromuser block) hits=%d - NOT applied' % n2)
+          logic_new = (
+              "\tif (!valid_signal(sig))\n"
+              "\t\treturn -EINVAL;\n"
+              "\n"
+              "\t/* slim27: kill() existence probing must agree with the /proc\n"
+              "\t * view hidden by slim25; answer -ESRCH for hidden daemons. */\n"
+              "\tif (slim27_unprivileged_probe_hidden(t))\n"
+              "\t\treturn -ESRCH;\n"
+              "\n"
+              "\tif (!si_fromuser(info))\n"
+              "\t\treturn 0;\n")
+          s = s.replace(logic_anchor, logic_new, 1)
+          open(p, 'w', encoding='utf-8', errors='surrogateescape').write(s)
+          print('kill probe camouflage inserted')
+          PYEOF
+          grep -q 'slim27_unprivileged_probe_hidden' kernel/signal.c \
+            || { echo "::error::kill probe camouflage not applied"; exit 1; }
+          grep -n -A3 'slim27_unprivileged_probe_hidden(t)' kernel/signal.c
+
+
+      - name: Patch ptrace probe camouflage (slim27)
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+
+          echo "== slim27：ptrace(SEIZE/ATTACH) 探测视图伪装——与 slim25 /proc 视图对齐 =="
+          python3 - <<'PYEOF'
+          import sys
+          p = 'kernel/ptrace.c'
+          s = open(p, encoding='utf-8', errors='surrogateescape').read()
+          if 'slim27_unprivileged_probe_hidden' in s:
+              print('ptrace probe camouflage already present - skipping')
+              sys.exit(0)
+          helper = (
+              "/* slim27: unprivileged-probe view camouflage. Same semantics as the\n"
+              " * slim27 kill() camouflage in kernel/signal.c: unprivileged callers\n"
+              " * probing hidden daemons with ptrace() must get -ESRCH (absent) instead\n"
+              " * of -EPERM (present-but-root), matching the slim25 /proc view. */\n"
+              "static bool slim27_unprivileged_probe_hidden(const struct task_struct *task)\n"
+              "{\n"
+              "\tstatic const char * const hidden[] = {\n"
+              "\t\t\"ksud\", \"ksu\", \"susfsd\", \"kernelsu\", \"su\", \"magiskd\", \"apd\",\n"
+              "\t};\n"
+              "\tu32 uid = current_uid().val;\n"
+              "\tint i;\n"
+              "\n"
+              "\tif (!(uid >= 10000 || uid == 2000))\n"
+              "\t\treturn false;\n"
+              "\tfor (i = 0; i < ARRAY_SIZE(hidden); i++) {\n"
+              "\t\tif (!strcmp(task->comm, hidden[i]))\n"
+              "\t\t\treturn true;\n"
+              "\t}\n"
+              "\treturn false;\n"
+              "}\n"
+              "\n")
+          fn_anchor = "static int ptrace_attach(struct task_struct *task, long request,\n"
+          n1 = s.count(fn_anchor)
+          if n1 != 1:
+              sys.exit('::error::anchor1 (ptrace_attach signature) hits=%d - NOT applied' % n1)
+          s = s.replace(fn_anchor, helper + fn_anchor, 1)
+          logic_anchor = "\taudit_ptrace(task);\n\n\tretval = -EPERM;\n"
+          n2 = s.count(logic_anchor)
+          if n2 != 1:
+              sys.exit('::error::anchor2 (audit_ptrace block) hits=%d - NOT applied' % n2)
+          logic_new = (
+              "\taudit_ptrace(task);\n"
+              "\n"
+              "\t/* slim27: ptrace() probing must agree with the /proc view\n"
+              "\t * hidden by slim25; answer -ESRCH for hidden daemons. */\n"
+              "\tif (slim27_unprivileged_probe_hidden(task)) {\n"
+              "\t\tretval = -ESRCH;\n"
+              "\t\tgoto out;\n"
+              "\t}\n"
+              "\n"
+              "\tretval = -EPERM;\n")
+          s = s.replace(logic_anchor, logic_new, 1)
+          open(p, 'w', encoding='utf-8', errors='surrogateescape').write(s)
+          print('ptrace probe camouflage inserted')
+          PYEOF
+          grep -q 'slim27_unprivileged_probe_hidden' kernel/ptrace.c \
+            || { echo "::error::ptrace probe camouflage not applied"; exit 1; }
+          grep -n -A4 'slim27_unprivileged_probe_hidden(task)' kernel/ptrace.c
+
+
+      - name: Spoof overlayfs statfs for unprivileged readers (slim23)
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+
+          echo "== slim23：app/shell 看到的 overlayfs 伪装回底层文件系统 =="
+          # 依据：systemless root 必然把 /system、/vendor、/product 以 overlayfs 挂上。
+          # SUSFS 的 SUS_MOUNT 只隐藏 /proc/*/mountinfo 里的条目，**不管 statfs**：
+          # 任何无权限 app 一次 statfs("/system") 就拿到 f_type=0x794c7630(overlayfs)，
+          # 而 stock 机这里是 ext4/erofs。这条与"运行时行为/无需 root/与安装包无关"
+          # 的检测描述完全吻合，且 22 版一次都没碰过。
+          # 处理：vfs_statfs 里对 uid>=10000 或 shell(2000) 的读者，把 overlayfs 的
+          # f_type 换回底层类型（默认 ext4 0xEF53，可用输入 fake_fs_magic 覆盖），
+          # f_namelen 归一到 255。enforcement、mount 视图、su/root 视角都不变。
+          MAGIC="${{ inputs.fake_fs_magic || '0xEF53' }}"
+          python3 - "$MAGIC" <<'PYEOF'
+          import re, sys
+          magic = sys.argv[1].strip()
+          if not re.fullmatch(r'0x[0-9a-fA-F]{1,8}', magic):
+              sys.exit('::error::fake_fs_magic must look like 0xEF53 (got %r)' % magic)
+          p = 'fs/statfs.c'
+          s = open(p).read()
+          if 'slim23: overlay statfs spoof' in s:
+              print('statfs spoof already present - skipping')
+              sys.exit(0)
+          fn = 'int vfs_statfs(const struct path *path, struct kstatfs *buf)'
+          if s.count(fn) != 1:
+              sys.exit('::error::vfs_statfs definition not found in fs/statfs.c')
+          anchor = 'buf->f_flags = calculate_f_flags(path->mnt);'
+          if s.count(anchor) != 1:
+              sys.exit('::error::vfs_statfs anchor not found (%d hits) in fs/statfs.c' % s.count(anchor))
+          if '#include <linux/cred.h>' not in s:
+              s = s.replace(fn, '#include <linux/cred.h>\n' + fn, 1)
+          spoof = (
+              '\n\t/* slim23: overlay statfs spoof - report the underlying fs type\n'
+              '\t * to unprivileged readers instead of OVERLAYFS_SUPER_MAGIC. */\n'
+              '\tif (!error && buf->f_type == 0x794c7630u &&\n'
+              '\t    (current_uid().val >= 10000 || current_uid().val == 2000)) {\n'
+              '\t\tbuf->f_type = %su;\n'
+              '\t\tbuf->f_namelen = 255;\n'
+              '\t}\n' % magic)
+          s = s.replace(anchor, anchor + spoof, 1)
+          open(p, 'w').write(s)
+          print('statfs spoof installed (overlay -> %s)' % magic)
+          PYEOF
+          grep -q 'slim23: overlay statfs spoof' fs/statfs.c \
+            || { echo "::error::statfs spoof not applied"; exit 1; }
+          grep -q "buf->f_type = ${MAGIC}u;" fs/statfs.c \
+            || { echo "::error::statfs spoof magic assertion failed (${MAGIC})"; exit 1; }
+          echo "-- statfs: app/shell now see ${MAGIC} for overlay mounts"
+
+      - name: Hide root daemon processes from unprivileged readers (slim25)
+        working-directory: kernel
+        # 锚点取自 vendor 真实 fs/proc/base.c（probe 实证，各命中 1 次），因此 fail-fast。
+        run: |
+          set -euo pipefail
+
+          echo "== slim25：对 app/shell 隐藏 ksud 等 root 守护进程（真实锚点）=="
+          # 两条路径一起堵：getdents /proc 的枚举，以及直接打开 /proc/<pid>。
+          # 读者限 uid>=10000 或 shell(2000)；root/system 不受影响。
+          python3 - <<'PYEOF'
+          import sys
+          p = 'fs/proc/base.c'
+          s = open(p, encoding='utf-8', errors='surrogateescape').read()
+          if 'ksu_hide_proc_from' in s:
+              print('proc hide already present - skipping')
+              sys.exit(0)
+
+          helper = (
+              '#include <linux/cred.h>\n'
+              '\n'
+              '/* slim25: hide root-daemon processes from unprivileged readers. */\n'
+              'static bool ksu_hide_proc_from(struct task_struct *task)\n'
+              '{\n'
+              '\tstatic const char * const hidden[] = {\n'
+              '\t\t"ksud", "ksu", "susfsd", "kernelsu", "su", "magiskd", "apd",\n'
+              '\t};\n'
+              '\tu32 uid = current_uid().val;\n'
+              '\tint i;\n'
+              '\n'
+              '\tif (!(uid >= 10000 || uid == 2000))\n'
+              '\t\treturn false;\n'
+              '\tfor (i = 0; i < ARRAY_SIZE(hidden); i++) {\n'
+              '\t\tif (!strcmp(task->comm, hidden[i]))\n'
+              '\t\t\treturn true;\n'
+              '\t}\n'
+              '\treturn false;\n'
+              '}\n'
+              '\n')
+
+          lookup_anchor = ('\tif (!task)\n'
+                           '\t\tgoto out;\n'
+                           '\n'
+                           '\tresult = proc_pid_instantiate(dentry, task, NULL);\n')
+          lookup_new = ('\tif (!task)\n'
+                        '\t\tgoto out;\n'
+                        '\n'
+                        '\tif (ksu_hide_proc_from(task)) {\n'
+                        '\t\tput_task_struct(task);\n'
+                        '\t\tgoto out;\n'
+                        '\t}\n'
+                        '\n'
+                        '\tresult = proc_pid_instantiate(dentry, task, NULL);\n')
+          readdir_anchor = ('\t\tif (!has_pid_permissions(ns, iter.task, HIDEPID_INVISIBLE))\n'
+                            '\t\t\tcontinue;\n')
+          readdir_new = (readdir_anchor +
+                         '\t\tif (ksu_hide_proc_from(iter.task))\n'
+                         '\t\t\tcontinue;\n')
+          fn_anchor = ('struct dentry *proc_pid_lookup(struct dentry *dentry, unsigned int flags)\n'
+                       '{\n')
+
+          for name, a in (('lookup signature', fn_anchor), ('lookup body', lookup_anchor),
+                          ('readdir body', readdir_anchor)):
+              if s.count(a) != 1:
+                  sys.exit('::error::%s anchor hits=%d (expected 1) - proc hide NOT applied'
+                           % (name, s.count(a)))
+
+          s = s.replace(lookup_anchor, lookup_new, 1)
+          s = s.replace(readdir_anchor, readdir_new, 1)
+          s = s.replace(fn_anchor, helper + fn_anchor, 1)
+          open(p, 'w', encoding='utf-8', errors='surrogateescape').write(s)
+          print('proc hide installed; helper sites=%d' % s.count('ksu_hide_proc_from'))
+          PYEOF
+          test "$(grep -c 'ksu_hide_proc_from' fs/proc/base.c)" = "3" \
+            || { echo "::error::proc hide verification failed (expected 3 sites)"; exit 1; }
+          grep -q '"ksud", "ksu", "susfsd"' fs/proc/base.c \
+            || { echo "::error::proc hide name list missing"; exit 1; }
+          grep -n -A3 'ksu_hide_proc_from(iter.task)' fs/proc/base.c
+          grep -n -A4 'ksu_hide_proc_from(task)' fs/proc/base.c
+          echo "-- proc: app/shell cannot enumerate or open ksud/susfsd/magiskd pids"
+
+      - name: Gate su stat/faccessat spoofing by allowlisted uid (slim13)
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          echo "== slim13：stat/faccessat 的 su 存在伪装加 uid 门控 =="
+          # 【第二条无 root 识别通道，实锤于 2026-11-23】
+          # 编译形态：kernel_compat.h 对 >=4.3 内核定义 KSU_COMPAT_USE_STATIC_KEY
+          #   → 5.4 命中 sucompat.c 的 #ifdef 分支（struct filename 版本）。
+          #   该分支 ksu_handle_stat / ksu_handle_faccessat 对
+          #   "/system/bin/su" 的处理：把路径改写为 "/system/bin/sh"（伪装存在），
+          #   只有 chrooted 检查，没有 uid 检查！
+          #   → 任何未授权 App（含检测器）stat("/system/bin/su") 得到成功，
+          #     而 stock 内核返回 ENOENT —— 无 root 一条 syscall 即识别 KSU。
+          #   对照：execve hook（ksu_handle_execveat_sucompat）有
+          #   __ksu_is_allow_uid_for_current 门控（提权链必需，保留不动）；
+          #   #else 分支（const char __user 版本）本来就有 is_su_allowed 门控。
+          # 修复：给这两个 hook 在改写前插入与 execve 相同的 uid 门控——
+          #   未授权 uid → 返回真实结果（stock: ENOENT），无日志无改写；
+          #   已授权 uid（终端/管理器/allowlist）→ 行为不变，su 提权链完好。
+          # 注意：本步骤必须先于 Obfuscate 执行——插入代码使用 ksu_ 原名，
+          # 由混淆步骤统一改名为 rsx_；锚点用 pr_info 字符串字面量（混淆保护
+          # 字面量，原文不变），因此不受改名影响。
+          python3 - <<'PYEOF'
+          import re, sys
+          p = 'drivers/kernelsu/feature/sucompat.c'
+          s = open(p, encoding='utf-8', errors='surrogateescape').read()
+          guard = (
+              '    // 【slim13】uid gate: su presence spoofing only for allowlisted uids\n'
+              '    // unauthorized callers (e.g. detectors) get the real stock answer (ENOENT)\n'
+              '    if (likely(!__ksu_is_allow_uid_for_current(current_uid().val)))\n'
+              '        return 0;\n\n')
+          n = 0
+          for name in ('ksu_handle_faccessat', 'ksu_handle_stat'):
+              pat = re.compile(r'(    pr_info\("%s: su->sh!\\n"\);\n)' % name)
+              if not pat.search(s):
+                  sys.exit('::error::anchor not found for %s' % name)
+              s, k = pat.subn(lambda m: guard + m.group(1), s)
+              n += k
+          open(p, 'w', encoding='utf-8', errors='surrogateescape').write(s)
+          print('uid gate inserted before %d rewrite sites' % n)
+          PYEOF
+          grep -n -B2 "su->sh" drivers/kernelsu/feature/sucompat.c | head -20
+          grep -c "__ksu_is_allow_uid_for_current" drivers/kernelsu/feature/sucompat.c
+
+      - name: Port AVC spoof feature from main branch (slim14)
+        shell: bash
+        run: |
+          echo "== slim16/slim20: AVC spoof DISABLED ==" 
+          echo "slim16 实测（2026-11-26）：移除 avc_audit_post_callback 伪装后 kernelsu detected 仍在 —— AUDITPATCH 假说证伪，AVC spoof 不是触发源"
+          echo "slim20 维持移除：春秋解密清单确认 AUDITPATCH 专抓 audit rewrite 模式，少一个特征面，且功能上无害"
+          echo "注意：本构建中 KSU/SUSFS 相关的 AVC denied 日志将使用真实 scontext/tcontext 写入 audit 流"
+
+      - name: Obfuscate KSU/SUSFS kernel symbols (kallsyms anti-probe, slim10)
+        working-directory: kernel
+        if: inputs.obfuscate_symbols == 'true'
+        run: |
+          set -euo pipefail
+          echo "== kallsyms 反探测：全树改名 ksu_/susfs_ 标识符（保护字符串字面量）=="
+          # 原理：非 root 的 App 也能读 /proc/kallsyms（kptr_restrict 只隐藏
+          # 地址，符号名仍可见），KSU builtin 编译的 150+ 个 ksu_* 全局符号
+          # 与 susfs_* 符号全部在表中——春秋 native check 用裸 syscall 打开
+          # kallsyms 逐行 grep 'ksu' 即 100% 命中。对策：编译前对整棵内核源
+          # 码树做标识符级改名 ksu_ -> rsx_ / susfs_ -> rsy_。
+          #
+          # 【slim9 v3 教训 → slim10 修复】v3 做的是全文盲替换，把代码里的
+          # 字符串字面量也一并改了。其中 [ksu_driver] 是内核给管理器进程
+          # 安装的加冕 fd 的 anon_inode 名（supercall.c），管理器 Natives
+          # 靠扫描 /proc/self/fd 找 "[ksu_driver]" 判定 isManager——改名后
+          # 管理器直接"未检测到 SukiSU 内核"，su/授权/全部配置通道断裂。
+          # slim10 用 C 状态机（正确处理 // 与 // 折行、/* */、"..."" 及
+          # '...' 转义）只替换代码区的标识符，字符串字面量与注释原样保留：
+          #   - 反探测效果不变（kallsyms 只含符号名，不含字符串常量）
+          #   - 管理器 ABI（[ksu_driver] 等）恢复
+          #   - pr_info 日志保留原文（dmesg 诊断 grep 'ksu' 仍可用）
+          # Makefile/Kbuild/.mak 无字符串 ABI 语义，维持 v3 的全量替换
+          # （v3 已验证 runner 配方改名自洽）。
+          python3 - <<'PYEOF'
+          import re, os, sys
+          pat_ksu = re.compile(r'ksu_')
+          pat_susfs = re.compile(r'susfs_')
+          # 【slim22】KALLSYMS_ALL=y 连 static 符号都会出现在 /proc/kallsyms，
+          # 只改 ksu_/susfs_ 会把这些自解释名字留下：initialize_fake_status、
+          # fake_status、fake_status_initialize_key、bakasu_fake_status_init。
+          pat_bakasu = re.compile(r'bakasu_')
+          pat_fake = re.compile(r'fake_status')
+          inc_pat = re.compile(r'(#\s*include\s*")([^"]+)(")')
+          def _fix_inc(m):
+              return m.group(1) + pat_susfs.sub('rsy_', pat_ksu.sub('rsx_', m.group(2))) + m.group(3)
+
+          def tokenize(s):
+              """C 状态机：把字符串字面量/字符字面量/注释整段保护为占位符"""
+              out, lits = [], []
+              i, n = 0, len(s)
+              CODE, LINE, BLOCK, STR, CHR = 0, 1, 2, 3, 4
+              st = CODE
+              buf_start = 0
+              while i < n:
+                  c = s[i]
+                  nxt = s[i+1] if i + 1 < n else ''
+                  if st == CODE:
+                      if c == '/' and nxt == '/':
+                          out.append(s[buf_start:i]); buf_start = i; st = LINE; i += 2
+                      elif c == '/' and nxt == '*':
+                          out.append(s[buf_start:i]); buf_start = i; st = BLOCK; i += 2
+                      elif c == '"':
+                          out.append(s[buf_start:i]); buf_start = i; st = STR; i += 1
+                      elif c == "'":
+                          out.append(s[buf_start:i]); buf_start = i; st = CHR; i += 1
+                      else:
+                          i += 1
+                  elif st == LINE:
+                      if c == '\\' and nxt == '\n':
+                          i += 2
+                      elif c == '\n':
+                          out.append('\x00%d\x00' % len(lits)); lits.append(s[buf_start:i])
+                          st = CODE; buf_start = i
+                      else:
+                          i += 1
+                  elif st == BLOCK:
+                      if c == '*' and nxt == '/':
+                          out.append('\x00%d\x00' % len(lits)); lits.append(s[buf_start:i+2])
+                          st = CODE; i += 2; buf_start = i
+                      else:
+                          i += 1
+                  elif st == STR:
+                      if c == '\\':
+                          i += 2
+                      elif c == '"':
+                          i += 1
+                          out.append('\x00%d\x00' % len(lits)); lits.append(s[buf_start:i])
+                          st = CODE; buf_start = i
+                      else:
+                          i += 1
+                  else:  # CHR
+                      if c == '\\':
+                          i += 2
+                      elif c == "'":
+                          i += 1
+                          out.append('\x00%d\x00' % len(lits)); lits.append(s[buf_start:i])
+                          st = CODE; buf_start = i
+                      else:
+                          i += 1
+              out.append(s[buf_start:])
+              return ''.join(out), lits
+
+          def protect_and_replace(s):
+              s2, lits = tokenize(s)
+              s2 = pat_ksu.sub('rsx_', s2)
+              s2 = pat_susfs.sub('rsy_', s2)
+              s2 = pat_bakasu.sub('rsz_', s2)
+              s2 = pat_fake.sub('rsv_status', s2)
+              for idx, l in enumerate(lits):
+                  s2 = s2.replace('\x00%d\x00' % idx, l)
+              # 【slim10 v2 关键修正】#include "..." 的路径是引号字面量，
+              # 上面被保护原样保留；但源文件本身会被重命名（ksu_main.c ->
+              # rsx_main.c 等），不改 include 路径会 fatal error: file not
+              # found（slim10 v1 构建失败根因）。对引号 include 单独再改。
+              return inc_pat.sub(_fix_inc, s2)
+
+          def strip_code(s):
+              """剥离字面量与注释，剩余纯代码供残留检查"""
+              out = []
+              i, n = 0, len(s)
+              CODE, LINE, BLOCK, STR, CHR = 0, 1, 2, 3, 4
+              st = CODE
+              while i < n:
+                  c = s[i]
+                  nxt = s[i+1] if i + 1 < n else ''
+                  if st == CODE:
+                      if c == '/' and nxt == '/': st = LINE; i += 2
+                      elif c == '/' and nxt == '*': st = BLOCK; i += 2
+                      elif c == '"': st = STR; i += 1
+                      elif c == "'": st = CHR; i += 1
+                      else: out.append(c); i += 1
+                  elif st == LINE:
+                      if c == '\\' and nxt == '\n': i += 2
+                      elif c == '\n': st = CODE; out.append('\n'); i += 1
+                      else: i += 1
+                  elif st == BLOCK:
+                      if c == '*' and nxt == '/': st = CODE; i += 2
+                      else: i += 1
+                  elif st == STR:
+                      if c == '\\': i += 2
+                      elif c == '"': st = CODE; i += 1
+                      else: i += 1
+                  else:
+                      if c == '\\': i += 2
+                      elif c == "'": st = CODE; i += 1
+                      else: i += 1
+              return ''.join(out)
+
+          is_csrc = lambda fn: fn.endswith(('.c', '.h', '.S'))
+          is_mk = lambda fn: (fn == 'Makefile' or fn.startswith('Makefile.')
+                              or fn == 'Kbuild' or fn.endswith('.mak'))
+          n_f = n_k = n_s = n_b = n_d = 0
+          renames = []
+          n_scanned = 0
+          for dirpath, _, files in os.walk('.'):
+              for fn in files:
+                  p = os.path.join(dirpath, fn)
+                  if not (is_csrc(fn) or is_mk(fn)):
+                      continue
+                  n_scanned += 1
+                  if n_scanned % 2000 == 0:
+                      print(f'  [1/5 rename] scanned {n_scanned} source files...', flush=True)
+                  s = open(p, encoding='utf-8', errors='surrogateescape').read()
+                  # 快速预筛：内容与文件名都无 ksu_/susfs_ 的文件直接跳过。
+                  # 无标识符 → 状态机处理后 a=b=0、不写盘、不进改名队列，行为等价；
+                  # 逐字符状态机只花在少数候选文件上，全树扫描提速 10 倍以上。
+                  if ('ksu_' not in s and 'susfs_' not in s
+                          and 'bakasu_' not in s and 'fake_status' not in s
+                          and not (is_csrc(fn) and ('ksu_' in fn or 'susfs_' in fn))):
+                      continue
+                  if is_csrc(fn):
+                      # C 状态机保护字面量/注释 → 只替换代码区标识符
+                      s2 = protect_and_replace(s)
+                      # 改名计数 = 新名出现次数差（代码区改名 + 原有 rsx_ 保留）
+                      a = s2.count('rsx_') - s.count('rsx_')
+                      b = s2.count('rsy_') - s.count('rsy_')
+                      c = s2.count('rsz_') - s.count('rsz_')
+                      d = s2.count('rsv_status') - s.count('rsv_status')
+                      s = s2
+                  else:
+                      s, a = pat_ksu.subn('rsx_', s)
+                      s, b = pat_susfs.subn('rsy_', s)
+                      s, c = pat_bakasu.subn('rsz_', s)
+                      s, d = pat_fake.subn('rsv_status', s)
+                  if a or b or c or d:
+                      open(p, 'w', encoding='utf-8', errors='surrogateescape').write(s)
+                      n_f += 1; n_k += a; n_s += b; n_b += c; n_d += d
+                  if is_csrc(fn) and ('ksu_' in fn or 'susfs_' in fn):
+                      new_fn = pat_susfs.sub('rsy_', pat_ksu.sub('rsx_', fn))
+                      renames.append((p, os.path.join(dirpath, new_fn)))
+          for old, new in renames:
+              os.rename(old, new)
+          print(f'files modified: {n_f}, ksu_->rsx_: {n_k}, susfs_->rsy_: {n_s}, bakasu_->rsz_: {n_b}, fake_status->rsv_status: {n_d}, files renamed: {len(renames)}')
+          for old, new in renames:
+              print('  renamed:', os.path.relpath(old, '.'), '->', os.path.relpath(new, '.'))
+          if n_k < 1000 or n_s < 50 or n_b < 1 or n_d < 5:
+              sys.exit('::error::rename count suspiciously low — driver layout changed?')
+
+          # 残留检查：.c/.h/.S 须剥离字面量与注释后无标识符残留（字面量豁免）。
+          # 预筛：原文无 ksu_/susfs_ 的文件必然无代码区残留，跳过昂贵的状态机。
+          n_scanned = 0; n_cand = 0
+          for dirpath, _, files in os.walk('.'):
+              for fn in files:
+                  if not is_csrc(fn):
+                      continue
+                  p = os.path.join(dirpath, fn)
+                  s = open(p, encoding='utf-8', errors='surrogateescape').read()
+                  n_scanned += 1
+                  if n_scanned % 2000 == 0:
+                      print(f'  [2/5 residual] scanned {n_scanned} files, {n_cand} candidates...', flush=True)
+                  if ('ksu_' not in s and 'susfs_' not in s
+                          and 'bakasu_' not in s and 'fake_status' not in s):
+                      continue
+                  n_cand += 1
+                  rest = strip_code(s)
+                  m = (pat_ksu.search(rest) or pat_susfs.search(rest)
+                       or pat_bakasu.search(rest) or pat_fake.search(rest))
+                  if m:
+                      line_no = rest[:m.start()].count('\n') + 1
+                      line = rest.split('\n')[line_no - 1]
+                      sys.exit(f'::error::identifier remains at {p}:{line_no}: {line.strip()[:120]}')
+          # Makefile/Kbuild 维持全量替换 → 直接 grep 检查
+          n_scanned = 0
+          for dirpath, _, files in os.walk('.'):
+              for fn in files:
+                  if not is_mk(fn):
+                      continue
+                  p = os.path.join(dirpath, fn)
+                  s = open(p, encoding='utf-8', errors='surrogateescape').read()
+                  n_scanned += 1
+                  if n_scanned % 2000 == 0:
+                      print(f'  [3/5 mk-check] scanned {n_scanned} Makefile/Kbuild...', flush=True)
+                  if (pat_ksu.search(s) or pat_susfs.search(s)
+                          or pat_bakasu.search(s) or pat_fake.search(s)):
+                      sys.exit(f'::error::identifier remains in {p}')
+          # 【slim10 v2 断言】所有引号 include 的相对路径必须指向真实存在的
+          # 文件（防止 include 路径与重命名文件脱节 → fatal error: not found）
+          n_scanned = 0
+          for dirpath, _, files in os.walk('.'):
+              for fn in files:
+                  if not is_csrc(fn):
+                      continue
+                  p = os.path.join(dirpath, fn)
+                  s = open(p, encoding='utf-8', errors='surrogateescape').read()
+                  n_scanned += 1
+                  if n_scanned % 2000 == 0:
+                      print(f'  [4/5 include-check] scanned {n_scanned} files...', flush=True)
+                  if '#include' not in s:
+                      continue
+                  for m in inc_pat.finditer(s):
+                      rel = m.group(2)
+                      cand = os.path.join(dirpath, rel)
+                      if os.path.exists(cand):
+                          continue
+                      # 其余 include（-I 路径下的）无法静态判定，跳过；但若
+                      # 路径含 ksu_/susfs_ 而相对位置不存在，几乎必然断链
+                      if 'ksu_' in rel or 'susfs_' in rel:
+                          sys.exit(f'::error::include target missing: {p} -> "{rel}"')
+
+          if find_res := os.popen('find . -name "*ksu_*" -o -name "*susfs_*"').read().strip():
+              print(find_res[:500])
+              sys.exit('::error::ksu_/susfs_ file names remain')
+          PYEOF
+          # 【slim10 关键断言】管理器加冕 fd 名必须原样保留——管理器 Natives
+          # 扫描 /proc/self/fd 找 "[ksu_driver]" 判定内核存在，改名即断联
+          F=drivers/kernelsu/supercall/supercall.c
+          grep -q '\[ksu_driver\]' "$F" \
+            || { echo "::error::[ksu_driver] fd name was renamed — manager would fail detection"; exit 1; }
+          # runner 配方一致性：定义与调用点必须同步指向 rsx_runner
+          grep -q 'cmd_rsx_runner = ' drivers/kernelsu/Makefile \
+            && grep -q 'quiet_cmd_rsx_runner = ' drivers/kernelsu/Makefile \
+            && grep -q 'if_changed,rsx_runner' drivers/kernelsu/Makefile \
+            || { echo "::error::runner cmd variable mismatch after rename"; exit 1; }
+          echo "-- kernel symbols obfuscated: /proc/kallsyms no longer lists ksu_*/susfs_*"
+          echo "-- string literals preserved: manager ABI [ksu_driver] intact"
+
+      - name: Configure Kernel (full SUSFS features)
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          export ARCH=arm64
+          export PATH="${{ env.CLANG_DIR }}/bin:$PATH"
+          export LLVM=1 LLVM_IAS=1 \
+                 CLANG_TRIPLE=aarch64-linux-gnu- \
+                 CROSS_COMPILE=aarch64-linux-gnu- \
+                 CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+
+          echo "== 直接向 defconfig 追加 SUSFS 配置 =="
+          DEFCONFIG_PATH="./arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
+          test -f "$DEFCONFIG_PATH" || { echo "::error::defconfig not found at $DEFCONFIG_PATH"; exit 1; }
+          # 上游 defconfig 首行混入全角括号（"（CONFIG_MIHW=y"），kconfig 会警告并丢弃该行，
+          # 导致小米 millet 驱动（drivers/mihw）被静默关闭，这里剥离全角括号修复
+          sed -i 's/\xEF\xBC\x88//g; s/\xEF\xBC\x89//g' "$DEFCONFIG_PATH"
+          grep -q '^CONFIG_MIHW=y' "$DEFCONFIG_PATH" \
+            || { echo "::error::defconfig sanitize failed (MIHW line)"; exit 1; }
+          # 注意：不追加 KSU_SUSFS_PRIORITY_UID_FILTER —— builtin Kconfig 默认 y，
+          # 但本树内核侧 SUSFS v2.3.0 没有 susfs_parse_priority_app_strings() 等实现，
+          # 开启会在 pkg_observer.c 产生未定义符号，必须在下面显式 disable
+          for sym in KSU_SUSFS KSU_SUSFS_SUS_PATH KSU_SUSFS_SUS_MOUNT KSU_SUSFS_SUS_KSTAT \
+                     KSU_SUSFS_SPOOF_UNAME KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+                     KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG KSU_SUSFS_OPEN_REDIRECT \
+                     KSU_SUSFS_SUS_MAP; do
+            echo "CONFIG_${sym}=y" >> "$DEFCONFIG_PATH"
+          done
+          grep -q 'CONFIG_KSU_SUSFS_SUS_MAP=y' "$DEFCONFIG_PATH" \
+            || { echo "::error::defconfig SUSFS append failed"; exit 1; }
+
+          echo "== 启用 pstore ramoops（异常开机取证：/sys/fs/pstore/console-ramoops-*）=="
+          for sym in PSTORE PSTORE_RAM PSTORE_CONSOLE; do
+            echo "CONFIG_${sym}=y" >> "$DEFCONFIG_PATH"
+          done
+
+          echo "== 生成 defconfig =="
+          make O=out ARCH=arm64 "${{ env.DEFCONFIG_NAME }}"
+
+          echo "== 配置 SukiSU-Ultra builtin：SUSFS 全功能 =="
+          # builtin 的 KSU 无 KPROBES/EXT4_FS 依赖（manual-hook 形态，钩子调用点
+          # 全部位于内核树 #ifdef CONFIG_KSU_SUSFS 内），KSU_SUSFS 开启即生效
+          scripts/config --file out/.config \
+            --enable  KSU \
+            --enable  KSU_SUSFS \
+            --enable  KSU_SUSFS_SUS_PATH \
+            --enable  KSU_SUSFS_SUS_MOUNT \
+            --enable  KSU_SUSFS_SUS_KSTAT \
+            --enable  KSU_SUSFS_SPOOF_UNAME \
+            --disable KSU_SUSFS_ENABLE_LOG \
+            --enable  KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+            --enable  KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+            --enable  KSU_SUSFS_OPEN_REDIRECT \
+            --enable  KSU_SUSFS_SUS_MAP \
+            --enable  PSTORE \
+            --enable  PSTORE_RAM \
+            --enable  PSTORE_CONSOLE \
+            --disable KSU_SUSFS_PRIORITY_UID_FILTER \
+            --disable KPM \
+            --disable KSU_DEBUG \
+            --enable  KALLSYMS_ALL \
+            --disable UAPI_HEADER_TEST \
+            --disable HEADERS_INSTALL \
+            --set-str LOCALVERSION ""
+
+          # 【slim18→slim20】uname stock 格式修复（Tampered kernel 回归根因）：
+          # v7/v8 内核串 `5.4.302--7-g<8位sha>-ab<buildid>`（上游旧 pin 提交
+          # 自带 stock 格式伪装）能通过春秋的 uname 核对；pin 前移到
+          # f4c3fdd4f（Leecaarmy 合并提交）后该伪装串消失，GKI setlocalversion
+          # 输出 `5.4.302-gf4c3fdd-dirty`（无 ab id、带 -dirty）→ slim16 实测
+          # Tampered kernel 回归。setlocalversion 的 scm_version() 开头即
+          # `if test -e .scmversion; then cat .scmversion; return`——注入本
+          # 文件后 KERNELRELEASE 精确复刻 v7/v8 通过格式，-dirty 判定被短路
+          # （git apply 补丁导致的树脏不再泄漏到 release 串）。
+          # 【slim19/20 实证补丁】春秋对 g 段的核对是纯数字白名单式正则（g[0-9]{8} 类）：
+          #   四个全数字 8 位值全部通过（49227494/27521915/18811082/59565037），
+          #   唯一含字母的 f4c3fdd4 被拒（Tampered kernel 回归，2026-11-26 实机）。
+          #   小米 stock 的 setlocalversion 该段本就是数字（内部计数），git 短 SHA
+          #   十六进制含字母会踩雷——注入值必须 8 位纯数字。ab 段同为纯数字即可。
+          printf -- '--6-g59565037-ab63821773' > .scmversion
+          test "$(cat .scmversion)" = '--6-g59565037-ab63821773' \
+            || { echo "::error::.scmversion write failed"; exit 1; }
+          echo "-- .scmversion injected: KERNELRELEASE -> 5.4.302--6-g59565037-ab63821773"
+
+          # 【slim14】AVC spoof 需要内核 kprobe 支持（kprobe 挂 slow_avc_audit，
+          # 在渲染 AVC 审计日志时把 ksu/su 域的 SID 替换为 priv_app 域）。
+          # builtin manual-hook 形态原本不依赖 KPROBES，vendor defconfig 可能
+          # 未开启——必须显式启用，否则 avc_spoof 注册 kprobe 失败静默失效。
+          # 独立调用（勿并入上方续行块，shell 续行中间不能插注释）。
+          scripts/config --file out/.config \
+            --enable KPROBES
+            # /proc/version 不受 SUSFS SPOOF_UNAME 伪造，版本串带 susfs 等字样会被
+            # 春秋/Momo 类检测直接读出；强制保持空串，内核串回归原厂形态
+
+          # 【slim12 反检测核心】净化 /proc/config.gz 内容，而非删除文件：
+          # 实机取证：/proc/config.gz 非 root 可读（-r--r--r--），内容含
+          # CONFIG_KSU=y + 全套 CONFIG_KSU_SUSFS_*——任何 app
+          # zcat|grep KSU 即 100% 命中，这是 kernelsu detected 在摘 hook、
+          # reboot 门控、kallsyms 改名全部失效后仍存在的原因。
+          # slim11 曾尝试 IKCONFIG=n 直接删除 config.gz，结果刷入后卡第二屏
+          # ——说明 MIUI 用户空间在 boot 阶段依赖该文件存在，方案作废。
+          # slim12 方案：保留 IKCONFIG=y/IKCONFIG_PROC=y（文件存在、服务不卡），
+          # 但嵌入镜像的 config_data.gz 在生成时过滤掉所有 KSU/SUSFS/KPM 行，
+          # 内核真实编译仍用完整 .config，功能零影响；
+          # /proc/config.gz 与 extract-ikconfig 二进制后处理读到的都是净化版。
+          # dmesg_restrict 开关保留但默认 false（slim11 嫌疑项，先保开机）。
+
+          # 【slim22】真正落地 dmesg_restrict：slim11-slim21 只校验不设置，
+          # 打开输入必然在下面的校验里失败。true 时显式 enable；false 时不碰
+          # defconfig 原值（避免把 stock 已开的开关关掉，反向泄漏）。
+          if [ "${{ inputs.restrict_dmesg }}" = "true" ]; then
+            scripts/config --file out/.config --enable SECURITY_DMESG_RESTRICT \
+              || { echo "::error::cannot enable SECURITY_DMESG_RESTRICT (symbol missing in this tree?)"; exit 1; }
+          fi
+
+          make O=out ARCH=arm64 olddefconfig
+
+          echo "== 校验 SUSFS 配置生效 =="
+          for sym in KSU KSU_SUSFS KSU_SUSFS_SUS_PATH KSU_SUSFS_SUS_MOUNT KSU_SUSFS_SUS_KSTAT \
+                     KSU_SUSFS_SPOOF_UNAME KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+                     KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG KSU_SUSFS_OPEN_REDIRECT \
+                     KSU_SUSFS_SUS_MAP PSTORE PSTORE_RAM PSTORE_CONSOLE; do
+            grep -q "^CONFIG_${sym}=y" out/.config || { echo "::error::CONFIG_${sym} not enabled"; exit 1; }
+          done
+          # 【slim12 断言】config.gz 通道：文件必须存在（保开机）+ 内容将被净化
+          grep -q '^CONFIG_IKCONFIG=y' out/.config \
+            || { echo "::error::CONFIG_IKCONFIG must stay on (slim12 keeps config.gz, sanitized)"; exit 1; }
+          grep -q '^CONFIG_IKCONFIG_PROC=y' out/.config \
+            || { echo "::error::CONFIG_IKCONFIG_PROC must stay on (slim12 keeps config.gz, sanitized)"; exit 1; }
+          if [ "${{ inputs.restrict_dmesg }}" = "true" ]; then
+            grep -q '^CONFIG_SECURITY_DMESG_RESTRICT=y' out/.config \
+              || { echo "::error::restrict_dmesg=true but CONFIG_SECURITY_DMESG_RESTRICT is not set"; exit 1; }
+            echo "-- dmesg_restrict ON: unprivileged readers (incl. shell/Shizuku) lose the ring buffer"
+          else
+            echo "-- dmesg_restrict left at defconfig value (restrict_dmesg=false)"
+          fi
+          echo "-- slim12: config.gz kept but will be sanitized; dmesg_restrict=$(if [ "${{ inputs.restrict_dmesg }}" = "true" ]; then echo on; else echo off; fi)"
+          grep -q '^CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER=y' out/.config \
+            && { echo "::error::CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER must stay off (vendor 5.4 susfs lacks kernel-side support)"; exit 1; } || true
+          # 【slim22】ENABLE_LOG 关：打开时 SUSFS 自己会往 dmesg 打 "susfs: ..." 行
+          if grep -q '^CONFIG_KSU_SUSFS_ENABLE_LOG=y' out/.config; then
+            echo "::error::CONFIG_KSU_SUSFS_ENABLE_LOG must stay off (its pr_info lines are a dmesg fingerprint)"
+            exit 1
+          fi
+          # 【slim14 断言】kprobe 支持必须生效，否则 AVC spoof 注册失败
+          grep -q '^CONFIG_KPROBES=y' out/.config \
+            || { echo "::error::CONFIG_KPROBES not enabled - avc_spoof would silently fail"; exit 1; }
+          grep -q '^CONFIG_KPM=y' out/.config \
+            && { echo "::error::CONFIG_KPM should stay off"; exit 1; } || true
+
+      - name: Sanitize /proc/config.gz embedding (slim12)
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          echo "== slim12：净化嵌入镜像的内核配置（保留 /proc/config.gz 文件本身） =="
+          # 原理：kernel/configs.c 用 .incbin "kernel/config_data.gz" 把这个 gz
+          # 嵌进 .rodata，/proc/config.gz 与 extract-ikconfig 读的都是它。
+          # vendor 树（zttlove sm8350 hyperos, 5.4）的生成链与主线不同：
+          #   $(obj)/config_data.gz: $(obj)/config_data FORCE
+          #     $(call if_changed,gzip)
+          #   filechk_cat = cat $<
+          #   $(obj)/config_data: $(KCONFIG_CONFIG) FORCE
+          #     $(call filechk,cat)
+          # 最小 patch 点 = filechk_cat 调用行：把 "cat $<" 换成"过滤后输出"，
+          # config_data / config_data.gz / .incbin 嵌入 / /proc/config.gz
+          # 整条链自动净化。
+          # 主线形态（config_data.gz 直接由 KCONFIG_CONFIG gzip）作为回退。
+          #   - 内核真实编译仍用完整 out/.config，KSU/SUSFS 功能零影响
+          #   - FORCE 使每次构建必重生成，patch 必然生效
+          #   - 文件继续存在（slim11 教训：MIUI boot 阶段依赖它，删了卡第二屏）
+          python3 - <<'PYEOF'
+          import re, sys
+          # 读树根下的 kernel/Makefile（working-directory 是树根；vendor 的
+          # IKCONFIG 规则在子目录 kernel/Makefile 里，不在树根 Makefile）
+          mk = open('kernel/Makefile').read()
+          # 形态一（vendor 5.4）：config_data 由 $(call filechk,cat) 从 .config 复制，
+          # 再 gzip 成 config_data.gz。替换其 recipe 行（tab 行，# 在引号内安全）。
+          # 注意不能替换 "filechk_cat = cat $<" 赋值行——make 变量赋值行中
+          # # 是注释起始符，模式里的 "# CONFIG_... is not set" 会截断赋值。
+          pat_vendor = re.compile(
+              r'(\$\(obj\)/config_data:\s*\$\(KCONFIG_CONFIG\)\s*FORCE\n\t)'
+              r'\$\(call filechk,cat\)')
+          # 形态二（主线 5.4）：gz 直接由 KCONFIG_CONFIG gzip
+          pat_main = re.compile(
+              r'(\$\(obj\)/config_data\.gz:\s*\$\(KCONFIG_CONFIG\)\s*FORCE\n\t)'
+              r'\$\(call if_changed,gzip\)')
+          # sanitize：删掉 KSU/SUSFS/KPM 的 =y/=m 行与 "is not set" 行
+          # （后者同样泄漏存在性）。替换文本落在 recipe 行内，# 在引号内。
+          sanitize = ('grep -vE "^(CONFIG_KSU|CONFIG_SUSFS|CONFIG_KPM)|'
+                      '^# CONFIG_(KSU|SUSFS|KPM)[A-Z0-9_]* is not set" ')
+          if pat_vendor.search(mk):
+              mk = pat_vendor.sub(lambda m: m.group(1) + sanitize + '$(KCONFIG_CONFIG) > $@', mk)
+              print('patched (vendor form): config_data now strips KSU/SUSFS/KPM lines')
+          elif pat_main.search(mk):
+              mk = pat_main.sub(lambda m: m.group(1) + sanitize
+                                + '$(KCONFIG_CONFIG) | gzip -n -9 > $@', mk)
+              print('patched (mainline form): config_data.gz generated from KSU/SUSFS/KPM-free .config')
+          else:
+              i = mk.find('config_data')
+              ctx = mk[max(0, i-200):i+300] if i != -1 else '(not found at all)'
+              sys.exit('::error::neither vendor nor mainline IKCONFIG rule found in kernel/Makefile; context: ' + repr(ctx))
+          open('kernel/Makefile', 'w').write(mk)
+          PYEOF
+          grep -n -A1 'config_data\.gz: \|config_data: ' kernel/Makefile
+          echo "-- slim12: sanitize patch applied (build will regenerate config_data via FORCE)"
+
+      - name: Fix misleading indentation in mi_dsi_panel.c (no behavior change)
+        working-directory: kernel
+        # 纯编译警告/无行为变更补丁（diag/r5 同款；slim13 之前缺这步）：
+        # techpack/display/msm/mi_disp/mi_dsi_panel.c LOCAL_HBM_OFF_TO_NORMAL_BACKLIGHT_RESTORE:
+        # else 缺大括号，后随两行缩进过深触发 -Wmisleading-indentation。编译器实际语义：
+        # else 体仅含 backlight_in_aod；dc_gain（内部自带 panel_id 守卫）与 tx_cmd_set
+        # 无条件执行——与上方姊妹 case（..._BACKLIGHT）的尾部模式一致，编译结果即作者
+        # 意图。补大括号+对齐缩进，编译产物零变化，仅消除警告。
+        # L3 文件内 pragma 兜底：techpack 独立 Kbuild，全局 KCFLAGS 传导不进该目录。
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 <<'PYEOF'
+          import os, sys
+          p = "techpack/display/msm/mi_disp/mi_dsi_panel.c"
+          if not os.path.exists(p):
+              print("::warning::mi_dsi_panel.c not found - skipping (non-fatal)")
+              sys.exit(0)
+          s = open(p).read()
+          old = ("\t\t\telse\n"
+                 "\t\t\t\tmi_dsi_update_backlight_in_aod(panel, true);\n"
+                 "\t\t\t\tif (mi_cfg->panel_id == 0x4C3900360200)\n"
+                 "\t\t\t\t\tmi_dsi_update_lhbm_dc_gain(panel,DSI_CMD_SET_MI_LOCAL_HBM_OFF_TO_NORMAL);\n"
+                 "\t\t\t\tdsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_LOCAL_HBM_OFF_TO_NORMAL);\n")
+          new = ("\t\t\telse {\n"
+                 "\t\t\t\tmi_dsi_update_backlight_in_aod(panel, true);\n"
+                 "\t\t\t}\n"
+                 "\t\t\tif (mi_cfg->panel_id == 0x4C3900360200)\n"
+                 "\t\t\t\tmi_dsi_update_lhbm_dc_gain(panel,DSI_CMD_SET_MI_LOCAL_HBM_OFF_TO_NORMAL);\n"
+                 "\t\t\tdsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_LOCAL_HBM_OFF_TO_NORMAL);\n")
+          if s.count(new) == 1:
+              print("-- mi_dsi_panel.c: already in canonical form (skip brace surgery)")
+          elif s.count(old) == 1:
+              s = s.replace(old, new)
+              print("-- mi_dsi_panel.c: else braces added, indentation aligned (semantics unchanged)")
+          else:
+              print("::warning::mi_dsi_panel anchor unmatched - relying on L3 pragma (non-fatal)")
+          # L3 兜底（无条件执行）：编译器直读、不依赖 Kbuild 传导，必生效。
+          PRAGMA = '#pragma clang diagnostic ignored "-Wmisleading-indentation"\n'
+          if PRAGMA not in s:
+              idx = s.find("#include")
+              if idx == -1:
+                  sys.exit("::error::mi_dsi_panel.c has no #include - unexpected source")
+              s = s[:idx] + PRAGMA + s[idx:]
+              print("-- mi_dsi_panel.c: L3 -Wmisleading-indentation pragma inserted")
+          open(p, "w").write(s)
+          PYEOF
+          grep -q '#pragma clang diagnostic ignored "-Wmisleading-indentation"' \
+            techpack/display/msm/mi_disp/mi_dsi_panel.c \
+            || { echo "::error::mi_dsi_panel.c pragma missing"; exit 1; }
+          echo "-- verified: mi_dsi_panel.c -Wmisleading-indentation suppression in place"
+
+      - name: Fix ignored kstrtou32 return in bootinfo.c (no behavior change)
+        working-directory: kernel
+        # 纯编译警告/无行为变更补丁：三层防御，任何一层生效即静默该警告
+        # （diag/r5 同款；slim13 之前缺这步）。
+        #   L1 精确 anchor 替换（return 透传）
+        #   L2 宽松正则（容忍行尾空白差异）
+        #   L3 文件头插入 #pragma clang diagnostic —— 编译器直读、必生效。
+        #      为什么需要 L3：techpack 是独立 Kbuild 体系，全局 KCFLAGS 的
+        #      -Wno-unused-result 传导不进该目录，所以 Build 步骤里带了
+        #      该参数警告依然出现；写进文件本身则一定生效。
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          # techpack/bootinfo/bootinfo.c: get_powerup_reason()/get_powerdown_reason()
+          # 忽略 kstrtou32 返回值（-Wunused-result）。解析失败时全局 pu/pd_reason
+          # 本就保持 0，且调用方（powerup_reason_show 等 5 处）全部忽略本函数返回值
+          # ——改为 return kstrtou32(...) 透传，警告消除，行为零变化。
+          python3 <<'PYEOF'
+          import os, re, sys
+          p = "techpack/bootinfo/bootinfo.c"
+          if not os.path.exists(p):
+              print("::warning::bootinfo.c not found - skipping (non-fatal)")
+              sys.exit(0)
+          s = open(p).read()
+          fixed = []
+          for var in ("pu_reason", "pd_reason"):
+              # L1 精确：kstrtou32 行 + 紧随 return 0;
+              old = "\tkstrtou32(buf, 16, &" + var + ");\n\treturn 0;\n"
+              new = "\treturn kstrtou32(buf, 16, &" + var + ");\n"
+              if s.count(old) == 1:
+                  s = s.replace(old, new)
+                  fixed.append(var + "(L1)")
+                  continue
+              # L2 宽松正则：容忍行尾空白；仅当模式唯一命中才替换
+              pat = re.compile(r'\tkstrtou32\(buf, 16, &' + var + r'\);[ \t]*\n\treturn 0;[ \t]*\n')
+              if len(pat.findall(s)) == 1:
+                  s = pat.sub(new, s, count=1)
+                  fixed.append(var + "(L2)")
+          if fixed:
+              open(p, "w").write(s)
+              print("-- bootinfo.c: kstrtou32 return propagated:", ", ".join(fixed))
+          else:
+              print("-- bootinfo.c: L1/L2 anchors unmatched; applying L3 pragma suppress")
+          # L3 兜底（无条件执行）：在首个 #include 前插入 diagnostic pragma，
+          # 对整个文件的 -Wunused-result 一律静默。pragma 是编译器直读的，
+          # 不依赖任何 Kbuild 传导，这一层不存在"没生效"的可能。
+          PRAGMA = '#pragma clang diagnostic ignored "-Wunused-result"\n'
+          if PRAGMA not in s:
+              idx = s.find("#include")
+              if idx == -1:
+                  raise SystemExit("::error::bootinfo.c has no #include - unexpected source, abort")
+              open(p, "w").write(s[:idx] + PRAGMA + s[idx:])
+              print("-- bootinfo.c: L3 -Wunused-result pragma inserted before first #include")
+          PYEOF
+          # 终验：pragma 必须在文件里（L1/L2 改不改源码，L3 都保证警告消失）
+          grep -q '#pragma clang diagnostic ignored "-Wunused-result"' techpack/bootinfo/bootinfo.c \
+            || { echo "::error::bootinfo.c pragma missing"; exit 1; }
+          echo "-- verified: bootinfo.c -Wunused-result suppression in place"
+
+      - name: Fix misleading indentation in cam_flash_core.c add_req block
+        working-directory: kernel
+        # 纯编译警告/无行为变更补丁：锚点若因上游漂移失配，只告警不中断构建。
+        # 三层防御（与 bootinfo.c -Wunused-result 同款思路）：
+        #   L1 行级锚点：按实际缩进补回守卫大括号（恢复 CAF 原始写法，行为零变化）。
+        #      不硬编码缩进深度，从实际行提取缩进——上一版按 2/3 tab 硬编码，
+        #      实际源码是 4/6 tab，锚点必失配（这就是警告漏网的原因）。
+        #   L2 容错：锚点漂移时仅告警、靠 L3 兜底。
+        #   L3 文件内 #pragma clang diagnostic —— 编译器直读必生效。techpack 是
+        #      独立 Kbuild 体系，全局 KCFLAGS 的 -Wno-misleading-indentation
+        #      传导不进该目录；写进文件本身则一定生效（与 bootinfo L3 同理）。
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          # techpack/camera_star/.../cam_flash_core.c cam_flash_i2c_pkt_parser():
+          # 守卫 if (crm_cb && crm_cb->add_req) 丢失左大括号（合并腐蚀），内层
+          # if (rc) 错误检查缩进过深触发 -Wmisleading-indentation。可达路径上
+          # 守卫内外等价：未调用 add_req 时 rc 恒为函数入口初值 0（NOP 路径
+          # goto 前不碰 rc），补回大括号恢复 CAF 原始写法，行为零变化。
+          python3 <<'PYEOF'
+          import sys
+          p = "techpack/camera_star/drivers/cam_sensor_module/cam_flash/cam_flash_core.c"
+          s = open(p).read()
+          PRAGMA = '#pragma clang diagnostic ignored "-Wmisleading-indentation"\n'
+          if 'fctrl->bridge_intf.crm_cb->add_req) {' in s:
+              print("-- cam_flash_core.c: guard braces already present (skip surgery)")
+          else:
+              lines = s.splitlines(keepends=True)
+              gi = next((i for i, ln in enumerate(lines)
+                         if ln.strip() == "if (fctrl->bridge_intf.crm_cb &&"
+                         and lines[i + 1].strip() == "fctrl->bridge_intf.crm_cb->add_req)"), None)
+              if gi is None:
+                  print("::warning::cam_flash guard anchor not found - relying on L3 pragma (non-fatal)")
+              else:
+                  call, err = lines[gi + 2], lines[gi + 3]
+                  assert call.strip() == "rc = fctrl->bridge_intf.crm_cb->add_req(&add_req);", \
+                      "add_req call line drifted - manual review needed"
+                  es = err.strip()
+                  assert es.startswith("if") and "(rc) {" in es, \
+                      "if (rc) line drifted - manual review needed"
+                  # 找内层 if (rc) 块的收尾 '}'：花括号计数（本块 CAM_ERR 消息串
+                  # 不含大括号字面量，计数安全）
+                  depth, j = 0, gi + 3
+                  while j < len(lines):
+                      depth += lines[j].count("{") - lines[j].count("}")
+                      if depth == 0:
+                          break
+                      j += 1
+                  assert depth == 0 and lines[j].strip() == "}", \
+                      "inner if(rc) close brace not found - manual review needed"
+                  indent = lines[gi][: len(lines[gi]) - len(lines[gi].lstrip())]
+                  lines[gi + 1] = lines[gi + 1].rstrip() + " {\n"      # 守卫补 '{'
+                  lines[gi + 3] = err.replace("if  (rc)", "if (rc)")   # 双空格归一
+                  lines.insert(j + 1, indent + "}\n")                  # 守卫补 '}'
+                  s = "".join(lines)
+                  print(f"-- cam_flash_core.c: guard braces restored (guard L{gi + 1}, close after L{j + 1})")
+          # L3 兜底（无条件执行）：编译器直读、不依赖 Kbuild 传导，必生效。
+          if PRAGMA not in s:
+              idx = s.find("#include")
+              if idx == -1:
+                  sys.exit("::error::cam_flash_core.c has no #include - unexpected source")
+              s = s[:idx] + PRAGMA + s[idx:]
+              print("-- cam_flash_core.c: L3 -Wmisleading-indentation pragma inserted")
+          open(p, "w").write(s)
+          PYEOF
+          # 终验：pragma 必须在文件里（L1 大括号补没补上，L3 都保证警告消失）
+          grep -q '#pragma clang diagnostic ignored "-Wmisleading-indentation"' \
+            techpack/camera_star/drivers/cam_sensor_module/cam_flash/cam_flash_core.c \
+            || { echo "::error::cam_flash_core.c pragma missing"; exit 1; }
+          echo "-- verified: cam_flash_core.c -Wmisleading-indentation suppression in place"
+
+      - name: Fix mixed-type min() in tcp_output.c srtt clamp (no behavior change)
+        working-directory: kernel
+        # 纯编译警告/无行为变更补丁。net/ipv4/tcp_output.c 第 2028 行附近：
+        #   threshold = min(srtt_in_ns >> 1, NSEC_PER_MSEC);
+        # srtt_in_ns >> 1 是 u64（unsigned long long），NSEC_PER_MSEC 是 long，
+        # min() 宏内 __typecheck 用两个不同类型指针比较，触发
+        # -Wcompare-distinct-pointer-types。
+        # 修法：min() -> min_t(u64, ...)（内核标准写法）。NSEC_PER_MSEC =
+        # 1000000L 恒为正、转 u64 数值不变，比较结果不变，行为零变化。
+        # net/ipv4 属主 Kbuild 体系（全局 KCFLAGS 可传导），直接改代码最干净，
+        # 不额外加 -Wno 编译旗标。
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 <<'PYEOF'
+          import re
+          p = "net/ipv4/tcp_output.c"
+          s = open(p).read()
+          old = "threshold = min(srtt_in_ns >> 1, NSEC_PER_MSEC);"
+          new = "threshold = min_t(u64, srtt_in_ns >> 1, NSEC_PER_MSEC);"
+          if new in s:
+              print("-- tcp_output.c: min_t fix already present (idempotent)")
+          elif old in s:
+              n = s.count(old)
+              assert n == 1, f"anchor count {n} != 1 (source moved?)"
+              open(p, "w").write(s.replace(old, new))
+              print("-- tcp_output.c: min() -> min_t(u64,...) (types unified, no behavior change)")
+          else:
+              # L2 宽松正则：容忍空白差异（anchor 因上游漂移时的降级路径）
+              pat = re.compile(
+                  r'threshold\s*=\s*min\(\s*srtt_in_ns\s*>>\s*1\s*,\s*NSEC_PER_MSEC\s*\)\s*;')
+              hits = pat.findall(s)
+              assert len(hits) == 1, f"regex anchor count {len(hits)} != 1 - manual review needed"
+              s = pat.sub('threshold = min_t(u64, srtt_in_ns >> 1, NSEC_PER_MSEC);', s)
+              open(p, "w").write(s)
+              print("-- tcp_output.c: min() -> min_t(u64,...) via L2 regex (whitespace-tolerant)")
+          PYEOF
+          grep -q 'min_t(u64, srtt_in_ns >> 1, NSEC_PER_MSEC)' net/ipv4/tcp_output.c \
+            || { echo "::error::tcp_output.c min_t fix verification failed"; exit 1; }
+          echo "-- verified: tcp_output.c min_t(u64) fix in place"
+
+      - name: Fix misleading indentation in cyttsp5_device_access.c (pure reindent)
+        working-directory: kernel
+        # 纯编译警告/无行为变更补丁：anchor 若因上游漂移失配，只告警不中断构建
+        # （与 diag / r5 同款步骤；slim13 之前缺这步导致三处 -Wmisleading-
+        # indentation 漏网）。
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          # drivers/input/touchscreen/cyttsp5/cyttsp5_device_access.c 三处缩进腐烂：
+          # 1) cmcp_test store: if 体仅 range_check=0，后续 cmcp_* 赋值无条件执行
+          #    （上游 Parade 原始语义；若塞进 if 内，写 CMCP_FULL 永不更新
+          #    cmcp_test_items，测试机直接坏）——按编译语义重排。
+          # 2/3) CM/Cm 打印循环: for 体仅 prepare_print_data，行尾换行
+          #    prepare_print_string("\n") 在 j 循环外每行一次（语义正确）——
+          #    续行缩进混乱（6/2/8、7/4/7 tab）误导 clang，重排为正常层级。
+          # 三处均为纯缩进调整，token 流不变（构建时以去空白等价性断言兜底）。
+          python3 <<'PYEOF'
+          import os, re, sys
+          p = "drivers/input/touchscreen/cyttsp5/cyttsp5_device_access.c"
+          if not os.path.exists(p):
+              print("::warning::cyttsp5_device_access.c not found - skipping (non-fatal)")
+              sys.exit(0)
+          s = open(p).read()
+          old1 = ("\tif (test_item > 0 && test_item < 5)\n"
+                  "\t\trange_check = 0;\n"
+                  "\t\tdad->cmcp_test_items = test_item;\n"
+                  "\t\tdad->cmcp_range_check = range_check;\n"
+                  "\t\tdad->cmcp_force_calibrate = force_calibrate;\n"
+                  "\t\tparade_debug(dev, DEBUG_LEVEL_2,\n"
+                  "\t\t\t\"%s: Test item is %s; Range check is %s; Force calibrate is %s.\\n\",\n"
+                  "\t\t\t__func__,\n"
+                  "\t\t\tcmcp_test_case_array[test_item],\n"
+                  "\t\t\tcmcp_test_range_check_array[range_check],\n"
+                  "\t\t\tcmcp_test_force_cal_array[force_calibrate]);\n")
+          new1 = ("\tif (test_item > 0 && test_item < 5)\n"
+                  "\t\trange_check = 0;\n"
+                  "\tdad->cmcp_test_items = test_item;\n"
+                  "\tdad->cmcp_range_check = range_check;\n"
+                  "\tdad->cmcp_force_calibrate = force_calibrate;\n"
+                  "\tparade_debug(dev, DEBUG_LEVEL_2,\n"
+                  "\t\t\"%s: Test item is %s; Range check is %s; Force calibrate is %s.\\n\",\n"
+                  "\t\t__func__,\n"
+                  "\t\tcmcp_test_case_array[test_item],\n"
+                  "\t\tcmcp_test_range_check_array[range_check],\n"
+                  "\t\tcmcp_test_force_cal_array[force_calibrate]);\n")
+          old2 = ("\t\t\t\t\tfor (j = 1; j < tx_num; j++)\n"
+                  "\t\t\t\t\t\tindex = prepare_print_data(\n"
+                  "\t\t\t\t\t\tout_buf,\n"
+                  "\t\t\t&cmcp_info->cm_sensor_column_delta[(j-1)*rx_num+i],\n"
+                  "\t\t\t\t\t\tindex, 1);\n"
+                  "\t\t\t\t\t\tindex = prepare_print_string(\n"
+                  "\t\t\t\t\t\t\t\tout_buf,\n"
+                  "\t\t\t\t\t\t\t\t\"\\n\", index);\n")
+          new2 = ("\t\t\t\t\tfor (j = 1; j < tx_num; j++)\n"
+                  "\t\t\t\t\t\tindex = prepare_print_data(\n"
+                  "\t\t\t\t\t\t\tout_buf,\n"
+                  "\t\t\t\t\t\t\t&cmcp_info->cm_sensor_column_delta[(j-1)*rx_num+i],\n"
+                  "\t\t\t\t\t\t\tindex, 1);\n"
+                  "\t\t\t\t\tindex = prepare_print_string(\n"
+                  "\t\t\t\t\t\tout_buf,\n"
+                  "\t\t\t\t\t\t\"\\n\", index);\n")
+          # 续行缩进在不同 vendor pin 上有 8 tab / 7 tab 两种形态（2026-11-19 在
+          # f4c3fdd4 上实测为 7 tab），这里同时接受两种，命中即用；都不命中也只
+          # 告警、不中止 —— 本步骤仅消除 -Wmisleading-indentation，纯缩进零行为
+          # 变更，KCFLAGS 另有 -Wno-error / -Wno-misleading-indentation 兜底。
+          base3 = ("\t\t\t\t\tfor (j = 0; j < tx_num; j++)\n"
+                   "\t\t\t\t\t\tindex = prepare_print_data(\n"
+                   "\t\t\t\t\t\t\tout_buf,\n"
+                   "\t\t\t\t&cmcp_info->cm_sensor_row_delta[j*rx_num+i-1],\n"
+                   "\t\t\t\t\t\t\tindex, 1);\n"
+                   "\t\t\t\t\t\tindex = prepare_print_string(\n")
+          tails3 = ("\t\t\t\t\t\t\t\tout_buf,\n"
+                    "\t\t\t\t\t\t\t\t\"\\n\", index);\n",
+                    "\t\t\t\t\t\t\tout_buf,\n"
+                    "\t\t\t\t\t\t\t\"\\n\", index);\n")
+          new3 = ("\t\t\t\t\tfor (j = 0; j < tx_num; j++)\n"
+                  "\t\t\t\t\t\tindex = prepare_print_data(\n"
+                  "\t\t\t\t\t\t\tout_buf,\n"
+                  "\t\t\t\t\t\t\t&cmcp_info->cm_sensor_row_delta[j*rx_num+i-1],\n"
+                  "\t\t\t\t\t\t\tindex, 1);\n"
+                  "\t\t\t\t\tindex = prepare_print_string(\n"
+                  "\t\t\t\t\t\tout_buf,\n"
+                  "\t\t\t\t\t\t\"\\n\", index);\n")
+          orig = s
+          applied = []
+          # 幂等：文件已是修复后形态则直接跳过，不重复替换
+          if s.count(new1) == 1 and s.count(new2) == 1 and s.count(new3) == 1:
+              print("-- cyttsp5_device_access.c: already in canonical form, skipping")
+              sys.exit(0)
+          for name, o, n in [("cmcp block", old1, new1),
+                             ("column-delta loop", old2, new2)]:
+              c = s.count(o)
+              if c == 1:
+                  s = s.replace(o, n)
+                  applied.append(name)
+              else:
+                  print(f"::warning::{name}: anchor count {c} != 1 - skipped (non-fatal)")
+          hit = False
+          for tail in tails3:
+              o = base3 + tail
+              if s.count(o) == 1:
+                  s = s.replace(o, new3)
+                  applied.append("row-delta loop")
+                  hit = True
+                  break
+          if not hit:
+              print("::warning::row-delta loop: no known anchor variant matched - skipped (non-fatal)")
+          # 纯重排证明：去空白后 token 流必须与原文件一致
+          assert re.sub(r"\s+", "", orig) == re.sub(r"\s+", "", s), \
+              "token stream changed - aborting (not a pure reindent)"
+          open(p, "w").write(s)
+          print(f"-- cyttsp5_device_access.c: reindented {len(applied)} site(s), token stream unchanged")
+          PYEOF
+          echo "-- verified: cyttsp5 reindent step completed"
+
+      - name: Fix PCI_VENDOR_ID_ASIX macro redefinition in 8250_pci.c (no behavior change)
+        working-directory: kernel
+        # 纯编译警告/无行为变更补丁：drivers/tty/serial/8250/8250_pci.c 第 1877 行
+        #   #define PCI_VENDOR_ID_ASIX   0x9710
+        # 与 include/linux/pci_ids.h 的 0x125b 重定义（ASIX 新旧两个 vendor id
+        # 撞了同一个宏名），触发 -Wmacro-redefined。
+        # 修法：重定义前插 #undef。编译器对"不同值重定义"的处理本来就是采用
+        # 新定义（0x9710），#undef 只是消除警告、语义完全一致。
+        # 注意：绝不能用 #ifndef 包住本地 define——那会跳过它、本文件 PCI 表
+        # 的 vendor id 全变 0x125b，真实行为改变。
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 <<'PYEOF'
+          import os, re, sys
+          p = "drivers/tty/serial/8250/8250_pci.c"
+          if not os.path.exists(p):
+              print("::warning::8250_pci.c not found - skipping (non-fatal)")
+              sys.exit(0)
+          s = open(p).read()
+          if "#undef PCI_VENDOR_ID_ASIX" in s:
+              print("-- 8250_pci.c: #undef already present (idempotent)")
+              sys.exit(0)
+          pat = re.compile(r'#define\s+PCI_VENDOR_ID_ASIX\s+0x9710')
+          hits = list(pat.finditer(s))
+          assert len(hits) == 1, \
+              f"anchor count {len(hits)} != 1 - manual review needed"
+          s = s[:hits[0].start()] + "#undef PCI_VENDOR_ID_ASIX\n" + s[hits[0].start():]
+          open(p, "w").write(s)
+          print("-- 8250_pci.c: #undef inserted before redefinition (0x9710 kept, no behavior change)")
+          PYEOF
+          grep -B1 'define PCI_VENDOR_ID_ASIX' drivers/tty/serial/8250/8250_pci.c | grep -q '#undef PCI_VENDOR_ID_ASIX' \
+            || { echo "::error::8250_pci.c #undef verification failed"; exit 1; }
+          echo "-- verified: 8250_pci.c macro redefinition guard in place"
+
+      - name: Fix array-parameter mismatch in qcacld parser_api.c (no behavior change)
+        working-directory: kernel
+        # 纯编译警告/无行为变更补丁：anchor 若因上游漂移失配，只告警不中断构建
+        # （与 diag / r5 同款步骤；slim13 之前缺这步导致 -Warray-parameter 漏网）。
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          # drivers/staging/qcacld-3.0/.../parser_api.c L6177 定义
+          # uint8_t mdie[SIR_MDIE_SIZE]，而 core/mac/src/include/parser_api.h L1056
+          # 声明 uint8_t mdie[]。C 中数组参数退化为指针，[] 与 [SIR_MDIE_SIZE]
+          # 在函数体内均为 uint8_t *，行为完全相同；Clang -Warray-parameter
+          # 只检查声明/定义边界一致性。修复：源文件定义改为 []，与头文件一致。
+          # 函数体内 mdie[0..2] / sizeof(mdie)（参数上下文恒为指针大小）不受影响。
+          python3 <<'PYEOF'
+          import sys
+          p = "drivers/staging/qcacld-3.0/core/mac/src/sys/legacy/src/utils/src/parser_api.c"
+          s = open(p).read()
+          old = "uint8_t mdie[SIR_MDIE_SIZE])"
+          new = "uint8_t mdie[])"
+          c_old, c_new = s.count(old), s.count(new)
+          if c_old == 1:
+              s = s.replace(old, new)
+              open(p, "w").write(s)
+              print("-- parser_api.c: mdie[SIR_MDIE_SIZE] -> mdie[] (matches header)")
+          elif c_new >= 1 and c_old == 0:
+              print("-- parser_api.c: already fixed, skipping")
+          else:
+              sys.exit(f"::error::mdie anchor count old={c_old} new={c_new} (source moved?)")
+          PYEOF
+          grep -q 'uint8_t mdie\[\])' drivers/staging/qcacld-3.0/core/mac/src/sys/legacy/src/utils/src/parser_api.c \
+            || { echo "::error::mdie[] fix verification failed"; exit 1; }
+          ! grep -q 'uint8_t mdie\[SIR_MDIE_SIZE\])' drivers/staging/qcacld-3.0/core/mac/src/sys/legacy/src/utils/src/parser_api.c \
+            || { echo "::error::old mdie[SIR_MDIE_SIZE] definition still present"; exit 1; }
+          echo "-- verified: mdie[] matches header declaration (array-parameter silenced)"
+
+      - name: Fix sscanf %100s off-by-one in fts_spi (stack overflow guard)
+        working-directory: kernel
+        # 纯编译警告/无行为变更补丁（diag/r5 同款；slim13 之前缺这步）。
+        # 这条不是外观问题：drivers/input/touchscreen/fts_spi/{fts_proc.c,fts.c}
+        # 目标缓冲区均为 char path[100]，而 sscanf 格式串用 %100s ——
+        # 匹配满 100 字符时写入 100 字节 + NUL = 101 字节，越界 1 字节
+        # （clang -Wfortify-source 报的真实 off-by-one）。
+        # 修复：%100s -> %99s（保留 NUL 空间）。行为影响仅在用户输入
+        # 恰好 >= 99 字符的固件路径时截断 1 字符，正常固件名远短于此。
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 <<'PYEOF'
+          import os, sys
+          fixes = {
+              "drivers/input/touchscreen/fts_spi/fts_proc.c": [
+                  ('sscanf(p, "%100s", path);', 'sscanf(p, "%99s", path);'),
+              ],
+              "drivers/input/touchscreen/fts_spi/fts.c": [
+                  ('sscanf(buf, "%100s %d %d", path, &mode[0], &mode[1]);',
+                   'sscanf(buf, "%99s %d %d", path, &mode[0], &mode[1]);'),
+              ],
+          }
+          for p, pairs in fixes.items():
+              if not os.path.exists(p):
+                  print(f"::warning::{p} not found - skipping (non-fatal)")
+                  continue
+              s = open(p).read()
+              for o, n in pairs:
+                  c = s.count(o)
+                  if c == 1:
+                      s = s.replace(o, n)
+                  elif n in s:
+                      print(f"-- {p}: already fixed, skipping")
+                      continue
+                  else:
+                      print(f"::warning::{p}: anchor count {c} != 1 - skipped (non-fatal)")
+                      continue
+              open(p, "w").write(s)
+              print(f"-- {p}: %100s -> %99s ({len(pairs)} site)")
+          PYEOF
+          ! grep -rn '%100s' drivers/input/touchscreen/fts_spi/ 2>/dev/null \
+            || { echo "::error::%100s still present in fts_spi"; exit 1; }
+          echo "-- verified: fts_spi sscanf width fixed, no %100s left"
+
+      - name: Fix unused label reset_assert in dwc3-qcom.c (no behavior change)
+        working-directory: kernel
+        # 纯编译警告/无行为变更补丁（diag/r5 同款；slim13 之前缺这步）。
+        # drivers/usb/dwc3/dwc3-qcom.c 的 reset_assert 标签在当前 defconfig 下
+        # 无任何 goto 引用（-Wunused-label）。两种成因：
+        #   a) 代码演进中删除全部 goto reset_assert，标签残留 → 删除安全
+        #   b) goto 在某个 #ifdef CONFIG_XXX 块内被当前配置排除 → 删除会在
+        #      未来启用该配置时导致 "label not found" 编译错误
+        # 脚本先扫全文（含条件编译块）确认无 goto 引用；有则报错让手动用
+        # 相同 #ifdef 包裹标签，无则删除标签行。零行为变更。
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 <<'PYEOF'
+          import os, re, sys
+          p = "drivers/usb/dwc3/dwc3-qcom.c"
+          if not os.path.exists(p):
+              print("::warning::dwc3-qcom.c not found - skipping (non-fatal)")
+              sys.exit(0)
+          s = open(p).read()
+          if re.search(r'\bgoto\s+reset_assert\s*;', s):
+              sys.exit("::error::goto reset_assert exists in file (possibly under #ifdef) - "
+                       "manual review needed: wrap label with matching #ifdef or confirm "
+                       "current defconfig excludes it")
+          label_pat = re.compile(r'^reset_assert:[ \t]*\n', re.M)
+          m = label_pat.search(s)
+          if not m:
+              if "reset_assert:" not in s:
+                  print("-- dwc3-qcom.c: reset_assert label already removed, skipping")
+                  sys.exit(0)
+              sys.exit("::error::anchor '^reset_assert:' not found (source moved?)")
+          s = s[:m.start()] + s[m.end():]
+          open(p, "w").write(s)
+          print("-- dwc3-qcom.c: removed unused reset_assert label (no goto references)")
+          PYEOF
+          ! grep -q '^reset_assert:' drivers/usb/dwc3/dwc3-qcom.c \
+            || { echo "::error::reset_assert label still present"; exit 1; }
+          echo "-- verified: reset_assert label removed, no goto references in file"
+
+      - name: 修复编译警告
+        working-directory: kernel
+        run: |
+          set -e
+          FOCALTECH_MAKEFILE="drivers/input/touchscreen/focaltech_touch/Makefile"
+          if [ -f "$FOCALTECH_MAKEFILE" ]; then
+            sed -i 's/^ \+/\t/' "$FOCALTECH_MAKEFILE"
+            echo "Fixed leading spaces in focaltech Makefile"
+          fi
+
+          for entry in \
+            "drivers/staging/qcacld-3.0:-Wno-format" \
+            "drivers/staging/qca-wifi-host-cmn:-Wno-format" \
+            "drivers/thermal:-Wno-fortify-source"; do
+            DIR="${entry%%:*}"
+            FLAG="${entry##*:}"
+            if [ -d "$DIR" ] && [ -f "$DIR/Makefile" ]; then
+              grep -q -- "$FLAG" "$DIR/Makefile" || echo "ccflags-y += $FLAG" >> "$DIR/Makefile"
+            fi
+          done
+
+      - name: Build Kernel
+        working-directory: kernel
+        run: |
+          export ARCH=arm64
+          export PATH="${{ env.CLANG_DIR }}/bin:$PATH"
+          export LLVM=1 LLVM_IAS=1 \
+                 CLANG_TRIPLE=aarch64-linux-gnu- \
+                 CROSS_COMPILE=aarch64-linux-gnu- \
+                 CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+          export CCACHE_DIR="${{ github.workspace }}/.ccache"
+          export CCACHE_MAXSIZE=8G
+          # 去除 CI 构建指纹：/proc/version 里嵌入的构建者/主机名/时间戳会被检测用作
+          # "自编内核" 信号，固定为普通本地构建形态（对反检测同样有意义）
+          export KBUILD_BUILD_USER=builder
+          export KBUILD_BUILD_HOST=android-build
+          # 时间戳用真实构建时间：/proc/version 里的时间=构建时刻，
+          # 手机上一条 cat /proc/version 就能确认刷进去的是哪次构建
+          export KBUILD_BUILD_TIMESTAMP="$(date -u)"
+
+          echo "== 预装 UAPI 头文件以启用 SukiSU preinit runner =="
+          # vendor defconfig 不带 HEADERS_INSTALL，SukiSU builtin 的 preinit runner
+          # 检测不到 out/usr/include 会降级为 -DKSU_NO_PREINIT。这里显式安装以启用
+          make -j$(nproc) O=out ARCH=arm64 \
+            CC="ccache clang" LD="ld.lld" AR="llvm-ar" NM="llvm-nm" \
+            headers_install INSTALL_HDR_PATH="$PWD/out/usr" \
+            || echo "::warning::headers_install failed, SukiSU preinit will stay disabled (non-fatal)"
+          test -f out/usr/include/linux/unistd.h \
+            && echo "-- preinit UAPI headers ready" \
+            || echo "::warning::usr/include/linux/unistd.h missing, preinit will be disabled"
+
+          echo "== slim9 自检：用与驱动 Makefile 完全相同的参数预编译 obfuscated runner.c =="
+          # 复刻 quiet_cmd_ksu_runner 的 CC 调用（KSU_RUNNER_CFLAGS）。若符号改名
+          # 破坏了 runner 独立编译链（与内核构建体系隔离的 freestanding 编译），
+          # 这里会提前失败并打印完整错误——make 里只会吞成一行 "Syntax error"。
+          RUNNER_SELFTEST_CFLAGS="--target=aarch64-linux-gnu -std=gnu11 -Os -Wall \
+            -nostdinc -isystem $(clang -print-file-name=include) \
+            -Idrivers/kernelsu/preinit/runner/nolibc -I$PWD/out/usr/include \
+            -Idrivers/kernelsu/include \
+            -ffreestanding -fno-stack-protector -fno-pic -fno-pie \
+            -fno-asynchronous-unwind-tables -fno-unwind-tables \
+            -ffunction-sections -fdata-sections"
+          if clang $RUNNER_SELFTEST_CFLAGS \
+              -c -o /tmp/runner_selftest.o drivers/kernelsu/preinit/runner/runner.c \
+              2>/tmp/runner_selftest.log; then
+            ld.lld -static -nostdlib -e _start --gc-sections -s \
+              -o /tmp/runner_selftest.elf /tmp/runner_selftest.o \
+              && echo "-- runner.c compiles & links OK after obfuscation" \
+              || { echo "::error::obfuscated runner link failed"; ld.lld -v; exit 1; }
+          else
+            echo "::error::obfuscated runner.c failed to compile — full error follows"
+            cat /tmp/runner_selftest.log
+            echo "::hint::可在工作流输入里把 obfuscate_symbols 切为 false 恢复构建"
+            exit 1
+          fi
+
+          set +e
+          make -j$(nproc) O=out ARCH=arm64 \
+            CC="ccache clang" LD="ld.lld" AR="llvm-ar" NM="llvm-nm" \
+            OBJCOPY="llvm-objcopy" OBJDUMP="llvm-objdump" STRIP="llvm-strip" \
+            CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" \
+            KCFLAGS="-Wno-unknown-warning-option -Wno-error -Wno-format -Wno-incompatible-pointer-types \
+            -Wno-implicit-function-declaration -Wno-strict-prototypes -Wno-missing-prototypes \
+            -Wno-int-conversion -Wno-declaration-after-statement \
+            -Wframe-larger-than=131072 -Wno-unused-variable -Wno-unused-function \
+            -Wno-missing-braces -Wno-int-to-pointer-cast -Wno-address-of-packed-member \
+            -Wno-return-type -Wno-shift-negative-value -Wno-array-bounds \
+            -Wno-misleading-indentation -Wno-unused-result -Wno-unused-label \
+            -Wno-macro-redefined -Wno-array-parameter -Wno-fortify-source" \
+            HOSTCFLAGS="" 2>&1 | tee build.log
+
+          if [ ${PIPESTATUS[0]} -ne 0 ]; then
+            echo "::error::Kernel build failed. Last 200 lines:"
+            tail -n 200 build.log
+            exit 1
+          fi
+
+          echo "=== Build finished ==="
+          ccache -s 2>/dev/null || true
+          ls -lh out/arch/arm64/boot/Image
+
+      - name: Verify config.gz sanitization (slim12)
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          echo "== slim12：校验嵌入镜像的内核配置已净化 =="
+          if [ ! -f out/kernel/config_data.gz ]; then
+            echo "::error::out/kernel/config_data.gz not produced — IKCONFIG off?"; exit 1
+          fi
+          # 指纹必须为零：KSU/SUSFS/KPM 的 =y / =m / is not set 行都不允许出现
+          if zcat out/kernel/config_data.gz | grep -E '^(CONFIG_KSU|CONFIG_SUSFS|CONFIG_KPM)|^# CONFIG_(KSU|SUSFS|KPM)'; then
+            echo "::error::config_data.gz still contains KSU/SUSFS fingerprints"
+            exit 1
+          fi
+          # 净化不能把配置弄空——行数应与完整 config 接近（仅少几十行指纹）
+          TOTAL=$(zcat out/kernel/config_data.gz | wc -l)
+          FULL=$(wc -l < out/.config)
+          echo "sanitized=$TOTAL lines, full=$FULL lines"
+          [ "$TOTAL" -gt 100 ] || { echo "::error::sanitized config suspiciously small"; exit 1; }
+          echo "-- slim12: /proc/config.gz will expose ZERO KSU/SUSFS/KPM entries; file itself stays for MIUI boot services"
+
+      - name: Verify uname stock format (slim25)
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          REL="$(cat out/include/config/kernel.release)"
+          echo "KERNELRELEASE=$REL"
+          if [ "$REL" != "5.4.302--6-g59565037-ab63821773" ]; then
+            echo "::error::KERNELRELEASE not in expected stock format: $REL"
+            echo "        expected: 5.4.302--6-g59565037-ab63821773 (v7/v8 通过格式)"
+            exit 1
+          fi
+          echo "-- slim25: uname/proc-version will report stock-format release (digits-only g-segment, no -dirty)"
+
+      - name: Package AnyKernel3
+        run: |
+          set -e
+          TIME=$(TZ='Asia/Shanghai' date +%Y%m%d-%H%M)
+          IMG_PATH="${{ env.KERNEL_DIR }}/${{ env.OUTPUT_DIR }}/arch/arm64/boot/Image"
+          test -f "$IMG_PATH"
+
+          rm -rf AnyKernel3
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git
+          cd AnyKernel3
+
+          cp "$IMG_PATH" ./Image
+          gzip -9 -f ./Image
+          rm -f ./Image
+
+          cat > anykernel.sh <<'AK3'
+          ### AnyKernel3 Ramdisk Mod Script
+          ## osm0sis @ xda-developers
+
+          ### AnyKernel setup
+          # global properties
+          properties() { '
+          kernel.string=SukiSU Nova slim25 (daemon hiding via proven anchors) for Xiaomi 11 Ultra / Pro (star)
+          do.devicecheck=1
+          do.modules=0
+          do.systemless=1
+          do.cleanup=1
+          do.cleanuponabort=0
+          device.name1=star
+          device.name2=mars
+          supported.versions=
+          supported.patchlevels=
+          supported.vendorpatchlevels=
+          '; } # end properties
+
+          ### AnyKernel install
+          # boot files attributes
+          boot_attributes() {
+          set_perm_recursive 0 0 755 644 $RAMDISK/*;
+          set_perm_recursive 0 0 750 750 $RAMDISK/init* $RAMDISK/sbin;
+          } # end attributes
+
+          # boot shell variables
+          BLOCK=boot;
+          IS_SLOT_DEVICE=1;
+          RAMDISK_COMPRESSION=auto;
+          PATCH_VBMETA_FLAG=auto;
+
+          # import functions/variables and setup patching - see for reference (DO NOT REMOVE)
+          . tools/ak3-core.sh;
+
+          # boot install
+          split_boot;
+
+          flash_boot;
+          ## end boot install
+          AK3
+
+          chmod +x anykernel.sh
+          zip -r9 "../${{ env.DEVICE_CODENAME }}-SukiSU-Nova-slim25-${TIME}.zip" ./*
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: star-SukiSU-Nova-slim25
+          path: ${{ env.DEVICE_CODENAME }}-SukiSU-Nova-slim25-*.zip
