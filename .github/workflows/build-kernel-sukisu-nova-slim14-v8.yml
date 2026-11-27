@@ -1,4 +1,4 @@
-name: "Build Kernel with SukiSU Nova (Slim20 - policy fake page, digits-only uname)88"
+name: "Build Kernel with SukiSU Nova (Slim21 - stock uname version field)"
 
 on:
   workflow_dispatch:
@@ -35,6 +35,11 @@ on:
         options:
           - "true"
           - "false"
+      kbuild_build_timestamp:
+        description: "slim21：uname -v 时间戳 stock 化（KBUILD_BUILD_TIMESTAMP）。默认为 stock 形态占位值；如有真机 stock /proc/version 的完整时间串，请填真实值（例如 'Thu Jun 13 03:42:57 UTC 2024'），越真越稳"
+        required: false
+        default: "Thu Oct 15 02:31:19 UTC 2026"
+        type: string
 
 # ─────────────────────────────────────────────────────────────────────────────
 # slim18 判读（2026-11-26 晚，slim17 实机结果：异常 3 项）：
@@ -70,6 +75,26 @@ on:
 #      注入前授权位）↔ policy 假页（stock，无注入规则）两侧一致，
 #      解密项 "oracle mismatch: libselinux/raw access disagree" 无法成立；
 #      若摘 spoof 则 raw=注入后 ≠ stock policy，oracle 反而成立。
+# ─────────────────────────────────────────────────────────────────────────────
+# slim21 判读（2026-11-27，slim20 首轮复测 + 全模块禁用消融）：
+#   slim20 首轮（原生 uname）：3 项异常——Tampered kernel 回归 + kernelsu
+#      detected + 隐藏应用列表生效(2)。决定性矛盾：春秋显示串与 22:52 BRENE
+#      伪装通过轮逐字符相同 → **release 内容无罪，判据在别处**。
+#   两个候选触发面：
+#      ① utsname.version（uname -v）：原生 = "#1 SMP PREEMPT Thu Nov 26
+#         14:56:01 UTC 2026"（构建当天 + UTC + builder@android-build）；
+#         BRENE 伪装开时 version 是模块配置值（通过轮）。
+#      ② 交叉源 /proc/sys/kernel/osrelease|version（非 root 可读性待实测）。
+#   全模块禁用消融：BRENE/Zygisk 全关复测 → kernelsu detected 仍在 →
+#      该项与模块层无关，来源在内核级（时序侧信道 / ksud / susfs 缺口）。
+#   slim21 对策 = version 字段 stock 化：KBUILD_BUILD_TIMESTAMP 从动态
+#      date -u（=构建当天，自编指纹）改为固定 stock 形态日期（input 可覆盖
+#      为真机 stock 值）；构建后断言 compile.h/Image 里嵌入的时间串一致。
+#      BRENE 永久退役后原生串即 stock 形态，不再依赖伪装。
+#   kernelsu detected（独立项）对策线：B2（管理器关 SELinux 状态隐藏）+
+#      chunqiu-timing-audit.sh / ftrace-statx-probe.sh 实锤 → 时序对称化
+#      属 slim22 候选，不在本版引入（未定案不动刀）。
+
 
 # nova-slim9：kallsyms 符号混淆——针对 "kernelsu detected" 的实锤对策。
 #   slim8 实机结果（2026-11-22 13:00）：reboot probe 留痕日志抓到春秋探测现场
@@ -2307,9 +2332,15 @@ jobs:
           # "自编内核" 信号，固定为普通本地构建形态（对反检测同样有意义）
           export KBUILD_BUILD_USER=builder
           export KBUILD_BUILD_HOST=android-build
-          # 时间戳用真实构建时间：/proc/version 里的时间=构建时刻，
-          # 手机上一条 cat /proc/version 就能确认刷进去的是哪次构建
-          export KBUILD_BUILD_TIMESTAMP="$(date -u)"
+          # 【slim21】时间戳 stock 化（Tampered kernel 候选触发面）：
+          # 原来用 date -u（=构建当天），原生 uname -v = "#1 SMP PREEMPT <今天>"——
+          # 自编指纹。slim20 首轮实锤：同一个 release 串 BRENE 伪装（version 字段
+          # 为配置值）通过、原生（version=构建当天）被拒 → version 字段成头号候选。
+          # 固定为 stock 形态日期（input 可覆盖为真机 stock 真实值）。
+          export KBUILD_BUILD_TIMESTAMP="${{ inputs.kbuild_build_timestamp }}"
+          test -n "$KBUILD_BUILD_TIMESTAMP" \
+            || { echo "::error::KBUILD_BUILD_TIMESTAMP empty"; exit 1; }
+          echo "-- KBUILD_BUILD_TIMESTAMP=$KBUILD_BUILD_TIMESTAMP"
 
           echo "== 预装 UAPI 头文件以启用 SukiSU preinit runner =="
           # vendor defconfig 不带 HEADERS_INSTALL，SukiSU builtin 的 preinit runner
@@ -2412,7 +2443,7 @@ jobs:
           [ "$TOTAL" -gt 100 ] || { echo "::error::sanitized config suspiciously small"; exit 1; }
           echo "-- slim12: /proc/config.gz will expose ZERO KSU/SUSFS/KPM entries; file itself stays for MIUI boot services"
 
-      - name: Verify uname stock format (slim20)
+      - name: Verify uname stock format (slim21)
         working-directory: kernel
         run: |
           set -euo pipefail
@@ -2423,7 +2454,26 @@ jobs:
             echo "        expected: 5.4.302--6-g59565037-ab63821773 (v7/v8 通过格式)"
             exit 1
           fi
-          echo "-- slim20: uname/proc-version will report stock-format release (digits-only g-segment, no -dirty)"
+          echo "-- slim21: uname/proc-version will report stock release AND stock-format version field"
+          # 【slim21】version 字段 stock 化断言：compile.h 里嵌入的 UTS_VERSION
+          # 必须包含我们固定的 stock 时间戳（而非构建当天），Image 同步核验
+          TS='${{ inputs.kbuild_build_timestamp }}'
+          COMPILE_H=out/include/generated/compile.h
+          test -f "$COMPILE_H" || { echo "::error::compile.h missing"; exit 1; }
+          grep -F "$TS" "$COMPILE_H" >/dev/null \
+            || { echo "::error::UTS_VERSION does not contain stock timestamp '$TS'"; \
+                 grep -F 'UTS_VERSION' "$COMPILE_H" || true; exit 1; }
+          echo "-- slim21: UTS_VERSION carries stock timestamp '$TS'"
+          if strings out/arch/arm64/boot/Image | grep -F "$TS" >/dev/null; then
+            echo "-- slim21: Image fingerprint confirms stock timestamp"
+          else
+            echo "::error::stock timestamp not found inside Image"; exit 1
+          fi
+          if strings out/arch/arm64/boot/Image | grep -E "#1 SMP PREEMPT (Oct|Nov|Dec) 2[0-9]" | grep -vF "$TS" >/dev/null; then
+            echo "::warning::another SMP PREEMPT date-like string found besides stock TS (inspect manually)"
+          else
+            echo "-- slim21: no fresh build-date fingerprint in Image (build-day leak cleared)"
+          fi
 
       - name: Package AnyKernel3
         run: |
@@ -2447,7 +2497,7 @@ jobs:
           ### AnyKernel setup
           # global properties
           properties() { '
-          kernel.string=SukiSU Nova slim20 (policy fake page) for Xiaomi 11 Ultra / Pro (star)
+          kernel.string=SukiSU Nova slim21 (stock uname version) for Xiaomi 11 Ultra / Pro (star)
           do.devicecheck=1
           do.modules=0
           do.systemless=1
@@ -2484,30 +2534,30 @@ jobs:
           AK3
 
           chmod +x anykernel.sh
-          zip -r9 "../${{ env.DEVICE_CODENAME }}-SukiSU-Nova-slim20-${TIME}.zip" ./*
+          zip -r9 "../${{ env.DEVICE_CODENAME }}-SukiSU-Nova-slim21-${TIME}.zip" ./*
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: star-SukiSU-Nova-slim20
-          path: ${{ env.DEVICE_CODENAME }}-SukiSU-Nova-slim20-*.zip
+          name: star-SukiSU-Nova-slim21
+          path: ${{ env.DEVICE_CODENAME }}-SukiSU-Nova-slim21-*.zip
 
       - name: Optional Release (publishes on every manual build)
         if: github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: slim20_${{ github.run_number }}
-          name: "SukiSU Nova slim20 Full SUSFS Build"
+          tag_name: slim21_${{ github.run_number }}
+          name: "SukiSU Nova slim21 Full SUSFS Build"
           body: |
-            ## SukiSU Nova slim20（slim15v2 基线 + 另一端 slim16-20 实机迭代增益合并）
+            ## SukiSU Nova slim21（slim20+基线增益 之上叠加）
+            - **slim21 核心：uname -v（version 字段）stock 化** —— slim20 首轮实锤：同一 release 串 BRENE 伪装通过、原生被拒 → 判据在 version 字段/交叉源。KBUILD_BUILD_TIMESTAMP 由动态构建时间改为固定 stock 形态日期（input `kbuild_build_timestamp` 可覆盖为真机 stock 真实值），构建后 compile.h/Image 双重断言
             - slim20 核心：SELinux policy 假页 —— app/shell 读 /sys/fs/selinux/policy 时服务 vendor stock precompiled_sepolicy 逐字节拷贝，注入规则（Zygisk execmem 等）不可见，enforcement 无损
-            - uname stock 化（实机验证最优）：.scmversion 注入纯数字串 --6-g59565037-ab63821773（春秋核对 g[0-9]{8} 类正则，含字母必拒）；BRENE(SUSFS SPOOF_UNAME) 全 uid 覆盖
-            - status 假页回滚至 slim5/6 方案（假页在场 + {0,0} 定格；slim17 全 uid 服务真实页为倒退）
-            - sus_avd spoof 保留（oracle 自洽：raw access 还原授权位 ↔ stock policy 两侧一致）
-            - 反检测全家桶：kallsyms 混淆（rsx_/rsy_）+ reboot gate + config.gz 净化 + slim13 uid 门控 + sus_type/avd backport
-            - 基线增益（slim15v2 合并回填）：cpufreq 无条件强制排序（不依赖 merge commit）、KSU_VERSION 3xxxx 限流告警、ENABLE_LOG 关闭 + dmesg 负断言（修正 slim20 误开）、SukiSU clone blob:none、LSM file_permission 钩子移除（幂等）、restrict_dmesg 开关修复（此前无实现）、boot_opt 开机提速开关、构建后 Image 字符串指纹自扫
-            - Release 三处命名同步：zip/artifact/tag = slim20
+            - uname stock 化（实机验证最优）：.scmversion 注入纯数字串 --6-g59565037-ab63821773（春秋核对 g[0-9]{8} 类正则，含字母必拒）
+            - status 假页 slim5/6 方案（假页在场 + {0,0} 定格）+ sus_avd spoof 保留（oracle 自洽）
+            - 反检测全家桶：kallsyms 混淆（rsx_/rsy_）+ reboot gate + config.gz 净化 + slim13 uid 门控 + sus_type/avd backport + LSM file_permission 钩子移除
+            - 基线增益：cpufreq 无条件强制排序、KSU_VERSION 限流告警、ENABLE_LOG 关闭+负断言、blob:none clone、restrict_dmesg 真实现、boot_opt 开机提速开关、Image 指纹自扫
+            - Release 三处命名同步：zip/artifact/tag = slim21
             - 刷机有风险，请备份原内核（Release zip 直接刷入，Artifact zip 需先解外层）
-          files: ${{ env.DEVICE_CODENAME }}-SukiSU-Nova-slim20-*.zip
+          files: ${{ env.DEVICE_CODENAME }}-SukiSU-Nova-slim21-*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
