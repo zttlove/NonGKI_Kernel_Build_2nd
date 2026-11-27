@@ -1,0 +1,47 @@
+name: "Actions runtime smoke test (Node 24 versions)"
+
+# 目的：用 1 分钟确认 actions/checkout@v5、actions/cache@v5、actions/upload-artifact@v5
+# 在当前仓库能正常解析并运行，用来消除 "Node.js 20 is deprecated" 警告。
+# 三个 job 各自独立：哪个版本不存在，就在那个 job 里报
+# "Unable to resolve action ..."，不会互相挡住。不涉及内核构建。
+
+on:
+  workflow_dispatch:
+
+jobs:
+  checkout-v5:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: actions/checkout@v5
+        uses: actions/checkout@v5
+      - run: git log -1 --format='%h %s'
+
+  cache-v5:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: actions/cache@v5
+        uses: actions/cache@v5
+        with:
+          path: .smoke-cache
+          key: smoke-cache-${{ github.run_id }}
+      - name: populate
+        run: |
+          mkdir -p .smoke-cache
+          echo hello > .smoke-cache/hello.txt
+          ls -l .smoke-cache
+
+  artifact-v5:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: write file
+        run: |
+          echo hello > smoke.txt
+          ls -l smoke.txt
+      - name: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v5
+        with:
+          name: smoke
+          path: smoke.txt
